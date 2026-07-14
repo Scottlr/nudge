@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -14,17 +15,19 @@ import (
 // ReducerConfig supplies the owned clock and identity source used by a
 // reducer. Nil dependencies use the production implementations.
 type ReducerConfig struct {
-	Clock Clock
-	IDs   IDSource
+	Clock   Clock
+	IDs     IDSource
+	Threads *ThreadService
 }
 
 // Reducer is the single mutable-state owner for the application runtime. It
 // is intentionally not safe for concurrent use; Client serializes all calls.
 type Reducer struct {
-	state  State
-	clock  Clock
-	ids    IDSource
-	closed bool
+	state   State
+	clock   Clock
+	ids     IDSource
+	threads *ThreadService
+	closed  bool
 }
 
 // Commit is the reducer's complete externally visible result for one input.
@@ -38,8 +41,9 @@ type Commit struct {
 
 // ReducerResponse contains the operation admitted by a command and its commit.
 type ReducerResponse struct {
-	OperationID domain.OperationID
-	Commit      Commit
+	OperationID  domain.OperationID
+	SessionGuard *SessionWriteGuard
+	Commit       Commit
 }
 
 // NewReducer constructs an empty single-writer reducer.
@@ -52,7 +56,7 @@ func NewReducer(config ReducerConfig) *Reducer {
 	if ids == nil {
 		ids = RandomIDSource{}
 	}
-	return &Reducer{state: NewState(), clock: clock, ids: ids}
+	return &Reducer{state: NewState(), clock: clock, ids: ids, threads: config.Threads}
 }
 
 // State returns a detached copy for reducer-owned tests and composition code.
@@ -152,9 +156,107 @@ func (r *Reducer) handleCommand(command Command) (ReducerResponse, error) {
 		return r.cancelOperation(value)
 	case Shutdown:
 		return r.shutdown()
+	case CreateThread:
+		if r.threads == nil {
+			return ReducerResponse{}, ErrThreadServiceUnavailable
+		}
+		commit, err := r.threads.CreateThread(context.Background(), value.Guard, value)
+		if err != nil {
+			return ReducerResponse{}, err
+		}
+		return r.commitThread(commit)
+	case ActivateThread:
+		if r.threads == nil {
+			return ReducerResponse{}, ErrThreadServiceUnavailable
+		}
+		commit, err := r.threads.ActivateThread(context.Background(), value)
+		if err != nil {
+			return ReducerResponse{}, err
+		}
+		return r.commitThread(commit)
+	case ReplyToThread:
+		if r.threads == nil {
+			return ReducerResponse{}, ErrThreadServiceUnavailable
+		}
+		commit, err := r.threads.ReplyToThread(context.Background(), value.Guard, value)
+		if err != nil {
+			return ReducerResponse{}, err
+		}
+		return r.commitThread(commit)
+	case ResolveThread:
+		if r.threads == nil {
+			return ReducerResponse{}, ErrThreadServiceUnavailable
+		}
+		commit, err := r.threads.ResolveThread(context.Background(), value.Guard, value)
+		if err != nil {
+			return ReducerResponse{}, err
+		}
+		return r.commitThread(commit)
+	case MarkThreadRead:
+		if r.threads == nil {
+			return ReducerResponse{}, ErrThreadServiceUnavailable
+		}
+		commit, err := r.threads.MarkThreadRead(context.Background(), value.Guard, value)
+		if err != nil {
+			return ReducerResponse{}, err
+		}
+		return r.commitThread(commit)
 	default:
 		return ReducerResponse{}, ErrInvalidReducerInput
 	}
+}
+
+func (r *Reducer) commitThread(threadCommit ThreadCommit) (ReducerResponse, error) {
+	if len(threadCommit.Events) == 0 {
+		response := ReducerResponse{Commit: Commit{Snapshot: r.Snapshot()}}
+		if threadCommit.Guard.Validate() == nil {
+			guard := threadCommit.Guard
+			response.SessionGuard = &guard
+		}
+		return response, nil
+	}
+	threadSummary := summarizeReviewThread(threadCommit.Thread)
+	window := &r.state.ThreadWindow
+	found := false
+	for index := range window.Items {
+		if window.Items[index].ID == threadSummary.ID {
+			window.Items[index] = threadSummary
+			found = true
+			break
+		}
+	}
+	if !found {
+		window.TotalCount++
+		if len(window.Items) < int(MaxPageLimit) {
+			window.Items = append(window.Items, threadSummary)
+		}
+	}
+	detailCount := uint64(len(threadCommit.Thread.Messages))
+	if r.state.ActiveThread != nil && *r.state.ActiveThread == threadSummary.ID && r.state.ActiveThreadDetail != nil && r.state.ActiveThreadDetail.MessageCount > detailCount {
+		detailCount = r.state.ActiveThreadDetail.MessageCount
+	}
+	detail := ThreadDetail{Summary: threadSummary, MessageCount: detailCount}
+	if threadCommit.Message != nil && threadCommit.Message.Ordinal > detail.MessageCount {
+		detail.MessageCount = threadCommit.Message.Ordinal
+	}
+	window.Revision = r.state.Revision + 1
+	for _, event := range threadCommit.Events {
+		switch value := event.(type) {
+		case ThreadActivated:
+			id := value.ThreadID
+			r.state.ActiveThread = &id
+			r.state.ActiveThreadDetail = &detail
+		}
+	}
+	if r.state.ActiveThread != nil && *r.state.ActiveThread == threadSummary.ID {
+		r.state.ActiveThreadDetail = &detail
+	}
+	response := r.commit("", threadCommit.Events...)
+	if threadCommit.Guard.Validate() == nil {
+		guard := threadCommit.Guard
+		response.SessionGuard = &guard
+	}
+	return response, nil
 }
 
 func (r *Reducer) handleResult(result Result) (ReducerResponse, error) {
@@ -174,6 +276,8 @@ func (r *Reducer) handleResult(result Result) (ReducerResponse, error) {
 		r.state.Target = nil
 		r.state.ActiveFile = nil
 		r.state.ActiveThread = nil
+		r.state.ActiveThreadDetail = nil
+		r.state.ThreadWindow = ThreadWindow{}
 		r.state.Tree = TreeProjection{}
 		r.state.ChangedFiles = nil
 		r.finishOperation(&operation, OperationStatusSucceeded, "", "")
