@@ -83,6 +83,21 @@ func OpenProtectedFile(root, relative string, flag int, perm fs.FileMode) (*os.F
 // OpenExistingProtectedFile opens an existing child without creating the root
 // or any parent. It is the read-only path used by configuration loading.
 func OpenExistingProtectedFile(root, relative string) (*os.File, error) {
+	return openExistingProtectedFile(root, relative, os.O_RDONLY)
+}
+
+// OpenExistingProtectedFileForUpdate opens an existing protected child for a
+// bounded owner-state rewrite without following a symlink or reparse alias.
+// The caller must not include O_CREATE; the file must already exist beneath
+// the validated private root.
+func OpenExistingProtectedFileForUpdate(root, relative string, flag int) (*os.File, error) {
+	if flag&os.O_CREATE != 0 || flag&(os.O_WRONLY|os.O_RDWR) == 0 {
+		return nil, ErrProtectedPath
+	}
+	return openExistingProtectedFile(root, relative, flag)
+}
+
+func openExistingProtectedFile(root, relative string, flag int) (*os.File, error) {
 	cleanRoot, err := absoluteClean(root)
 	if err != nil {
 		return nil, err
@@ -104,7 +119,7 @@ func OpenExistingProtectedFile(root, relative string) (*os.File, error) {
 	if err := validatePrivateDirNative(filepath.Dir(path)); err != nil {
 		return nil, err
 	}
-	return openProtectedFileNative(path, os.O_RDONLY, 0)
+	return openProtectedFileNative(path, flag, 0)
 }
 
 // ReadProtectedFile reads an existing protected file with a bounded buffer.
