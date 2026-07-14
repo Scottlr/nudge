@@ -47,6 +47,7 @@ func TestLoadRejectsUnknownAndUnsupportedFileFields(t *testing.T) {
 		{name: "unknown field", data: "version = 1\n\n[review]\nretired = true\n", want: ErrInvalidConfig},
 		{name: "unsupported version", data: "version = 2\n", want: ErrUnsupportedSchemaVersion},
 		{name: "invalid bound", data: "version = 1\n\n[review]\nfocused_refresh_max_seconds = 31\n", want: ErrInvalidConfig},
+		{name: "raised content hard maximum", data: "version = 1\n\n[review]\nlarge_file_bytes = 2000001\n", want: ErrInvalidConfig},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
