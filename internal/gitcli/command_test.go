@@ -52,9 +52,17 @@ func TestCommandBuilderAppliesMachineReadPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	args := strings.Join(runner.spec.Args, "\x00")
-	for _, expected := range []string{"--no-pager", "core.fsmonitor=false", "core.untrackedCache=false", "core.hooksPath=" + os.DevNull, "credential.helper=", "filter.lfs.process=", "-C", start, "rev-parse", "--is-bare-repository"} {
+	for _, expected := range []string{"--no-pager", "core.fsmonitor=false", "core.untrackedCache=false", "core.hooksPath=" + os.DevNull, "credential.helper=", "filter.lfs.process=", "rev-parse", "--is-bare-repository"} {
 		if !strings.Contains(args, expected) {
 			t.Fatalf("Git args %q do not contain %q", args, expected)
+		}
+	}
+	for index, argument := range runner.spec.Args {
+		if argument == "-C" {
+			if index+1 >= len(runner.spec.Args) || runner.spec.Args[index+1] != builder.startPath {
+				t.Fatalf("canonical -C argument = %#v, want %q", runner.spec.Args, builder.startPath)
+			}
+			break
 		}
 	}
 	if runner.spec.Environment.Set["GIT_NO_LAZY_FETCH"] != "1" || runner.spec.Environment.Set["GIT_OPTIONAL_LOCKS"] != "0" || runner.spec.Environment.Set["GIT_TERMINAL_PROMPT"] != "0" {
