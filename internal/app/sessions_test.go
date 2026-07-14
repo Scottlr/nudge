@@ -304,6 +304,7 @@ func (fakeSessionTx) SaveAcceptedTargetGeneration(context.Context, AcceptedTarge
 	return nil
 }
 func (fakeSessionTx) CreateReconciliation(context.Context, ReconciliationOperation) error { return nil }
+func (fakeSessionTx) UpdateReconciliation(context.Context, ReconciliationOperation) error { return nil }
 func (fakeSessionTx) StageReconciliationResult(context.Context, ReconciliationAnchorResult) error {
 	return nil
 }

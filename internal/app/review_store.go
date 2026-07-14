@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/Scottlr/nudge/internal/domain"
@@ -207,16 +208,80 @@ const (
 	ReconciliationFailed    ReconciliationOperationState = "failed"
 )
 
+// ReconciliationPhase identifies the durable checkpoint at which an
+// authoritative refresh stopped. Phase is intentionally narrower than the
+// operation state: a staged or running operation may be resumed from its
+// capture, staging, or commit checkpoint.
+type ReconciliationPhase string
+
+const (
+	ReconciliationPhaseCapture    ReconciliationPhase = "capture"
+	ReconciliationPhaseStaging    ReconciliationPhase = "staging"
+	ReconciliationPhaseCommitting ReconciliationPhase = "committing"
+	ReconciliationPhaseCompleted  ReconciliationPhase = "completed"
+)
+
+// ReconciliationProgress is bounded durable checkpoint metadata. It never
+// contains an anchor, path list, source bytes, or provider text.
+type ReconciliationProgress struct {
+	Phase            ReconciliationPhase
+	Cursor           string
+	ProcessedAnchors uint64
+	TotalAnchors     uint64
+	ProcessedPaths   uint64
+	SourceBytes      uint64
+	EvidenceBytes    uint64
+}
+
+func (p ReconciliationProgress) Validate() error {
+	if p.Phase == "" || len(p.Cursor) > 4<<10 || strings.IndexByte(p.Cursor, 0) >= 0 {
+		return ErrReviewStoreInput
+	}
+	switch p.Phase {
+	case ReconciliationPhaseCapture, ReconciliationPhaseStaging, ReconciliationPhaseCommitting, ReconciliationPhaseCompleted:
+	default:
+		return ErrReviewStoreInput
+	}
+	if p.ProcessedAnchors > p.TotalAnchors && p.TotalAnchors != 0 {
+		return ErrReviewStoreInput
+	}
+	return nil
+}
+
 // ReconciliationOperation is bounded durable metadata for one staged epoch.
 type ReconciliationOperation struct {
 	ID             domain.OperationID
 	SessionID      domain.ReviewSessionID
 	FromGeneration repository.TargetGeneration
 	ToGeneration   repository.TargetGeneration
+	CaptureID      domain.CaptureID
+	ManifestHash   string
 	State          ReconciliationOperationState
+	Progress       ReconciliationProgress
 	StartedAt      time.Time
 	CompletedAt    *time.Time
 	Active         bool
+}
+
+// Validate checks the durable identity and checkpoint shape. Empty capture
+// identity is retained only for legacy T018 rows; T024-created operations
+// always carry both values.
+func (o ReconciliationOperation) Validate() error {
+	if o.ID == "" || o.SessionID == "" || o.FromGeneration == 0 || o.ToGeneration == 0 || o.StartedAt.IsZero() {
+		return ErrReviewStoreInput
+	}
+	switch o.State {
+	case ReconciliationStaged, ReconciliationRunning, ReconciliationCompleted, ReconciliationFailed:
+	default:
+		return ErrReviewStoreInput
+	}
+	if (o.CaptureID == "") != (o.ManifestHash == "") || o.ManifestHash != "" && !validLocalCaptureHash(o.ManifestHash) {
+		return ErrReviewStoreInput
+	}
+	if o.Progress.Validate() != nil {
+		return ErrReviewStoreInput
+	}
+	return nil
 }
 
 // ReconciliationAnchorResult is staged until its operation is completed and
@@ -324,6 +389,7 @@ type ReviewStoreTx interface {
 	SaveCaptureGeneration(ctx context.Context, generation CaptureGeneration, manifest CaptureManifest) error
 	SaveAcceptedTargetGeneration(ctx context.Context, generation AcceptedTargetGeneration) error
 	CreateReconciliation(ctx context.Context, operation ReconciliationOperation) error
+	UpdateReconciliation(ctx context.Context, operation ReconciliationOperation) error
 	StageReconciliationResult(ctx context.Context, result ReconciliationAnchorResult) error
 	CompleteReconciliation(ctx context.Context, operationID domain.OperationID, completedAt time.Time) error
 	ActivateReconciliation(ctx context.Context, operationID domain.OperationID) error

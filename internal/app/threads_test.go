@@ -281,6 +281,9 @@ func (t *threadTestTx) SaveAcceptedTargetGeneration(context.Context, AcceptedTar
 func (t *threadTestTx) CreateReconciliation(context.Context, ReconciliationOperation) error {
 	return nil
 }
+func (t *threadTestTx) UpdateReconciliation(context.Context, ReconciliationOperation) error {
+	return nil
+}
 func (t *threadTestTx) StageReconciliationResult(context.Context, ReconciliationAnchorResult) error {
 	return nil
 }

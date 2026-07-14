@@ -32,7 +32,7 @@ func TestStoreMigrationAndReviewRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("migration status: %v", err)
 	}
-	if status.Version != 3 || !validSHA256(status.Checksum) {
+	if status.Version != 4 || !validSHA256(status.Checksum) {
 		t.Fatalf("migration status = %#v", status)
 	}
 	var foreignKeys int
@@ -108,7 +108,7 @@ func TestStoreMigrationAndReviewRoundTrip(t *testing.T) {
 
 	relocated := thread.Anchor
 	relocated.State = review.AnchorRelocated
-	operation := app.ReconciliationOperation{ID: domain.OperationID("reconcile-1"), SessionID: session.ID, FromGeneration: 1, ToGeneration: 1, State: app.ReconciliationStaged, StartedAt: thread.CreatedAt}
+	operation := app.ReconciliationOperation{ID: domain.OperationID("reconcile-1"), SessionID: session.ID, FromGeneration: 1, ToGeneration: 1, CaptureID: domain.CaptureID("capture-2"), ManifestHash: strings.Repeat("a", 64), State: app.ReconciliationStaged, Progress: app.ReconciliationProgress{Phase: app.ReconciliationPhaseStaging, TotalAnchors: 1}, StartedAt: thread.CreatedAt}
 	result := app.ReconciliationAnchorResult{OperationID: operation.ID, ThreadID: thread.ID, Anchor: relocated, State: review.AnchorRelocated, Reason: "exact evidence", ReportID: operation.ID, AlgorithmVersion: review.AnchorReconciliationAlgorithmVersion}
 	staged, err := store.WithSessionTx(ctx, next, func(tx app.ReviewStoreTx) error {
 		if err := tx.CreateReconciliation(ctx, operation); err != nil {
@@ -125,6 +125,11 @@ func TestStoreMigrationAndReviewRoundTrip(t *testing.T) {
 		t.Fatalf("incomplete activation error = %v, want ErrSessionRevisionConflict", err)
 	}
 	completed, err := store.WithSessionTx(ctx, staged, func(tx app.ReviewStoreTx) error {
+		operation.Progress.Phase = app.ReconciliationPhaseCommitting
+		operation.Progress.ProcessedAnchors = 1
+		if err := tx.UpdateReconciliation(ctx, operation); err != nil {
+			return err
+		}
 		if err := tx.CompleteReconciliation(ctx, operation.ID, thread.CreatedAt); err != nil {
 			return err
 		}
