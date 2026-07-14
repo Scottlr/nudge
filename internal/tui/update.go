@@ -39,6 +39,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case LocalReviewMsg:
 		if message.Snapshot.Revision >= m.localReview.Revision {
 			m.localReview = message.Snapshot.Clone()
+			m.syncLocalReviewPanes()
 		}
 		if m.local != nil {
 			return m, receiveLocalReview(m.local)
@@ -154,6 +155,7 @@ func (m *Model) setDimensions(dimensions Dimensions) {
 			m.narrowPane = previousFocus
 		}
 		m.focus = m.narrowPane
+		m.resizeChildPanes()
 		return
 	}
 	if m.layout.Mode == LayoutMedium && (m.focus == PaneThreads || m.focus == PaneDiscussion) {
@@ -162,6 +164,7 @@ func (m *Model) setDimensions(dimensions Dimensions) {
 	if !isPane(m.focus) {
 		m.focus = PaneRepository
 	}
+	m.resizeChildPanes()
 }
 
 func (m *Model) moveFocus(step int) {
@@ -192,6 +195,7 @@ func (m *Model) setFocus(pane Pane) {
 	if m.layout.Mode == LayoutNarrow {
 		m.narrowPane = pane
 	}
+	m.updateChildFocus()
 }
 
 func (m *Model) setNarrowPane(pane Pane) {
@@ -201,6 +205,7 @@ func (m *Model) setNarrowPane(pane Pane) {
 	m.narrowPane = pane
 	if m.layout.Mode == LayoutNarrow {
 		m.focus = pane
+		m.updateChildFocus()
 	}
 }
 

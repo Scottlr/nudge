@@ -8,7 +8,7 @@ import (
 	"github.com/Scottlr/nudge/internal/domain/repository"
 	"github.com/Scottlr/nudge/internal/presentation"
 	"github.com/Scottlr/nudge/internal/theme"
-	nudgetui "github.com/Scottlr/nudge/internal/tui"
+	"github.com/Scottlr/nudge/internal/tui/viewport"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -19,7 +19,7 @@ func (m *Model) View() string {
 		return ""
 	}
 	rows := m.flattenRows()
-	window := nudgetui.Window(len(rows), m.selectedIndex(rows), m.top, m.renderHeight(), m.overscan)
+	window := viewport.Window(len(rows), m.selectedIndex(rows), m.top, m.renderHeight(), m.overscan)
 	work, err := m.budget.Begin()
 	if err != nil {
 		return ""

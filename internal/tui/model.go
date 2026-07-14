@@ -8,6 +8,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/Scottlr/nudge/internal/app"
 	"github.com/Scottlr/nudge/internal/theme"
+	codepane "github.com/Scottlr/nudge/internal/tui/components/code"
+	treepane "github.com/Scottlr/nudge/internal/tui/components/tree"
 )
 
 // Pane identifies one product surface without carrying its workflow data.
@@ -31,6 +33,8 @@ type Model struct {
 
 	snapshot       app.AppSnapshot
 	localReview    app.LocalReviewSnapshot
+	repositoryPane *treepane.Model
+	codePane       *codepane.Model
 	dimensions     Dimensions
 	layout         Layout
 	focus          Pane
@@ -75,6 +79,12 @@ func WithTheme(value theme.Theme) ModelOption {
 	return func(model *Model) {
 		if value.Validate() == nil {
 			model.theme = value
+			if model.repositoryPane != nil {
+				model.repositoryPane.SetTheme(value)
+			}
+			if model.codePane != nil {
+				model.codePane.SetTheme(value)
+			}
 		}
 	}
 }
@@ -113,14 +123,16 @@ func WithDimensions(width, height int) ModelOption {
 // snapshot/event streams without performing blocking application work.
 func NewModel(client app.ApplicationClient, options ...ModelOption) *Model {
 	model := &Model{
-		client:     client,
-		ctx:        context.Background(),
-		focus:      PaneRepository,
-		lowerPane:  PaneThreads,
-		narrowPane: PaneRepository,
-		theme:      theme.BuiltinTerminalDefault(),
-		layout:     CalculateLayout(Dimensions{}),
-		scheduler:  DefaultRenderScheduler(),
+		client:         client,
+		ctx:            context.Background(),
+		focus:          PaneRepository,
+		lowerPane:      PaneThreads,
+		narrowPane:     PaneRepository,
+		repositoryPane: treepane.NewModel(),
+		codePane:       codepane.NewModel(),
+		theme:          theme.BuiltinTerminalDefault(),
+		layout:         CalculateLayout(Dimensions{}),
+		scheduler:      DefaultRenderScheduler(),
 	}
 	if client != nil {
 		model.snapshots = client.Snapshots()
@@ -134,6 +146,7 @@ func NewModel(client app.ApplicationClient, options ...ModelOption) *Model {
 	if model.layout.Dimensions != model.dimensions {
 		model.layout = CalculateLayout(model.dimensions)
 	}
+	model.resizeChildPanes()
 	return model
 }
 

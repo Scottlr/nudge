@@ -6,7 +6,7 @@ import (
 
 	"github.com/Scottlr/nudge/internal/app"
 	"github.com/Scottlr/nudge/internal/domain/repository"
-	nudgetui "github.com/Scottlr/nudge/internal/tui"
+	"github.com/Scottlr/nudge/internal/tui/viewport"
 )
 
 func TestInitialPageRequestIsBoundedAndCoalesced(t *testing.T) {
@@ -107,7 +107,7 @@ func TestViewUsesWindowAndRenderBudget(t *testing.T) {
 	}
 	m.Update(PageResultMsg{Result: PageResult{Request: request, Page: page(t, entries...)}})
 	m.SetSize(80, 3)
-	m.SetBudget(nudgetui.RenderBudget{MaxRows: 2, MaxCells: 1000})
+	m.SetBudget(viewport.RenderBudget{MaxRows: 2, MaxCells: 1000})
 	lines := strings.Split(m.View(), "\n")
 	if len(lines) > 2 {
 		t.Fatalf("rendered %d lines, want at most 2", len(lines))
