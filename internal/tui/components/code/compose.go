@@ -156,7 +156,7 @@ func syntaxText(spans []highlight.StyledSpan, fallback string, styles theme.Them
 	return builder.String()
 }
 
-func composeRow(row codeRow, side app.RowSide, left, width, lineWidth int, styles theme.Theme, selected, matched, focused, anchored bool) string {
+func composeRow(row codeRow, side app.RowSide, left, width, lineWidth int, styles theme.Theme, selected, matched, focused, anchored bool, threadMarker string, threadRole theme.Role) string {
 	if width <= 0 {
 		return ""
 	}
@@ -165,10 +165,16 @@ func composeRow(row codeRow, side app.RowSide, left, width, lineWidth int, style
 	if lineNumber > 0 {
 		gutter = fmt.Sprintf("%*d", lineWidth, lineNumber)
 	}
-	contentWidth := maxInt(width-lineWidth-4, 0)
+	contentWidth := maxInt(width-lineWidth-5-ansi.StringWidth(threadMarker), 0)
 	content := syntaxText(rowSpans(row, side), boundedDisplayText(rowText(row, side)), styles)
 	content = ansi.Cut(content, left, left+contentWidth)
-	line := gutter + " " + rowMarker(row) + " " + content
+	marker := threadMarker
+	if marker != "" {
+		if style, ok := styles.StyleFor(threadRole); ok {
+			marker = style.Lipgloss().Render(marker)
+		}
+	}
+	line := gutter + " " + marker + " " + rowMarker(row) + " " + content
 	base, ok := styles.StyleFor(diffRole(row))
 	if !ok {
 		base, _ = styles.StyleFor(theme.RoleForeground)

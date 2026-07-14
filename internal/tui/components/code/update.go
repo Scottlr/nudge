@@ -51,6 +51,8 @@ func (m *Model) Update(message any) []Intent {
 		}
 	case SetHighlightMsg:
 		m.addHighlight(value)
+	case SetThreadMarkersMsg:
+		m.setThreadMarkers(value)
 	case SearchResultMsg:
 		m.acceptSearch(value.Result)
 	case SearchErrorMsg:

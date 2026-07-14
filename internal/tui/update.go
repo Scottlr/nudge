@@ -7,6 +7,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/Scottlr/nudge/internal/app"
 	"github.com/Scottlr/nudge/internal/presentation"
+	discussionpane "github.com/Scottlr/nudge/internal/tui/components/discussion"
+	threadpane "github.com/Scottlr/nudge/internal/tui/components/threads"
 )
 
 // Update applies frontend messages and returns commands for asynchronous
@@ -24,6 +26,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case SnapshotMsg:
 		if message.Snapshot.Revision >= m.snapshot.Revision {
 			m.snapshot = message.Snapshot.Clone()
+			m.syncReviewSnapshot()
 		}
 		if !m.snapshotClosed && m.snapshots != nil {
 			return m, receiveSnapshot(m.snapshots)
@@ -46,6 +49,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case LocalReviewStreamClosedMsg:
 		m.local = nil
+	case threadpane.PageResultMsg, threadpane.PageErrorMsg, threadpane.MoveSelectionMsg, threadpane.ActivateSelectionMsg, threadpane.LoadNextPageMsg:
+		return m, tea.Batch(m.threadPaneMessage(message)...)
+	case discussionpane.MessagePageResultMsg, discussionpane.BodyRangeResultMsg, discussionpane.MoveSelectionMsg, discussionpane.PresentMessageMsg, discussionpane.ToggleReplyMsg, discussionpane.UpdateDraftMsg, discussionpane.SetDraftMsg, discussionpane.ResolveMsg, discussionpane.LoadNextPageMsg:
+		return m, tea.Batch(m.discussionPaneMessage(message)...)
 	case tea.KeyPressMsg:
 		switch message.Keystroke() {
 		case "q", "ctrl+c", "esc":
