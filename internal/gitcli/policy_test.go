@@ -2,6 +2,7 @@ package gitcli
 
 import (
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
@@ -27,7 +28,7 @@ func TestRenameAndPatchPoliciesAreBoundedAndExact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"core.quotePath=true", "diff.algorithm=myers", "diff.indentHeuristic=false", "diff.orderFile=", "--patch", "--binary", "--full-index", "--unified=3", "--no-color", "--no-ext-diff", "--no-textconv", "--src-prefix=a/", "--dst-prefix=b/"} {
+	for _, expected := range []string{"core.quotePath=true", "diff.algorithm=myers", "diff.indentHeuristic=false", "diff.orderFile=" + os.DevNull, "--patch", "--binary", "--full-index", "--unified=3", "--no-color", "--no-ext-diff", "--no-textconv", "--src-prefix=a/", "--dst-prefix=b/"} {
 		if !containsString(args, expected) {
 			t.Fatalf("patch args %#v do not contain %q", args, expected)
 		}

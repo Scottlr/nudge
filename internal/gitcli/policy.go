@@ -243,7 +243,7 @@ func (p PatchFormatV1) DiffConfigArgs() ([]string, error) {
 		"-c", "core.quotePath=true",
 		"-c", "diff.algorithm=myers",
 		"-c", "diff.indentHeuristic=false",
-		"-c", "diff.orderFile=",
+		"-c", "diff.orderFile=" + os.DevNull,
 		"-c", "core.attributesfile=",
 		"-c", "core.excludesfile=",
 	}, nil
@@ -386,6 +386,20 @@ func (p ContentConversionPolicyV1) Validate() error {
 		return ErrInvalidGitPolicy
 	}
 	return nil
+}
+
+// ConfigArgs returns the fixed conversion settings used alongside controlled
+// diff/status reads. Repository attributes are still recorded separately and
+// never treated as proof of byte neutrality.
+func (p ContentConversionPolicyV1) ConfigArgs() ([]string, error) {
+	if err := p.Validate(); err != nil {
+		return nil, err
+	}
+	return []string{
+		"-c", "core.autocrlf=" + p.CoreAutocrlf,
+		"-c", "core.eol=" + p.CoreEOL,
+		"-c", "core.safecrlf=" + p.CoreSafeCRLF,
+	}, nil
 }
 
 // ContentConversionEvidenceV1 persists the policy, sorted observations,
