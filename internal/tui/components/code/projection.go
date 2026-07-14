@@ -4,6 +4,7 @@ package code
 
 import (
 	"github.com/Scottlr/nudge/internal/app"
+	"github.com/Scottlr/nudge/internal/domain"
 	"github.com/Scottlr/nudge/internal/highlight"
 )
 
@@ -68,6 +69,61 @@ type Intent struct {
 	Search      *SearchRequest
 	SelectRow   *SelectRowIntent
 	Selection   *SelectionIntent
+	LargeOpen   *LargeContentOpenRequest
+	LargeWindow *LargeContentWindowRequest
+	LargeClose  *LargeContentCloseRequest
+}
+
+// LargeContentOpenRequest is the explicit confirmation intent for an
+// immutable over-threshold content identity.
+type LargeContentOpenRequest struct {
+	Request app.OpenLargeContent
+	Token   uint64
+}
+
+// LargeContentWindowRequest asks the application for one bounded line window.
+type LargeContentWindowRequest struct {
+	Request app.LargeContentWindowRequest
+	Token   uint64
+}
+
+// LargeContentCloseRequest releases the application's disposable open lease.
+type LargeContentCloseRequest struct {
+	Request app.CloseLargeContent
+	Token   uint64
+}
+
+// LargeContentOpenMsg carries the verified immutable open lease.
+type LargeContentOpenMsg struct {
+	Result app.LargeContentOpen
+	Token  uint64
+}
+
+// LargeContentWindowMsg carries one bounded line-window projection.
+type LargeContentWindowMsg struct {
+	Result app.ContentWindow
+	Token  uint64
+}
+
+// LargeContentCloseMsg confirms release of the disposable open lease.
+type LargeContentCloseMsg struct {
+	Token uint64
+	Err   error
+}
+
+// LargeContentErrorMsg retires one stale or failed large-content request.
+type LargeContentErrorMsg struct {
+	Token uint64
+	Err   error
+}
+
+// LargeContentOpenIntent constructs the confirmation-bound code-pane intent.
+func LargeContentOpenIntent(identity app.ContentIdentity, revision uint64, operationID domain.OperationID, confirmed bool, token uint64) (Intent, error) {
+	if identity.Validate() != nil || revision == 0 || operationID == "" || token == 0 {
+		return Intent{}, app.ErrInvalidLargeContentRequest
+	}
+	request := LargeContentOpenRequest{Request: app.OpenLargeContent{Identity: identity, ExpectedQueryRevision: revision, OperationID: operationID, Confirmed: confirmed}, Token: token}
+	return Intent{LargeOpen: &request}, nil
 }
 
 // SnapshotContentMsg replaces the immutable content envelope.

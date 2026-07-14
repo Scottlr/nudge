@@ -23,6 +23,21 @@ func TestClientRoutesSearchTreeQueryToConsumerPort(t *testing.T) {
 	}
 }
 
+func TestClientRoutesLargeContentWindowQueryToConsumerPort(t *testing.T) {
+	client, err := NewClient(ClientOptions{LargeContent: clientLargeContentStub{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = client.Close() }()
+	result, err := client.Query(context.Background(), LargeContentWindowQuery{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ContentWindow == nil || !result.ContentWindow.Complete {
+		t.Fatalf("large-content query result = %#v", result)
+	}
+}
+
 type clientSearchStub struct{}
 
 func (clientSearchStub) SearchTree(_ context.Context, query SearchTreeQuery) (SearchTreePage, error) {
@@ -30,3 +45,15 @@ func (clientSearchStub) SearchTree(_ context.Context, query SearchTreeQuery) (Se
 }
 
 var _ TreeSearcher = clientSearchStub{}
+
+type clientLargeContentStub struct{}
+
+func (clientLargeContentStub) ReadRange(context.Context, LargeContentRangeRequest) (ContentRange, error) {
+	return ContentRange{}, nil
+}
+
+func (clientLargeContentStub) ReadLines(context.Context, LargeContentWindowRequest) (ContentWindow, error) {
+	return ContentWindow{Complete: true, NextLine: 1}, nil
+}
+
+var _ LargeContentQueryPort = clientLargeContentStub{}

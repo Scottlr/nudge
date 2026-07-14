@@ -1,10 +1,12 @@
 package code
 
 import (
+	"crypto/sha256"
 	"strings"
 	"testing"
 
 	"github.com/Scottlr/nudge/internal/app"
+	"github.com/Scottlr/nudge/internal/domain"
 	"github.com/Scottlr/nudge/internal/domain/repository"
 	"github.com/Scottlr/nudge/internal/highlight"
 	"github.com/Scottlr/nudge/internal/tui/viewport"
@@ -36,6 +38,42 @@ func TestContentPageRequestsAreIdentityBoundAndLazy(t *testing.T) {
 	if strings.Contains(m.View(), "stale") {
 		t.Fatalf("stale page was rendered: %q", m.View())
 	}
+}
+
+func TestLargeContentProjectionKeepsOffsetsAndContinuationEvidence(t *testing.T) {
+	data := []byte("immutable large content")
+	hash := sha256.Sum256(data)
+	identity := app.ContentIdentity{Generation: 1, Snapshot: repository.SnapshotRef{Kind: repository.SnapshotCommit, ObjectID: repository.ObjectID("commit")}, RepoPathKey: repository.RepoPathKey("large.txt"), Side: app.ContentSideHead, Mode: app.ContentModeText, ByteLength: app.ByteSize(len(data)), SHA256: fmtHashForCodeTest(hash[:])}
+	digest, err := identity.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	open := app.LargeContentOpen{ID: app.LargeContentOpenID(digest), Identity: identity, QueryRevision: 3, Metadata: app.ContentMetadata{Identity: identity, Openable: true, Verified: true, PlainTextFallback: true, HighlightingDisabled: true}, PlainTextOnly: true}
+	m := NewModel()
+	intents, err := m.RequestLargeContentOpen(identity, 3, domain.OperationID("large-open"), true)
+	if err != nil || len(intents) != 1 || intents[0].LargeOpen == nil {
+		t.Fatalf("open intent = %#v, err = %v", intents, err)
+	}
+	windowIntents := m.Update(LargeContentOpenMsg{Result: open, Token: intents[0].LargeOpen.Token})
+	if len(windowIntents) != 1 || windowIntents[0].LargeWindow == nil {
+		t.Fatalf("window intent = %#v", windowIntents)
+	}
+	request := windowIntents[0].LargeWindow.Request
+	window := app.ContentWindow{OpenID: open.ID, Identity: identity, Window: request.Window, Segments: []app.ContentSegment{{Identity: identity, Line: 0, Ordinal: 0, Range: app.ByteRange{Start: 0, End: 10}, Text: "immutable", TerminalCells: 9, ContinuationAfter: true}, {Identity: identity, Line: 0, Ordinal: 10, Range: app.ByteRange{Start: 10, End: 20}, Text: "large", TerminalCells: 5, ContinuationBefore: true}}, NextLine: 1, CompleteLines: 1, Complete: true}
+	m.Update(LargeContentWindowMsg{Result: window, Token: windowIntents[0].LargeWindow.Token})
+	if len(m.LargeContentSegments()) != 2 || !strings.Contains(m.View(), "0-10") || !strings.Contains(m.View(), "10-20") {
+		t.Fatalf("large content view = %q", m.View())
+	}
+}
+
+func fmtHashForCodeTest(data []byte) string {
+	const digits = "0123456789abcdef"
+	result := make([]byte, len(data)*2)
+	for index, value := range data {
+		result[index*2] = digits[value>>4]
+		result[index*2+1] = digits[value&15]
+	}
+	return string(result)
 }
 
 func TestSelectionRejectsCrossSideAndAcceptsSameHunkSide(t *testing.T) {

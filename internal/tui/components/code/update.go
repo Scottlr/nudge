@@ -10,6 +10,28 @@ func (m *Model) Update(message any) []Intent {
 		return nil
 	}
 	switch value := message.(type) {
+	case LargeContentOpenMsg:
+		if m.large == nil {
+			m.large = newLargeContentProjection()
+		}
+		return m.large.acceptOpen(value.Result, value.Token, m.large.operation)
+	case LargeContentWindowMsg:
+		if m.large != nil {
+			m.large.acceptWindow(value.Result, value.Token)
+		}
+	case LargeContentCloseMsg:
+		if m.large != nil && m.large.open != nil && value.Token == m.large.pending {
+			if value.Err == nil {
+				m.large.reset()
+			} else {
+				m.lastError = "immutable content close failed"
+			}
+		}
+	case LargeContentErrorMsg:
+		if m.large != nil && m.large.pending == value.Token {
+			m.large.pending = 0
+			m.lastError = "immutable content request failed"
+		}
 	case SnapshotContentMsg:
 		if value.Content.Validate() != nil {
 			m.content = app.DisplayedContent{}
