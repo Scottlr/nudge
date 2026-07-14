@@ -12,6 +12,23 @@ var (
 	ErrInvalidTreeEntry = errors.New("invalid tree entry")
 )
 
+// ByteRange identifies a half-open byte interval in one immutable path.
+// Ranges are semantic match evidence; presentation must sanitize path bytes
+// separately before mapping them to terminal cells.
+type ByteRange struct {
+	Start uint32
+	End   uint32
+}
+
+// Validate checks the shape of a byte interval without interpreting its
+// contents.
+func (r ByteRange) Validate(size int) error {
+	if r.Start >= r.End || uint64(r.End) > uint64(size) {
+		return ErrInvalidRepoPath
+	}
+	return nil
+}
+
 // RepoPath is raw, repository-relative Git path identity. It is not a native
 // path and has no display or terminal semantics.
 type RepoPath []byte

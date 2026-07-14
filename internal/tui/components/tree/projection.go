@@ -44,6 +44,20 @@ type PageResult struct {
 	Page    app.TreePage
 }
 
+// SearchRequest is an inert repository-wide path-search intent. The query is
+// bound to one immutable snapshot and never derives its corpus from loaded
+// hierarchy rows.
+type SearchRequest struct {
+	Query app.SearchTreeQuery
+	Token uint64
+}
+
+// SearchResult carries one bounded immutable search page.
+type SearchResult struct {
+	Request SearchRequest
+	Page    app.SearchTreePage
+}
+
 // SelectPathIntent identifies a selected raw repository path without using
 // display text as identity.
 type SelectPathIntent struct {
@@ -53,6 +67,7 @@ type SelectPathIntent struct {
 // Intent is emitted by the component for root-owned query or selection work.
 type Intent struct {
 	PageRequest *PageRequest
+	Search      *SearchRequest
 	SelectPath  *SelectPathIntent
 }
 

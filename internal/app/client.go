@@ -43,6 +43,7 @@ type ResultClient interface {
 type ClientOptions struct {
 	Clock         Clock
 	IDs           IDSource
+	TreeSearcher  TreeSearcher
 	CommandBuffer int
 	EventBuffer   int
 }
@@ -59,13 +60,15 @@ func (SnapshotQuery) isQuery() {}
 
 // QueryResult is the bounded result of an application query.
 type QueryResult struct {
-	Snapshot AppSnapshot
+	Snapshot   AppSnapshot
+	SearchTree *SearchTreePage
 }
 
 // Client owns the reducer goroutine, mailbox, and one frontend subscription.
 // Closing the client cancels active state, joins the actor, and closes streams.
 type Client struct {
 	reducer   *Reducer
+	searcher  TreeSearcher
 	mailbox   chan clientRequest
 	snapshots *snapshotSubscription
 	events    *eventSubscription
@@ -79,6 +82,7 @@ type Client struct {
 type clientRequest struct {
 	input    ReducerInput
 	query    Query
+	ctx      context.Context
 	response chan clientResponse
 }
 
@@ -101,6 +105,7 @@ func NewClient(options ClientOptions) (*Client, error) {
 	reducer := NewReducer(ReducerConfig{Clock: options.Clock, IDs: options.IDs})
 	client := &Client{
 		reducer:   reducer,
+		searcher:  options.TreeSearcher,
 		mailbox:   make(chan clientRequest, commandBuffer),
 		snapshots: newSnapshotSubscription(reducer.Snapshot()),
 		events:    newEventSubscription(eventBuffer),
@@ -157,7 +162,7 @@ func (c *Client) Query(ctx context.Context, query Query) (QueryResult, error) {
 	if query == nil {
 		return QueryResult{}, ErrInvalidReducerInput
 	}
-	response, err := c.submit(ctx, clientRequest{query: query})
+	response, err := c.submit(ctx, clientRequest{query: query, ctx: ctx})
 	return response.queryResult, err
 }
 
@@ -223,7 +228,25 @@ func (c *Client) submit(ctx context.Context, request clientRequest) (clientRespo
 func (c *Client) run() {
 	for request := range c.mailbox {
 		if request.query != nil {
-			request.response <- clientResponse{queryResult: QueryResult{Snapshot: c.reducer.Snapshot()}}
+			if _, ok := request.query.(SnapshotQuery); ok {
+				request.response <- clientResponse{queryResult: QueryResult{Snapshot: c.reducer.Snapshot()}}
+				continue
+			}
+			search, ok := request.query.(SearchTreeQuery)
+			if !ok || c.searcher == nil {
+				request.response <- clientResponse{err: ErrTreeSearchUnavailable}
+				continue
+			}
+			ctx := request.ctx
+			if ctx == nil {
+				ctx = context.Background()
+			}
+			page, err := c.searcher.SearchTree(ctx, search)
+			if err != nil {
+				request.response <- clientResponse{err: err}
+				continue
+			}
+			request.response <- clientResponse{queryResult: QueryResult{SearchTree: &page}}
 			continue
 		}
 		response, err := c.reducer.Handle(request.input)

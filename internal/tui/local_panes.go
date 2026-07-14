@@ -16,6 +16,9 @@ func (m *Model) syncLocalReviewPanes() {
 	}
 
 	treeIntents := m.repositoryPane.Update(treepane.SnapshotRevisionMsg{Revision: m.localReview.Revision})
+	if m.localReview.Target != nil {
+		m.repositoryPane.Update(treepane.SetSearchSnapshotMsg{Snapshot: m.localReview.Target.Head})
+	}
 	if m.localReview.TreePage.Validate() == nil {
 		for _, intent := range treeIntents {
 			if intent.PageRequest == nil {

@@ -136,6 +136,30 @@ func TestRowBadgePreservesChangeAndConflictEvidence(t *testing.T) {
 	}
 }
 
+func TestSearchUsesImmutableSnapshotAndReturnsToHierarchySelection(t *testing.T) {
+	m := NewModel()
+	rootRequest := *m.InitialPageRequest()[0].PageRequest
+	m.Update(PageResultMsg{Result: PageResult{Request: rootRequest, Page: page(t, entry(t, "loaded.go", false))}})
+	m.Update(SelectRowMsg{Path: repository.RepoPathKey("loaded.go")})
+	m.Update(SetSearchSnapshotMsg{Snapshot: repository.SnapshotRef{Kind: repository.SnapshotEmpty}})
+	intents := m.Update(SetSearchQueryMsg{Query: "unloaded"})
+	if len(intents) != 1 || intents[0].Search == nil || intents[0].Search.Query.Snapshot.Kind != repository.SnapshotEmpty {
+		t.Fatalf("search intent = %#v", intents)
+	}
+	request := *intents[0].Search
+	resultPage := app.SearchTreePage{Snapshot: repository.SnapshotRef{Kind: repository.SnapshotEmpty}, Complete: true, ScannedEntries: 1, Matches: []app.TreeSearchMatch{
+		{Entry: entry(t, "deep/unloaded.go", false), Rank: app.TreeSearchRank{Class: 2, PathBytes: 16}, MatchRanges: []repository.ByteRange{{Start: 5, End: 13}}},
+	}}
+	m.Update(SearchResultMsg{Result: SearchResult{Request: request, Page: resultPage}})
+	if got := m.View(); !strings.Contains(got, "deep/unloaded.go") || strings.Contains(got, "> loaded.go ") {
+		t.Fatalf("search view = %q", got)
+	}
+	m.Update(ExitSearchMsg{})
+	if got := m.View(); !strings.Contains(got, "loaded.go") {
+		t.Fatalf("hierarchy view after search = %q", got)
+	}
+}
+
 func page(t *testing.T, entries ...repository.TreeEntry) app.TreePage {
 	t.Helper()
 	result := app.TreePage{Entries: entries, Snapshot: repository.SnapshotRef{Kind: repository.SnapshotEmpty}}

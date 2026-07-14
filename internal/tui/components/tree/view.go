@@ -18,6 +18,9 @@ func (m *Model) View() string {
 	if m == nil {
 		return ""
 	}
+	if m.searching {
+		return m.searchView()
+	}
 	rows := m.flattenRows()
 	window := viewport.Window(len(rows), m.selectedIndex(rows), m.top, m.renderHeight(), m.overscan)
 	work, err := m.budget.Begin()
@@ -34,6 +37,52 @@ func (m *Model) View() string {
 		lines = append(lines, line)
 	}
 	return strings.Join(lines, "\n")
+}
+
+func (m *Model) searchView() string {
+	window := viewport.Window(len(m.searchMatches), m.searchIndex(), m.top, m.renderHeight(), m.overscan)
+	work, err := m.budget.Begin()
+	if err != nil {
+		return ""
+	}
+	lines := make([]string, 0, window.Count())
+	for index := window.Start; index < window.End; index++ {
+		match := m.searchMatches[index]
+		selection := " "
+		if match.Entry.Path.Key() == m.selected {
+			selection = ">"
+		}
+		path := presentation.ProjectTerminalText(string(match.Entry.Path.Bytes()), presentation.TerminalTextScalar)
+		line := fmt.Sprintf("%s %s [match:%d]", selection, path, match.Rank.Class)
+		if !work.Admit(ansi.StringWidth(line)) {
+			break
+		}
+		role := theme.RoleSearch
+		if selection == ">" {
+			role = theme.RoleFocus
+		}
+		style, ok := m.theme.StyleFor(role)
+		if !ok {
+			style, _ = m.theme.StyleFor(theme.RoleForeground)
+		}
+		lines = append(lines, style.Lipgloss().Render(line))
+	}
+	if len(lines) == 0 && m.searchPending != 0 {
+		return "searching..."
+	}
+	if len(lines) == 0 {
+		return "no repository paths matched"
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m *Model) searchIndex() int {
+	for index, match := range m.searchMatches {
+		if match.Entry.Path.Key() == m.selected {
+			return index
+		}
+	}
+	return 0
 }
 
 func (m *Model) renderRow(row TreeRow) string {

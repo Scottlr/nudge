@@ -13,11 +13,13 @@ import (
 )
 
 const (
-	defaultPageLimit = 200
-	maxRetainedPages = 16
-	defaultOverscan  = 2
-	defaultHeight    = 20
-	maxTreeDepth     = 256
+	defaultPageLimit   = 200
+	defaultSearchLimit = 50
+	maxRetainedPages   = 16
+	maxSearchResults   = 200
+	defaultOverscan    = 2
+	defaultHeight      = 20
+	maxTreeDepth       = 256
 )
 
 type pageState struct {
@@ -28,24 +30,31 @@ type pageState struct {
 
 // Model is the repository pane's disposable state.
 type Model struct {
-	filter           FilterMode
-	snapshotRevision uint64
-	expanded         map[repository.RepoPathKey]bool
-	selected         repository.RepoPathKey
-	pages            map[PageIdentity]pageState
-	pageOrder        []PageIdentity
-	pending          map[PageIdentity]uint64
-	nextToken        uint64
-	threadBadges     map[repository.RepoPathKey]ThreadBadge
-	pageLimit        int
-	maxPages         int
-	overscan         int
-	budget           viewport.RenderBudget
-	theme            theme.Theme
-	width            int
-	height           int
-	top              int
-	lastError        string
+	filter            FilterMode
+	snapshotRevision  uint64
+	expanded          map[repository.RepoPathKey]bool
+	selected          repository.RepoPathKey
+	pages             map[PageIdentity]pageState
+	pageOrder         []PageIdentity
+	pending           map[PageIdentity]uint64
+	nextToken         uint64
+	threadBadges      map[repository.RepoPathKey]ThreadBadge
+	pageLimit         int
+	maxPages          int
+	overscan          int
+	budget            viewport.RenderBudget
+	theme             theme.Theme
+	width             int
+	height            int
+	top               int
+	lastError         string
+	searchSnapshot    repository.SnapshotRef
+	searching         bool
+	searchQuery       string
+	searchMatches     []app.TreeSearchMatch
+	searchCursor      string
+	searchPending     uint64
+	hierarchySelected repository.RepoPathKey
 }
 
 // NewModel creates a Changed-filter repository pane with bounded page
@@ -197,6 +206,10 @@ func (m *Model) touchPage(identity PageIdentity) {
 }
 
 func (m *Model) reposition() {
+	if m.searching {
+		m.top = viewport.Window(len(m.searchMatches), m.searchIndex(), m.top, m.renderHeight(), m.overscan).Top
+		return
+	}
 	rows := m.flattenRows()
 	m.top = viewport.Window(len(rows), m.selectedIndex(rows), m.top, m.renderHeight(), m.overscan).Top
 }

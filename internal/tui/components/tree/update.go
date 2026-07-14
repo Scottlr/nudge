@@ -64,14 +64,32 @@ func (m *Model) Update(message any) []Intent {
 	}
 	switch value := message.(type) {
 	case SnapshotRevisionMsg:
+		if m.searching {
+			m.exitSearch()
+		}
 		if value.Revision != m.snapshotRevision {
 			m.snapshotRevision = value.Revision
 			m.clearPages()
 			return m.InitialPageRequest()
 		}
+	case SetSearchSnapshotMsg:
+		m.setSearchSnapshot(value.Snapshot)
+	case SetSearchQueryMsg:
+		return m.setSearchQuery(value.Query)
+	case SearchResultMsg:
+		m.acceptSearch(value.Result)
+	case SearchErrorMsg:
+		m.searchError(value.Request)
+	case LoadNextSearchPageMsg:
+		return m.loadNextSearchPage()
+	case ExitSearchMsg:
+		m.exitSearch()
 	case SetFilterMsg:
 		if value.Filter != FilterChanged && value.Filter != FilterAll {
 			return nil
+		}
+		if m.searching {
+			m.exitSearch()
 		}
 		if value.Filter != m.filter {
 			m.filter = value.Filter
@@ -109,6 +127,14 @@ func (m *Model) Update(message any) []Intent {
 	case MoveSelectionMsg:
 		m.moveSelection(value.Delta)
 	case SelectRowMsg:
+		if m.searching {
+			if m.hasSearchMatch(value.Path) {
+				m.selected = value.Path
+				m.reposition()
+				return m.selectedIntent()
+			}
+			return nil
+		}
 		if m.findRow(value.Path) {
 			m.selected = value.Path
 			m.reposition()
