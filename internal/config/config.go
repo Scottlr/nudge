@@ -163,7 +163,7 @@ func (c Config) Validate() error {
 	if !validConfigText(c.Review.DefaultBaseBranch) || c.Review.DefaultBaseBranch == "" || c.Review.DiffContextLines < 0 || c.Review.DiffContextLines > 1000 {
 		return invalidField("review")
 	}
-	if c.Review.LargeFileBytes <= 0 || c.Review.HighlightFileBytes <= 0 || c.Review.HighlightFileBytes > c.Review.LargeFileBytes {
+	if c.Review.LargeFileBytes <= 0 || c.Review.LargeFileBytes > 2_000_000 || c.Review.HighlightFileBytes <= 0 || c.Review.HighlightFileBytes > 1_000_000 || c.Review.HighlightFileBytes > c.Review.LargeFileBytes {
 		return invalidField("review.file_limits")
 	}
 	if c.Review.FocusedRefreshMaxSeconds < 1 || c.Review.FocusedRefreshMaxSeconds > 30 {
