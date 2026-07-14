@@ -52,6 +52,22 @@ type RefreshTarget struct {
 	CorrelationID CorrelationID
 }
 
+// OpenSession requests restoration or creation of the explicitly selected
+// session mode after repository and target evidence are available.
+type OpenSession struct {
+	Target        repository.ResolvedTarget
+	Mode          SessionOpenMode
+	Persistence   PersistenceMode
+	CorrelationID CorrelationID
+}
+
+// CloseSession requests explicit closure, which excludes the durable session
+// from automatic restore. Normal quit uses release and leaves it unfinished.
+type CloseSession struct {
+	SessionID     domain.ReviewSessionID
+	CorrelationID CorrelationID
+}
+
 // CancelOperation requests cancellation of one active application operation.
 type CancelOperation struct {
 	OperationID   domain.OperationID
@@ -68,6 +84,8 @@ func (OpenRepository) isReducerInput()  {}
 func (SelectTarget) isReducerInput()    {}
 func (SelectFile) isReducerInput()      {}
 func (RefreshTarget) isReducerInput()   {}
+func (OpenSession) isReducerInput()     {}
+func (CloseSession) isReducerInput()    {}
 func (CancelOperation) isReducerInput() {}
 func (Shutdown) isReducerInput()        {}
 
@@ -75,5 +93,7 @@ func (OpenRepository) isCommand()  {}
 func (SelectTarget) isCommand()    {}
 func (SelectFile) isCommand()      {}
 func (RefreshTarget) isCommand()   {}
+func (OpenSession) isCommand()     {}
+func (CloseSession) isCommand()    {}
 func (CancelOperation) isCommand() {}
 func (Shutdown) isCommand()        {}

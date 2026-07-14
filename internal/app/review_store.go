@@ -23,6 +23,17 @@ var (
 	ErrSessionRevisionConflict = errors.New("session revision conflict")
 	// ErrReviewStoreCorrupt reports persisted data that no longer validates.
 	ErrReviewStoreCorrupt = errors.New("review store data is corrupt")
+	// ErrRepositoryBindingChanged reports a repository/worktree identity that
+	// no longer matches the durable binding with the same Nudge ID.
+	ErrRepositoryBindingChanged = errors.New("repository binding changed")
+	// ErrSessionBusy reports that another process owns the compatible session
+	// lock. Callers must choose read-only history or an explicit distinct session.
+	ErrSessionBusy = errors.New("review session is busy")
+	// ErrSessionReadOnly reports a mutation requested from an immutable handle.
+	ErrSessionReadOnly = errors.New("review session is read-only")
+	// ErrSessionTargetConflict reports an attempt to change a session's target
+	// meaning rather than advance its compatible generation.
+	ErrSessionTargetConflict = errors.New("review session target conflict")
 )
 
 const (
@@ -268,6 +279,7 @@ type ReviewStore interface {
 // ReviewStoreTx contains only application operations needed by the core
 // review workflows and staged generation activation.
 type ReviewStoreTx interface {
+	SaveSession(ctx context.Context, session review.ReviewSession) error
 	SaveThread(ctx context.Context, thread review.ReviewThread) error
 	SaveMessage(ctx context.Context, message review.Message) error
 	SaveCaptureGeneration(ctx context.Context, generation CaptureGeneration, manifest CaptureManifest) error

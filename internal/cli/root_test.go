@@ -19,6 +19,9 @@ func TestRootCommandShowsHelp(t *testing.T) {
 	if !strings.Contains(output.String(), "Usage:") {
 		t.Fatalf("root output does not contain usage: %q", output.String())
 	}
+	if command.Flags().Lookup("no-persist") == nil || !strings.Contains(output.String(), "--no-persist") {
+		t.Fatalf("root output does not expose --no-persist: %q", output.String())
+	}
 }
 
 func TestVersionCommandUsesInjectedBuildInfo(t *testing.T) {

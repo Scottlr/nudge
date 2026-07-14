@@ -17,15 +17,17 @@ import (
 	"github.com/Scottlr/nudge/internal/diff"
 	"github.com/Scottlr/nudge/internal/domain"
 	"github.com/Scottlr/nudge/internal/domain/repository"
+	"github.com/Scottlr/nudge/internal/filelock"
 	"github.com/Scottlr/nudge/internal/gitcli"
 	"github.com/Scottlr/nudge/internal/highlight"
 	"github.com/Scottlr/nudge/internal/paths"
 	"github.com/Scottlr/nudge/internal/process"
+	"github.com/Scottlr/nudge/internal/store/sqlite"
 	"github.com/Scottlr/nudge/internal/tui"
 	"github.com/Scottlr/nudge/internal/workspace"
 )
 
-func runLocalReview(ctx context.Context, startPath string) error {
+func runLocalReview(ctx context.Context, startPath string, noPersist bool) error {
 	if ctx == nil {
 		return errors.New("local review: nil context")
 	}
@@ -51,6 +53,34 @@ func runLocalReview(ctx context.Context, startPath string) error {
 	loaded, err := config.Load(runCtx, locations, environ, config.CLIOverrides{})
 	if err != nil {
 		return fmt.Errorf("local review: configuration: %w", err)
+	}
+	persistenceMode := app.PersistenceDurable
+	if noPersist || !loaded.Config.Persistence.Enabled {
+		persistenceMode = app.PersistenceNoPersist
+	}
+	var sessionManager *app.SessionManager
+	persistenceDegraded := false
+	if persistenceMode == app.PersistenceDurable {
+		durableStore, storeErr := sqlite.Open(runCtx, filepath.Join(locations.StateRoot, "nudge.db"))
+		if storeErr != nil {
+			persistenceDegraded = true
+		} else {
+			leaseManager, leaseErr := filelock.NewSessionLeaseManager(locations.StateRoot)
+			if leaseErr != nil {
+				_ = durableStore.Close()
+				persistenceDegraded = true
+			} else {
+				sessionManager, leaseErr = app.NewSessionManager(app.SessionManagerConfig{
+					Store: durableStore, Leases: leaseManager, AllowEphemeralFallback: true,
+				})
+				if leaseErr != nil {
+					_ = durableStore.Close()
+					persistenceDegraded = true
+				} else {
+					defer durableStore.Close()
+				}
+			}
+		}
 	}
 
 	trusted, err := process.NewExecutableResolver().Resolve(runCtx, process.ResolveExecutableRequest{
@@ -140,6 +170,9 @@ func runLocalReview(ctx context.Context, startPath string) error {
 			Content:     contentLoader,
 			Highlighter: highlighter,
 		},
+		Persistence:         persistenceMode,
+		Sessions:            sessionManager,
+		PersistenceDegraded: persistenceDegraded,
 	})
 	if err != nil {
 		return fmt.Errorf("local review: runtime: %w", err)

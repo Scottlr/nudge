@@ -46,30 +46,36 @@ type Highlighter interface {
 
 // LocalReviewConfig supplies the explicit owner ports for one local runtime.
 type LocalReviewConfig struct {
-	Source LocalReviewSource
-	IDs    IDSource
-	Clock  Clock
+	Source              LocalReviewSource
+	IDs                 IDSource
+	Clock               Clock
+	Persistence         PersistenceMode
+	Sessions            *SessionManager
+	PersistenceDegraded bool
 }
 
 // LocalReviewSnapshot is a bounded immutable projection of local-review
 // progress and the first changed file. It contains no live filesystem path
 // reads; local working-tree bytes come only from the adopted capture.
 type LocalReviewSnapshot struct {
-	Revision      uint64
-	StartPath     string
-	Phase         LocalReviewPhase
-	Repository    *RepositoryState
-	Target        *repository.ResolvedTarget
-	CaptureID     domain.CaptureID
-	TreePage      TreePage
-	ChangedFiles  []repository.ChangedFile
-	ActiveFile    *repository.ChangedFile
-	FileContent   *repository.FileContent
-	FileDiff      *repository.FileDiff
-	Displayed     *DisplayedContent
-	DisplayedPage *DisplayedContentPage
-	Highlighted   *highlight.HighlightedFile
-	Error         *AppError
+	Revision            uint64
+	Persistence         PersistenceMode
+	SessionID           domain.ReviewSessionID
+	PersistenceDegraded bool
+	StartPath           string
+	Phase               LocalReviewPhase
+	Repository          *RepositoryState
+	Target              *repository.ResolvedTarget
+	CaptureID           domain.CaptureID
+	TreePage            TreePage
+	ChangedFiles        []repository.ChangedFile
+	ActiveFile          *repository.ChangedFile
+	FileContent         *repository.FileContent
+	FileDiff            *repository.FileDiff
+	Displayed           *DisplayedContent
+	DisplayedPage       *DisplayedContentPage
+	Highlighted         *highlight.HighlightedFile
+	Error               *AppError
 }
 
 // Clone returns a defensive snapshot copy for frontend projection.
@@ -127,9 +133,12 @@ func (s LocalReviewSnapshot) Clone() LocalReviewSnapshot {
 // LocalReview runs one cancellable local open. A runtime owns one worker; a
 // second Start call is rejected so stale result ordering cannot be ambiguous.
 type LocalReview struct {
-	source LocalReviewSource
-	ids    IDSource
-	clock  Clock
+	source              LocalReviewSource
+	ids                 IDSource
+	clock               Clock
+	persistence         PersistenceMode
+	sessions            *SessionManager
+	persistenceDegraded bool
 
 	mu      sync.Mutex
 	started bool
@@ -146,7 +155,17 @@ func NewLocalReview(config LocalReviewConfig) (*LocalReview, error) {
 	if config.Clock == nil {
 		config.Clock = SystemClock{}
 	}
-	return &LocalReview{source: config.Source, ids: config.IDs, clock: config.Clock}, nil
+	persistence := config.Persistence
+	if persistence == "" {
+		persistence = PersistenceDurable
+	}
+	if persistence != PersistenceDurable && persistence != PersistenceNoPersist {
+		return nil, ErrInvalidLocalReviewSource
+	}
+	return &LocalReview{
+		source: config.Source, ids: config.IDs, clock: config.Clock, persistence: persistence,
+		sessions: config.Sessions, persistenceDegraded: config.PersistenceDegraded,
+	}, nil
 }
 
 // Start begins one asynchronous local-review open and returns its bounded
@@ -173,10 +192,16 @@ func (r *LocalReview) Start(ctx context.Context, startPath string) (<-chan Local
 
 func (r *LocalReview) run(ctx context.Context, startPath string, stream chan<- LocalReviewSnapshot) {
 	var revision uint64
+	var sessionID domain.ReviewSessionID
 	publish := func(snapshot LocalReviewSnapshot) bool {
 		revision++
 		snapshot.Revision = revision
 		snapshot.StartPath = startPath
+		if snapshot.Persistence == "" {
+			snapshot.Persistence = r.persistence
+		}
+		snapshot.SessionID = sessionID
+		snapshot.PersistenceDegraded = r.persistenceDegraded
 		select {
 		case stream <- snapshot.Clone():
 			return true
@@ -235,7 +260,7 @@ func (r *LocalReview) run(ctx context.Context, startPath string, stream chan<- L
 			_ = artifacts.Abort(context.Background())
 		}
 	}()
-	sessionID, err := domain.NewReviewSessionID(r.ids.NewID())
+	sessionID, err = domain.NewReviewSessionID(r.ids.NewID())
 	if err != nil {
 		fail(LocalReviewCapturing, "create review session", err, repositoryState, nil, "", TreePage{}, nil)
 		return
@@ -284,6 +309,31 @@ func (r *LocalReview) run(ctx context.Context, startPath string, stream chan<- L
 	if err != nil {
 		fail(LocalReviewCapturing, "resolve local target", err, repositoryState, nil, adoption.Generation.CaptureID, TreePage{}, nil)
 		return
+	}
+	var sessionHandle *SessionHandle
+	if r.sessions != nil {
+		handle, openErr := r.sessions.OpenSession(ctx, OpenSessionRequest{
+			Repository:  repo,
+			Worktree:    worktree,
+			Target:      target,
+			Mode:        SessionWritable,
+			Persistence: r.persistence,
+		})
+		if openErr != nil {
+			fail(LocalReviewCapturing, "open review session", openErr, repositoryState, &target, adoption.Generation.CaptureID, TreePage{}, nil)
+			return
+		}
+		sessionHandle = &handle
+		r.persistenceDegraded = r.persistenceDegraded || handle.PersistenceDegraded
+		defer func() { _ = r.sessions.ReleaseSession(context.Background(), sessionHandle) }()
+		if handle.Restored && handle.Session.Target.Fingerprint != target.Fingerprint {
+			if err := r.sessions.RefreshTarget(ctx, sessionHandle, target); err != nil {
+				fail(LocalReviewCapturing, "refresh review session target", err, repositoryState, &target, adoption.Generation.CaptureID, TreePage{}, nil)
+				return
+			}
+		}
+		target = sessionHandle.Session.Target
+		sessionID = sessionHandle.Session.ID
 	}
 	if !publish(LocalReviewSnapshot{Phase: LocalReviewLoadingTree, Repository: repositoryState, Target: &target, CaptureID: adoption.Generation.CaptureID}) {
 		return

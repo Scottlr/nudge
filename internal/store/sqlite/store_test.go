@@ -8,6 +8,7 @@ import (
 	"errors"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -171,6 +172,64 @@ func TestStoreRejectsAlteredMigration(t *testing.T) {
 	_, err = Open(ctx, path)
 	if !errors.Is(err, ErrMigrationChecksum) {
 		t.Fatalf("altered migration error = %v, want ErrMigrationChecksum", err)
+	}
+}
+
+func TestStoreSessionLifecycleAndBindingFence(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, testDatabasePath(t))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+	repo, worktree, session, _, _ := testStoreValues()
+	if err := store.UpsertRepository(ctx, repo, worktree); err != nil {
+		t.Fatalf("upsert repository: %v", err)
+	}
+	guard, err := store.CreateSession(ctx, session, domain.SessionLeaseID("lease-1"))
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	changed := session
+	changed.Target.Generation = 2
+	changed.Target.Fingerprint = strings.Repeat("b", 64)
+	changed.Target.Head.Fingerprint = changed.Target.Fingerprint
+	changed.UpdatedAt = session.UpdatedAt.Add(time.Second)
+	guard, err = store.WithSessionTx(ctx, guard, func(tx app.ReviewStoreTx) error {
+		return tx.SaveSession(ctx, changed)
+	})
+	if err != nil {
+		t.Fatalf("save changed generation: %v", err)
+	}
+	key, err := review.SessionKeyFor(changed)
+	if err != nil {
+		t.Fatalf("changed session key: %v", err)
+	}
+	restored, err := store.FindCompatibleSession(ctx, key)
+	if err != nil || restored.Target.Generation != 2 || restored.Target.Fingerprint != changed.Target.Fingerprint {
+		t.Fatalf("restored changed session = %#v, err=%v", restored, err)
+	}
+	closed := changed
+	closedAt := changed.UpdatedAt.Add(time.Second)
+	if err := closed.Close(closedAt); err != nil {
+		t.Fatalf("close session value: %v", err)
+	}
+	closedGuard, err := store.WithSessionTx(ctx, guard, func(tx app.ReviewStoreTx) error {
+		return tx.SaveSession(ctx, closed)
+	})
+	if err != nil {
+		t.Fatalf("persist closed session: %v", err)
+	}
+	if _, err := store.FindCompatibleSession(ctx, key); !errors.Is(err, app.ErrReviewStoreNotFound) {
+		t.Fatalf("closed session lookup error = %v, want not found", err)
+	}
+	if _, err := store.WithSessionTx(ctx, closedGuard, func(app.ReviewStoreTx) error { return nil }); !errors.Is(err, app.ErrSessionLeaseLost) {
+		t.Fatalf("closed session mutation error = %v, want lease lost", err)
+	}
+	replaced := repo
+	replaced.Binding.CommonGitDirIdentity = repository.NativeIdentity("different-native")
+	if err := store.UpsertRepository(ctx, replaced, worktree); !errors.Is(err, app.ErrRepositoryBindingChanged) {
+		t.Fatalf("binding replacement error = %v, want binding changed", err)
 	}
 }
 
