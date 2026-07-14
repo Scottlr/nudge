@@ -119,6 +119,32 @@ func TestResolvedTargetRequiresDestinationWhenEditable(t *testing.T) {
 	}
 }
 
+func TestResolvedBranchTargetRequiresFrozenBaseEvidence(t *testing.T) {
+	spec, err := NewBranchTargetSpec("refs/heads/main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := ResolvedTarget{
+		Spec:             spec,
+		Generation:       1,
+		Base:             SnapshotRef{Kind: SnapshotCommit, ObjectID: ObjectID("merge-base")},
+		Head:             SnapshotRef{Kind: SnapshotCommit, ObjectID: ObjectID("head")},
+		ResolvedCommit:   ObjectID("head"),
+		ResolvedBaseRef:  ObjectID("base-ref"),
+		MergeBase:        ObjectID("merge-base"),
+		BaseBranchSource: "repository_preference",
+		BranchRef:        "refs/heads/feature",
+		ResolvedAt:       time.Date(2026, time.July, 14, 9, 0, 0, 0, time.UTC),
+	}
+	if _, err := NewResolvedTarget(target); err != nil {
+		t.Fatalf("resolved branch target rejected: %v", err)
+	}
+	target.ResolvedBaseRef = ""
+	if _, err := NewResolvedTarget(target); !errors.Is(err, ErrInvalidTargetSpec) {
+		t.Fatalf("branch without frozen base ref error = %v, want invalid target", err)
+	}
+}
+
 func TestRepositoryAndLinkedWorktreeKeepBindingPathsSeparate(t *testing.T) {
 	repositoryID, err := domain.NewRepositoryID("repository-1")
 	if err != nil {

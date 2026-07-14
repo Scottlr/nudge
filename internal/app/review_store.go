@@ -236,6 +236,7 @@ type AcceptedTargetGeneration struct {
 	Manifest           CaptureManifest
 	PolicyEvaluation   CapturePolicyEvaluation
 	RetentionReference string
+	Target             *repository.ResolvedTarget
 }
 
 // Validate checks the cross-record identities without requiring the current
@@ -257,6 +258,11 @@ func (g AcceptedTargetGeneration) Validate() error {
 	}
 	if g.RetentionReference != "" && !stableText(g.RetentionReference) {
 		return ErrReviewStoreInput
+	}
+	if g.Target != nil {
+		if err := g.Target.Validate(); err != nil || g.Target.Generation != g.Generation.Generation {
+			return ErrReviewStoreInput
+		}
 	}
 	return nil
 }
