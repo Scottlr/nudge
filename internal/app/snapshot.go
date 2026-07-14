@@ -77,6 +77,16 @@ type ThreadDetail struct {
 	MessageCount uint64
 }
 
+// ThreadWindow is the bounded canonical thread projection. It contains only
+// complete summaries and a revision-bound continuation cursor.
+type ThreadWindow struct {
+	Items      []ThreadSummary
+	Query      ThreadPage
+	NextCursor *ThreadCursor
+	TotalCount uint64
+	Revision   uint64
+}
+
 // FileView identifies the active file content request without embedding large
 // content in the application snapshot.
 type FileView struct {
@@ -101,6 +111,7 @@ type AppSnapshot struct {
 	Tree          TreeProjection
 	ChangedFiles  []ChangedFileSummary
 	Threads       []ThreadSummary
+	ThreadWindow  ThreadWindow
 	ActiveThread  *ThreadDetail
 	ActiveFile    *FileView
 	Provider      ProviderStatus
@@ -116,6 +127,7 @@ func (s AppSnapshot) Clone() AppSnapshot {
 	copySnapshot.Tree = s.Tree.clone()
 	copySnapshot.ChangedFiles = cloneChangedFileSummaries(s.ChangedFiles)
 	copySnapshot.Threads = cloneThreadSummaries(s.Threads)
+	copySnapshot.ThreadWindow = s.ThreadWindow.clone()
 	if s.ActiveThread != nil {
 		activeThread := *s.ActiveThread
 		activeThread.Summary = cloneThreadSummary(s.ActiveThread.Summary)
@@ -138,7 +150,8 @@ func snapshotFromState(state State) AppSnapshot {
 		Tree:          state.Tree.clone(),
 		ChangedFiles:  cloneChangedFileSummaries(state.ChangedFiles),
 		Provider:      state.Provider,
-		Threads:       nil,
+		Threads:       cloneThreadSummaries(state.ThreadWindow.Items),
+		ThreadWindow:  state.ThreadWindow.clone(),
 		Operations:    make([]OperationState, 0, len(state.Operations)),
 		Notifications: cloneNotifications(state.Notifications),
 	}
@@ -165,7 +178,11 @@ func snapshotFromState(state State) AppSnapshot {
 			Fingerprint:     state.Target.Fingerprint,
 		}
 	}
-	if state.ActiveThread != nil {
+	if state.ActiveThreadDetail != nil {
+		activeThread := *state.ActiveThreadDetail
+		activeThread.Summary = cloneThreadSummary(state.ActiveThreadDetail.Summary)
+		snapshot.ActiveThread = &activeThread
+	} else if state.ActiveThread != nil {
 		activeThread := ThreadDetail{Summary: ThreadSummary{ID: *state.ActiveThread}}
 		snapshot.ActiveThread = &activeThread
 	}
@@ -180,6 +197,20 @@ func snapshotFromState(state State) AppSnapshot {
 		return snapshot.Operations[i].ID < snapshot.Operations[j].ID
 	})
 	return snapshot
+}
+
+func (w ThreadWindow) clone() ThreadWindow {
+	copyWindow := w
+	copyWindow.Items = cloneThreadSummaries(w.Items)
+	if w.Query.Cursor != nil {
+		cursor := *w.Query.Cursor
+		copyWindow.Query.Cursor = &cursor
+	}
+	if w.NextCursor != nil {
+		cursor := *w.NextCursor
+		copyWindow.NextCursor = &cursor
+	}
+	return copyWindow
 }
 
 func targetGeneration(target *repository.ResolvedTarget) repository.TargetGeneration {

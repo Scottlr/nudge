@@ -10,17 +10,19 @@ import (
 // State is the canonical application state. Only Reducer.Handle may mutate
 // the reducer-owned instance; frontends receive AppSnapshot values instead.
 type State struct {
-	Revision      uint64
-	Repository    *RepositoryState
-	SessionID     *domain.ReviewSessionID
-	Target        *repository.ResolvedTarget
-	Tree          TreeProjection
-	ChangedFiles  []ChangedFileSummary
-	ActiveFile    *repository.RepoPath
-	ActiveThread  *domain.ReviewThreadID
-	Provider      ProviderStatus
-	Operations    map[domain.OperationID]OperationState
-	Notifications []Notification
+	Revision           uint64
+	Repository         *RepositoryState
+	SessionID          *domain.ReviewSessionID
+	Target             *repository.ResolvedTarget
+	Tree               TreeProjection
+	ChangedFiles       []ChangedFileSummary
+	ThreadWindow       ThreadWindow
+	ActiveFile         *repository.RepoPath
+	ActiveThread       *domain.ReviewThreadID
+	ActiveThreadDetail *ThreadDetail
+	Provider           ProviderStatus
+	Operations         map[domain.OperationID]OperationState
+	Notifications      []Notification
 }
 
 // RepositoryState contains the repository and selected worktree loaded by the
@@ -79,8 +81,14 @@ func (s State) clone() State {
 	copyState.Target = cloneResolvedTarget(s.Target)
 	copyState.Tree = s.Tree.clone()
 	copyState.ChangedFiles = cloneChangedFileSummaries(s.ChangedFiles)
+	copyState.ThreadWindow = s.ThreadWindow.clone()
 	copyState.ActiveFile = cloneRepoPath(s.ActiveFile)
 	copyState.ActiveThread = cloneReviewThreadID(s.ActiveThread)
+	if s.ActiveThreadDetail != nil {
+		detail := *s.ActiveThreadDetail
+		detail.Summary = cloneThreadSummary(s.ActiveThreadDetail.Summary)
+		copyState.ActiveThreadDetail = &detail
+	}
 	copyState.Operations = make(map[domain.OperationID]OperationState, len(s.Operations))
 	for id, operation := range s.Operations {
 		copyState.Operations[id] = operation
