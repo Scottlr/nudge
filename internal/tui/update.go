@@ -15,6 +15,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m == nil {
 		return m, nil
 	}
+	if m.scheduler == nil {
+		m.scheduler = DefaultRenderScheduler()
+	}
 	switch message := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.setDimensions(Dimensions{Width: message.Width, Height: message.Height})
@@ -41,6 +44,20 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.setFocus(message.Pane)
 	case SetNarrowPaneMsg:
 		m.setNarrowPane(message.Pane)
+	case StartVisibleAnimationMsg:
+		return m, m.schedulerPlan(m.scheduler.StartVisibleWork())
+	case StopVisibleAnimationMsg:
+		m.scheduler.StopVisibleWork()
+	case SetReducedMotionMsg:
+		return m, m.schedulerPlan(m.scheduler.SetReducedMotion(message.Reduced))
+	case InvalidateRenderMsg:
+		return m, m.schedulerPlan(m.scheduler.Invalidate())
+	case RenderTickMsg:
+		accepted, next := m.scheduler.AcceptTick(message)
+		if accepted {
+			m.animationFrame++
+			return m, m.schedulerPlan(next)
+		}
 	case ApplicationIntentMsg:
 		if message.Command == nil {
 			m.lastError = presentation.ProjectTerminalText(errNilApplicationCommand.Error(), presentation.TerminalTextScalar)
@@ -65,6 +82,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, func() tea.Msg { return tea.Quit() }
 	}
 	return m, nil
+}
+
+func (m *Model) schedulerPlan(plan TickPlan) tea.Cmd {
+	if plan.Command == nil {
+		return nil
+	}
+	return plan.Command
 }
 
 func receiveSnapshot(stream <-chan app.AppSnapshot) tea.Cmd {

@@ -39,6 +39,20 @@ type SetNarrowPaneMsg struct {
 	Pane Pane
 }
 
+// StartVisibleAnimationMsg and StopVisibleAnimationMsg let the owning root
+// consumer declare whether an animated marker is visible.
+type StartVisibleAnimationMsg struct{}
+type StopVisibleAnimationMsg struct{}
+
+// SetReducedMotionMsg supplies the run-scoped presentation decision without
+// making the scheduler responsible for terminal capability policy.
+type SetReducedMotionMsg struct {
+	Reduced bool
+}
+
+// InvalidateRenderMsg requests one coalesced redraw/tick opportunity.
+type InvalidateRenderMsg struct{}
+
 // ApplicationIntentMsg carries an application-owned command for asynchronous
 // dispatch by the root.
 type ApplicationIntentMsg struct {
