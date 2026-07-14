@@ -26,7 +26,7 @@ func observeNative(path string) (app.VolumeEvidence, error) {
 	if err := unix.Statfs(path, &filesystem); err != nil {
 		return app.VolumeEvidence{}, err
 	}
-	if filesystem.Bsize <= 0 || filesystem.Bavail < 0 {
+	if filesystem.Bsize <= 0 {
 		return app.VolumeEvidence{}, errorsNative()
 	}
 	blockSize := uint64(filesystem.Bsize)
