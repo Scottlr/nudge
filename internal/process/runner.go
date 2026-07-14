@@ -115,9 +115,9 @@ func (r *DefaultRunner) Run(ctx context.Context, spec Spec) (Result, error) {
 		stderrDone <- readFiniteStderr(stderr, spec.StderrLimit, failures, cmd.stop)
 	}()
 
-	waitErr := cmd.wait()
 	stdoutResult := <-stdoutDone
 	stderrResult := <-stderrDone
+	waitErr := cmd.wait()
 	cmd.finish()
 
 	result := Result{
@@ -153,9 +153,9 @@ func (r *DefaultRunner) RunStream(ctx context.Context, spec Spec, stdout io.Writ
 		stderrDone <- readFiniteStderr(stderrPipe, spec.StderrLimit, failures, cmd.stop)
 	}()
 
-	waitErr := cmd.wait()
 	stdoutResult := <-stdoutDone
 	stderrResult := <-stderrDone
+	waitErr := cmd.wait()
 	cmd.finish()
 
 	result := StreamResult{
@@ -804,9 +804,9 @@ func (p *managedProcess) CloseStdin() error {
 func (p *managedProcess) Wait() (StreamResult, error) {
 	p.waitOnce.Do(func() {
 		p.waitDone = make(chan struct{})
-		waitErr := p.command.wait()
 		stdout := <-p.stdoutDone
 		stderr := <-p.stderrDone
+		waitErr := p.command.wait()
 		p.command.finish()
 		p.result = StreamResult{
 			ExitCode:    exitCode(p.command.cmd),
