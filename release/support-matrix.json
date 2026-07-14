@@ -1,0 +1,315 @@
+{
+  "schema_version": 1,
+  "matrix_revision": 1,
+  "candidates": [
+    {
+      "id": "darwin-arm64",
+      "goos": "darwin",
+      "goarch": "arm64",
+      "native_runner": {
+        "label": "macos-14",
+        "kind": "github-hosted",
+        "availability": "available",
+        "owner": "T076"
+      },
+      "minimum_prerequisites": [
+        {
+          "kind": "os",
+          "name": "macOS",
+          "minimum": "12.0",
+          "owner": "Go 1.25 release requirements"
+        },
+        {
+          "kind": "tool",
+          "name": "Git",
+          "minimum": "T069 machine-Git policy",
+          "owner": "T069"
+        },
+        {
+          "kind": "tool",
+          "name": "Go",
+          "minimum": "1.25.0",
+          "owner": "go.mod"
+        }
+      ],
+      "required_capability_checks": [
+        {
+          "id": "git-policy",
+          "owner": "internal/gitcli",
+          "contract": "T069 deterministic machine-Git, rename, conversion, patch, and apply policy"
+        },
+        {
+          "id": "locks",
+          "owner": "internal/filelock",
+          "contract": "OS lock ownership and non-stealing lease semantics"
+        },
+        {
+          "id": "paths",
+          "owner": "internal/paths",
+          "contract": "Canonical containment and protected native path effects"
+        },
+        {
+          "id": "process",
+          "owner": "internal/process",
+          "contract": "Trusted executable resolution and bounded child-process lifecycle"
+        },
+        {
+          "id": "sqlite",
+          "owner": "internal/store/sqlite",
+          "contract": "CGo-free SQLite transactions, WAL, and writer fencing"
+        },
+        {
+          "id": "tui",
+          "owner": "internal/tui",
+          "contract": "Bubble Tea v2 keyboard-complete projection and bounded rendering"
+        },
+        {
+          "id": "workspace",
+          "owner": "internal/workspace",
+          "contract": "Owned capture, review-snapshot, proposal, and isolation roots"
+        }
+      ],
+      "wsl_treatment": {
+        "mode": "native_only",
+        "requirement": "Run directly in the macOS environment; do not infer WSL behavior.",
+        "owner": "T075"
+      },
+      "provisional_disposition": {
+        "status": "candidate",
+        "reason": "Candidate only; T063 requires current native, workload, security, and human-approval evidence before advertisement."
+      }
+    },
+    {
+      "id": "linux-amd64",
+      "goos": "linux",
+      "goarch": "amd64",
+      "native_runner": {
+        "label": "ubuntu-24.04",
+        "kind": "github-hosted",
+        "availability": "available",
+        "owner": "T076"
+      },
+      "minimum_prerequisites": [
+        {
+          "kind": "os",
+          "name": "Ubuntu",
+          "minimum": "24.04",
+          "owner": "GitHub-hosted runner requirements"
+        },
+        {
+          "kind": "tool",
+          "name": "Git",
+          "minimum": "T069 machine-Git policy",
+          "owner": "T069"
+        },
+        {
+          "kind": "tool",
+          "name": "Go",
+          "minimum": "1.25.0",
+          "owner": "go.mod"
+        }
+      ],
+      "required_capability_checks": [
+        {
+          "id": "git-policy",
+          "owner": "internal/gitcli",
+          "contract": "T069 deterministic machine-Git, rename, conversion, patch, and apply policy"
+        },
+        {
+          "id": "locks",
+          "owner": "internal/filelock",
+          "contract": "OS lock ownership and non-stealing lease semantics"
+        },
+        {
+          "id": "paths",
+          "owner": "internal/paths",
+          "contract": "Canonical containment and protected native path effects"
+        },
+        {
+          "id": "process",
+          "owner": "internal/process",
+          "contract": "Trusted executable resolution and bounded child-process lifecycle"
+        },
+        {
+          "id": "sqlite",
+          "owner": "internal/store/sqlite",
+          "contract": "CGo-free SQLite transactions, WAL, and writer fencing"
+        },
+        {
+          "id": "tui",
+          "owner": "internal/tui",
+          "contract": "Bubble Tea v2 keyboard-complete projection and bounded rendering"
+        },
+        {
+          "id": "workspace",
+          "owner": "internal/workspace",
+          "contract": "Owned capture, review-snapshot, proposal, and isolation roots"
+        }
+      ],
+      "wsl_treatment": {
+        "mode": "native_only",
+        "requirement": "Run directly in the Linux environment; a Windows host or WSL path does not count as this row.",
+        "owner": "T075"
+      },
+      "provisional_disposition": {
+        "status": "candidate",
+        "reason": "Candidate only; T063 requires current native, workload, security, and human-approval evidence before advertisement."
+      }
+    },
+    {
+      "id": "linux-amd64-wsl",
+      "goos": "linux",
+      "goarch": "amd64",
+      "native_runner": {
+        "label": "self-hosted-wsl",
+        "kind": "self-hosted",
+        "availability": "blocked",
+        "owner": "T076",
+        "blocked_reason": "No hosted WSL runner is available; T076 requires an explicitly configured runner with Nudge, repository, Git, Codex, and all paths inside the same WSL environment."
+      },
+      "minimum_prerequisites": [
+        {
+          "kind": "environment",
+          "name": "WSL 2",
+          "minimum": "WSL 2 distribution with Nudge, repository, Git, Codex, and paths inside the same environment",
+          "owner": "Microsoft WSL documentation"
+        },
+        {
+          "kind": "os",
+          "name": "Windows host",
+          "minimum": "Windows 10 version 2004 (build 19041) or Windows 11",
+          "owner": "Microsoft WSL installation requirements"
+        },
+        {
+          "kind": "tool",
+          "name": "Go",
+          "minimum": "1.25.0",
+          "owner": "go.mod"
+        }
+      ],
+      "required_capability_checks": [
+        {
+          "id": "git-policy",
+          "owner": "internal/gitcli",
+          "contract": "T069 deterministic machine-Git, rename, conversion, patch, and apply policy"
+        },
+        {
+          "id": "locks",
+          "owner": "internal/filelock",
+          "contract": "OS lock ownership and non-stealing lease semantics"
+        },
+        {
+          "id": "paths",
+          "owner": "internal/paths",
+          "contract": "Canonical containment and protected native path effects"
+        },
+        {
+          "id": "process",
+          "owner": "internal/process",
+          "contract": "Trusted executable resolution and bounded child-process lifecycle"
+        },
+        {
+          "id": "sqlite",
+          "owner": "internal/store/sqlite",
+          "contract": "CGo-free SQLite transactions, WAL, and writer fencing"
+        },
+        {
+          "id": "tui",
+          "owner": "internal/tui",
+          "contract": "Bubble Tea v2 keyboard-complete projection and bounded rendering"
+        },
+        {
+          "id": "workspace",
+          "owner": "internal/workspace",
+          "contract": "Owned capture, review-snapshot, proposal, and isolation roots"
+        }
+      ],
+      "wsl_treatment": {
+        "mode": "same_environment_linux_only",
+        "requirement": "Treat WSL as Linux only when Nudge, repository, Git, Codex, and every path live inside one WSL environment; never infer native Windows interoperability.",
+        "owner": "T075"
+      },
+      "provisional_disposition": {
+        "status": "candidate",
+        "reason": "Candidate only and runner-blocked; T063 requires current native, workload, security, and human-approval evidence before advertisement."
+      }
+    },
+    {
+      "id": "windows-amd64",
+      "goos": "windows",
+      "goarch": "amd64",
+      "native_runner": {
+        "label": "windows-2025",
+        "kind": "github-hosted",
+        "availability": "available",
+        "owner": "T076"
+      },
+      "minimum_prerequisites": [
+        {
+          "kind": "os",
+          "name": "Windows",
+          "minimum": "Windows Server 2025 runner image",
+          "owner": "GitHub-hosted runner requirements"
+        },
+        {
+          "kind": "tool",
+          "name": "Git",
+          "minimum": "T069 machine-Git policy",
+          "owner": "T069"
+        },
+        {
+          "kind": "tool",
+          "name": "Go",
+          "minimum": "1.25.0",
+          "owner": "go.mod"
+        }
+      ],
+      "required_capability_checks": [
+        {
+          "id": "git-policy",
+          "owner": "internal/gitcli",
+          "contract": "T069 deterministic machine-Git, rename, conversion, patch, and apply policy"
+        },
+        {
+          "id": "locks",
+          "owner": "internal/filelock",
+          "contract": "OS lock ownership and non-stealing lease semantics"
+        },
+        {
+          "id": "paths",
+          "owner": "internal/paths",
+          "contract": "Canonical containment and protected native path effects"
+        },
+        {
+          "id": "process",
+          "owner": "internal/process",
+          "contract": "Trusted executable resolution and bounded child-process lifecycle"
+        },
+        {
+          "id": "sqlite",
+          "owner": "internal/store/sqlite",
+          "contract": "CGo-free SQLite transactions, WAL, and writer fencing"
+        },
+        {
+          "id": "tui",
+          "owner": "internal/tui",
+          "contract": "Bubble Tea v2 keyboard-complete projection and bounded rendering"
+        },
+        {
+          "id": "workspace",
+          "owner": "internal/workspace",
+          "contract": "Owned capture, review-snapshot, proposal, and isolation roots"
+        }
+      ],
+      "wsl_treatment": {
+        "mode": "native_only",
+        "requirement": "Run directly in the Windows environment; WSL uses the separate same-environment Linux candidate.",
+        "owner": "T075"
+      },
+      "provisional_disposition": {
+        "status": "candidate",
+        "reason": "Candidate only; T063 requires current native, workload, security, and human-approval evidence before advertisement."
+      }
+    }
+  ]
+}
