@@ -94,11 +94,29 @@ func cloneRepositoryState(value *RepositoryState) *RepositoryState {
 		return nil
 	}
 	copyValue := *value
+	copyValue.Repository.Remotes = cloneRemotes(value.Repository.Remotes)
 	if value.Worktree != nil {
 		worktree := *value.Worktree
+		if value.Worktree.Upstream != nil {
+			upstream := *value.Worktree.Upstream
+			worktree.Upstream = &upstream
+		}
 		copyValue.Worktree = &worktree
 	}
 	return &copyValue
+}
+
+func cloneRemotes(values []repository.Remote) []repository.Remote {
+	if len(values) == 0 {
+		return nil
+	}
+	copyValues := make([]repository.Remote, len(values))
+	for i, value := range values {
+		copyValues[i] = value
+		copyValues[i].FetchURLs = append([]string(nil), value.FetchURLs...)
+		copyValues[i].PushURLs = append([]string(nil), value.PushURLs...)
+	}
+	return copyValues
 }
 
 func cloneReviewSessionID(value *domain.ReviewSessionID) *domain.ReviewSessionID {
