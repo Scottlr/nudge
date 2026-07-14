@@ -415,6 +415,7 @@ func (r *Resolver) upstream(ctx context.Context, builder *CommandBuilder, remote
 	if err != nil {
 		return nil, err
 	}
+	value = strings.TrimPrefix(value, "refs/remotes/")
 	remoteNames := make([]string, 0, len(remotes))
 	for _, remote := range remotes {
 		remoteNames = append(remoteNames, remote.Name)
