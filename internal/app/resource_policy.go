@@ -73,6 +73,26 @@ func (p PageLimits) validate() error {
 	return nil
 }
 
+// TreeSearchLimits bounds repository-wide path search before work begins.
+// The entry ceiling limits one immutable enumeration; it is not a retained
+// index and does not permit callers to allocate the whole tree.
+type TreeSearchLimits struct {
+	QueryBytes   ByteSize
+	Page         PageLimits
+	MatchRanges  Count
+	CursorBytes  ByteSize
+	EntryCeiling Count
+	BatchEntries Count
+	Deadline     time.Duration
+}
+
+func (s TreeSearchLimits) validate() error {
+	if s.QueryBytes == 0 || s.Page.validate() != nil || s.MatchRanges == 0 || s.CursorBytes == 0 || s.EntryCeiling == 0 || s.BatchEntries == 0 || s.BatchEntries > s.EntryCeiling || s.Page.Hard > PageSize(s.EntryCeiling) || s.Deadline <= 0 {
+		return ErrInvalidResourcePolicy
+	}
+	return nil
+}
+
 // DiffLimits contains the two content thresholds referenced by the design.
 type DiffLimits struct {
 	HighlightBytes     ByteSize
@@ -331,6 +351,7 @@ func (b BatchLimits) validate() error {
 type ResourcePolicy struct {
 	Version                 ResourcePolicyVersion
 	TreePage                PageLimits
+	TreeSearch              TreeSearchLimits
 	HistoryPage             PageLimits
 	HistoryPageEncodedBytes ByteSize
 	MetadataCache           MetadataCacheLimits
@@ -352,6 +373,7 @@ func DefaultResourcePolicy() ResourcePolicy {
 	return ResourcePolicy{
 		Version:                 CurrentResourcePolicyVersion,
 		TreePage:                PageLimits{Default: 200, Hard: 1000},
+		TreeSearch:              TreeSearchLimits{QueryBytes: 4 * KiB, Page: PageLimits{Default: 50, Hard: 200}, MatchRanges: 1024, CursorBytes: 4 * KiB, EntryCeiling: 100_000, BatchEntries: 256, Deadline: 5 * time.Second},
 		HistoryPage:             PageLimits{Default: 100, Hard: 200},
 		HistoryPageEncodedBytes: 4 * MiB,
 		MetadataCache:           MetadataCacheLimits{MaxEntries: 50_000, MaxBytes: 64 * MiB},
@@ -443,7 +465,7 @@ func DefaultResourcePolicy() ResourcePolicy {
 
 // Validate checks every policy boundary and cross-subsystem relationship.
 func (p ResourcePolicy) Validate() error {
-	if p.Version != CurrentResourcePolicyVersion || p.TreePage.validate() != nil || p.HistoryPage.validate() != nil || p.HistoryPageEncodedBytes == 0 || p.MetadataCache.validate() != nil || p.Diff.validate() != nil || p.Process.validate() != nil || p.Input.validate() != nil || p.Provider.validate() != nil || p.Artifact.validate() != nil || p.Storage.validate() != nil || p.Batch.validate() != nil {
+	if p.Version != CurrentResourcePolicyVersion || p.TreePage.validate() != nil || p.TreeSearch.validate() != nil || p.HistoryPage.validate() != nil || p.HistoryPageEncodedBytes == 0 || p.MetadataCache.validate() != nil || p.Diff.validate() != nil || p.Process.validate() != nil || p.Input.validate() != nil || p.Provider.validate() != nil || p.Artifact.validate() != nil || p.Storage.validate() != nil || p.Batch.validate() != nil {
 		return ErrInvalidResourcePolicy
 	}
 	if p.Symlink.validate(p.Artifact.ProposalFileBytes) != nil {
