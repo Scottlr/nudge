@@ -6,6 +6,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/Scottlr/nudge/internal/app"
+	"github.com/Scottlr/nudge/internal/domain/repository"
 	"github.com/Scottlr/nudge/internal/presentation"
 	"github.com/Scottlr/nudge/internal/theme"
 )
@@ -99,15 +101,38 @@ func (m *Model) statusBar(rect Rect) string {
 		return ""
 	}
 	branch := safeText(m.snapshot.Repository.BranchName)
+	if branch == "" && m.localReview.Repository != nil && m.localReview.Repository.Worktree != nil {
+		branch = safeText(m.localReview.Repository.Worktree.BranchName)
+	}
 	if branch == "" {
 		branch = "no repository"
 	}
-	status := fmt.Sprintf("%s | revision %d | focus %s%s", branch, m.snapshot.Revision, m.focus, m.statusError())
+	phase := string(m.localReview.Phase)
+	if phase == "" {
+		phase = "idle"
+	}
+	changed := len(m.localReview.ChangedFiles)
+	status := fmt.Sprintf("%s | %s | changed %d | focus %s | q quit%s", branch, phase, changed, m.focus, m.statusError())
 	style, _ := m.theme.StyleFor(theme.RoleMuted)
 	return style.Lipgloss().Width(rect.Width).Height(rect.Height).MaxWidth(rect.Width).MaxHeight(rect.Height).Render(safeText(status))
 }
 
 func (m *Model) repositoryBody() string {
+	if m.localReview.Phase == app.LocalReviewFailed {
+		if m.localReview.Error != nil {
+			return safeText(m.localReview.Error.Error())
+		}
+		return "Local review failed"
+	}
+	if m.localReview.Repository != nil {
+		entries := len(m.localReview.TreePage.Entries)
+		name := safeText(m.localReview.Repository.Repository.DisplayName)
+		focus := safeText(m.localReview.Repository.Worktree.LaunchFocus)
+		if focus == "" {
+			focus = "."
+		}
+		return fmt.Sprintf("%s\nworktree focus: %s\n%d changed-tree entries", name, focus, entries)
+	}
 	if m.snapshot.Repository.ID == "" {
 		return "No repository selected"
 	}
@@ -118,10 +143,27 @@ func (m *Model) repositoryBody() string {
 }
 
 func (m *Model) codeBody() string {
+	if m.localReview.ActiveFile != nil {
+		path := changePathForView(*m.localReview.ActiveFile)
+		if m.localReview.FileDiff != nil {
+			return fmt.Sprintf("%s\n%d hunks | %s", safeText(path), len(m.localReview.FileDiff.Hunks), string(m.localReview.Phase))
+		}
+		return safeText(path) + "\nloading diff and content"
+	}
 	if m.snapshot.ActiveFile == nil {
 		return "No file selected"
 	}
 	return "Selected file: " + safeText(string(m.snapshot.ActiveFile.Path.Bytes()))
+}
+
+func changePathForView(file repository.ChangedFile) string {
+	if file.NewPath != nil {
+		return string(file.NewPath.Bytes())
+	}
+	if file.OldPath != nil {
+		return string(file.OldPath.Bytes())
+	}
+	return "unknown path"
 }
 
 func (m *Model) threadBody() string {

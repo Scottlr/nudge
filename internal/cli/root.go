@@ -4,6 +4,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"os"
 
 	"github.com/spf13/cobra"
 )
@@ -16,8 +17,8 @@ type BuildInfo struct {
 }
 
 // NewRootCommand creates the Nudge command tree with injected build metadata.
-// The root command intentionally shows help until the local review flow is
-// supplied by T016.
+// The root invocation is the local-review command; future target modes are
+// added only when their complete behavior is implemented.
 func NewRootCommand(info BuildInfo) *cobra.Command {
 	command := &cobra.Command{
 		Use:           "nudge [path]",
@@ -25,10 +26,22 @@ func NewRootCommand(info BuildInfo) *cobra.Command {
 		Args:          cobra.MaximumNArgs(1),
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return cmd.Help()
+		RunE: func(cmd *cobra.Command, args []string) error {
+			path := ""
+			var err error
+			if len(args) == 1 {
+				path = args[0]
+			}
+			if path == "" {
+				path, err = os.Getwd()
+				if err != nil {
+					return err
+				}
+			}
+			return runLocalReview(cmd.Context(), path)
 		},
 	}
+	command.CompletionOptions.DisableDefaultCmd = true
 	command.AddCommand(newVersionCommand(info))
 	command.AddCommand(newConfigCommand())
 	return command

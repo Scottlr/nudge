@@ -68,13 +68,15 @@ func boundedOverlayText(value string, mode presentation.TerminalTextMode) string
 	if len(value) <= maxOverlayBytes {
 		return value
 	}
-	runes := []rune(value)
-	for len(runes) > 0 && len(string(runes))+len("…") > maxOverlayBytes {
-		runes = runes[:len(runes)-1]
+	const suffix = "..."
+	limit := maxOverlayBytes - len(suffix)
+	prefix := value[:limit]
+	for len(prefix) > 0 && !utf8.ValidString(prefix) {
+		prefix = prefix[:len(prefix)-1]
 	}
-	result := string(runes) + "…"
+	result := prefix + suffix
 	if !utf8.ValidString(result) {
-		return "…"
+		return suffix
 	}
 	return result
 }
