@@ -222,11 +222,44 @@ type ReconciliationOperation struct {
 // ReconciliationAnchorResult is staged until its operation is completed and
 // explicitly activated.
 type ReconciliationAnchorResult struct {
-	OperationID domain.OperationID
-	ThreadID    domain.ReviewThreadID
-	Anchor      review.CodeAnchor
-	State       review.AnchorState
-	Reason      string
+	OperationID       domain.OperationID
+	ThreadID          domain.ReviewThreadID
+	Anchor            review.CodeAnchor
+	State             review.AnchorState
+	Reason            string
+	ReportID          domain.OperationID
+	Candidates        []review.AnchorCandidate
+	CandidateOverflow bool
+	AlgorithmVersion  uint32
+}
+
+// Validate checks one staged anchor result before it crosses the persistence
+// boundary. Zero AlgorithmVersion remains accepted for schema-v1 rows created
+// before T023; new reconciliation results carry the explicit algorithm.
+func (r ReconciliationAnchorResult) Validate() error {
+	if r.OperationID == "" || r.ThreadID == "" || r.Anchor.Validate() != nil || r.State.Validate() != nil || r.Anchor.State != r.State || r.Reason == "" {
+		return ErrReviewStoreInput
+	}
+	if r.ReportID != "" {
+		if _, err := domain.NewOperationID(string(r.ReportID)); err != nil {
+			return ErrReviewStoreInput
+		}
+	}
+	if r.AlgorithmVersion != 0 && r.AlgorithmVersion != review.AnchorReconciliationAlgorithmVersion {
+		return ErrReviewStoreInput
+	}
+	if len(r.Candidates) > review.MaxAnchorReconciliationCandidates || (r.AlgorithmVersion == 0 && (len(r.Candidates) != 0 || r.CandidateOverflow)) {
+		return ErrReviewStoreInput
+	}
+	for _, candidate := range r.Candidates {
+		if err := candidate.Validate(); err != nil {
+			return ErrReviewStoreInput
+		}
+	}
+	if r.State != review.AnchorAmbiguous && (len(r.Candidates) != 0 || r.CandidateOverflow) {
+		return ErrReviewStoreInput
+	}
+	return nil
 }
 
 // AcceptedTargetGeneration binds an accepted capture to its durable target

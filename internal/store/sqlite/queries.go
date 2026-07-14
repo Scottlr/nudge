@@ -670,7 +670,7 @@ func (t *transaction) CreateReconciliation(ctx context.Context, operation app.Re
 }
 
 func (t *transaction) StageReconciliationResult(ctx context.Context, result app.ReconciliationAnchorResult) error {
-	if result.OperationID == "" || result.ThreadID == "" || result.Anchor.Validate() != nil || result.State.Validate() != nil || result.Anchor.State != result.State || result.Reason == "" {
+	if result.Validate() != nil {
 		return app.ErrReviewStoreInput
 	}
 	var operationSession string

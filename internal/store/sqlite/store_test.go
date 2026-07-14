@@ -109,7 +109,7 @@ func TestStoreMigrationAndReviewRoundTrip(t *testing.T) {
 	relocated := thread.Anchor
 	relocated.State = review.AnchorRelocated
 	operation := app.ReconciliationOperation{ID: domain.OperationID("reconcile-1"), SessionID: session.ID, FromGeneration: 1, ToGeneration: 1, State: app.ReconciliationStaged, StartedAt: thread.CreatedAt}
-	result := app.ReconciliationAnchorResult{OperationID: operation.ID, ThreadID: thread.ID, Anchor: relocated, State: review.AnchorRelocated, Reason: "exact evidence"}
+	result := app.ReconciliationAnchorResult{OperationID: operation.ID, ThreadID: thread.ID, Anchor: relocated, State: review.AnchorRelocated, Reason: "exact evidence", ReportID: operation.ID, AlgorithmVersion: review.AnchorReconciliationAlgorithmVersion}
 	staged, err := store.WithSessionTx(ctx, next, func(tx app.ReviewStoreTx) error {
 		if err := tx.CreateReconciliation(ctx, operation); err != nil {
 			return err

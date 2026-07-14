@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 	"unicode/utf8"
 
 	"github.com/Scottlr/nudge/internal/domain"
@@ -212,20 +211,21 @@ func BuildCodeAnchor(target repository.ResolvedTarget, displayed DisplayedConten
 	afterHash := contextFingerprint(displayed.Rows, lastOrdinal, 1, selection.Side, selection.HunkID)
 
 	anchor := review.CodeAnchor{
-		Path:              path,
-		PreviousPath:      previousPath,
-		Side:              selection.Side,
-		StartLine:         selected[0].line,
-		EndLine:           selected[len(selected)-1].line,
-		TargetGeneration:  target.Generation,
-		Base:              target.Base,
-		Head:              target.Head,
-		HunkFingerprint:   hunkFingerprint,
-		SelectionHash:     selectionHash,
-		BeforeContextHash: beforeHash,
-		AfterContextHash:  afterHash,
-		State:             review.AnchorValid,
-		CreatedAt:         now.UTC(),
+		Path:               path,
+		PreviousPath:       previousPath,
+		Side:               selection.Side,
+		StartLine:          selected[0].line,
+		EndLine:            selected[len(selected)-1].line,
+		TargetGeneration:   target.Generation,
+		Base:               target.Base,
+		Head:               target.Head,
+		HunkFingerprint:    hunkFingerprint,
+		SelectionHash:      selectionHash,
+		BeforeContextHash:  beforeHash,
+		AfterContextHash:   afterHash,
+		FingerprintVersion: review.AnchorFingerprintVersion,
+		State:              review.AnchorValid,
+		CreatedAt:          now.UTC(),
 	}
 	if storeText {
 		anchor.SelectedText = selectedText
@@ -339,14 +339,7 @@ func fingerprintHunk(rows []DisplayedRow, hunkID string) string {
 }
 
 func fingerprintSelection(side repository.DiffSide, path repository.RepoPath, start, end int, text string) string {
-	hash := sha256.New()
-	writeHashPart(hash, "nudge-anchor-selection-v1")
-	writeHashPart(hash, string(side))
-	writeHashPart(hash, string(path))
-	writeHashPart(hash, strconv.Itoa(start))
-	writeHashPart(hash, strconv.Itoa(end))
-	writeHashPart(hash, normalizeAnchorText(text))
-	return hex.EncodeToString(hash.Sum(nil))
+	return review.FingerprintSelection(text)
 }
 
 func contextFingerprint(rows []DisplayedRow, edge uint64, direction int, side repository.DiffSide, hunkID string) string {
@@ -382,28 +375,17 @@ func contextFingerprint(rows []DisplayedRow, edge uint64, direction int, side re
 			selected[left], selected[right] = selected[right], selected[left]
 		}
 	}
-	var payload strings.Builder
-	for index, line := range selected {
+	lines := make([]string, 0, AnchorContextLines)
+	for _, line := range selected {
 		if len(line.text) > MaxAnchorContextBytes {
 			break
 		}
-		normalized := normalizeAnchorText(line.text)
-		if len(normalized) > MaxAnchorContextBytes {
+		if len(review.NormalizeAnchorFingerprintText(line.text)) > MaxAnchorContextBytes {
 			break
 		}
-		part := strconv.Itoa(line.line) + ":" + normalized
-		if index > 0 {
-			part = "\n" + part
-		}
-		if payload.Len()+len(part) > MaxAnchorContextBytes {
-			break
-		}
-		payload.WriteString(part)
+		lines = append(lines, line.text)
 	}
-	hash := sha256.New()
-	writeHashPart(hash, "nudge-anchor-context-v1")
-	writeHashPart(hash, payload.String())
-	return hex.EncodeToString(hash.Sum(nil))
+	return review.FingerprintContext(lines)
 }
 
 func displayedRowAt(rows []DisplayedRow, ordinal uint64) (DisplayedRow, bool) {
@@ -415,15 +397,7 @@ func displayedRowAt(rows []DisplayedRow, ordinal uint64) (DisplayedRow, bool) {
 	return DisplayedRow{}, false
 }
 
-func normalizeAnchorText(value string) string {
-	value = strings.ReplaceAll(value, "\r\n", "\n")
-	value = strings.ReplaceAll(value, "\r", "\n")
-	lines := strings.Split(value, "\n")
-	for index, line := range lines {
-		lines[index] = strings.TrimRightFunc(line, unicode.IsSpace)
-	}
-	return strings.Join(lines, "\n")
-}
+func normalizeAnchorText(value string) string { return review.NormalizeAnchorFingerprintText(value) }
 
 func linePointerValue(value *int) string {
 	if value == nil {
