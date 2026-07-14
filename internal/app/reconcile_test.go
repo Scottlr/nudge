@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -267,10 +268,16 @@ func newTestAuthoritativeReconciler(t *testing.T, capture LocalCaptureSource, st
 func testAuthoritativeReconciliationRequest(t *testing.T) (ReconciliationRequest, CaptureGeneration) {
 	t.Helper()
 	open := testSessionRequest(t, "old-fingerprint", "base")
-	open.Repository.CommonGitDir = `C:\common.git`
+	root, err := filepath.Abs(".")
+	if err != nil {
+		t.Fatalf("absolute test root: %v", err)
+	}
+	open.Repository.CommonGitDir = filepath.Join(root, "common.git")
 	open.Repository.Binding.CommonGitDir = open.Repository.CommonGitDir
-	open.Worktree.GitDir = `C:\repo\.git`
+	open.Worktree.RootPath = root
+	open.Worktree.GitDir = filepath.Join(root, "worktree.git")
 	open.Worktree.Binding.GitDir = open.Worktree.GitDir
+	open.Worktree.Binding.RootPath = open.Worktree.RootPath
 	set, err := NewWatchedSet(open.Repository, open.Worktree)
 	if err != nil {
 		t.Fatalf("watched set: %v", err)
