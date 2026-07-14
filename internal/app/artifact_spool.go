@@ -183,6 +183,7 @@ type SpoolRecoveryProof struct {
 type PublishedArtifact struct {
 	Identity ArtifactIdentity
 	Target   PublishTarget
+	Limits   SpoolLimits
 }
 
 // ArtifactSpoolFile is owned by the caller until Close. It is not safe for

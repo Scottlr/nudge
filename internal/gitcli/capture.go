@@ -57,6 +57,7 @@ type LocalCaptureResult struct {
 	BlobSpool   app.ArtifactSpoolHandle
 	Reservation app.CapacityReservation
 	Plan        app.CapacityPlan
+	Policy      app.ResourcePolicy
 	capacity    app.CapacityReservationPort
 	policy      app.ResourcePolicy
 }
@@ -396,6 +397,7 @@ func (a *LocalCaptureAdapter) Capture(ctx context.Context, repo repository.Repos
 			Bytes:         uint64(patchWriter.bytes),
 			Entries:       1,
 			ContentSHA256: hex.EncodeToString(patchWriter.hash.Sum(nil)),
+			VerifiedAt:    patchIdentity.VerifiedAt,
 		},
 		BlobSpool: repository.CaptureArtifact{
 			Kind:         repository.CaptureArtifactBlobs,
@@ -404,6 +406,7 @@ func (a *LocalCaptureAdapter) Capture(ctx context.Context, repo repository.Repos
 			RelativePath: "payload",
 			Bytes:        uint64(blobIdentity.Bytes),
 			Entries:      uint64(blobIdentity.Entries),
+			VerifiedAt:   blobIdentity.VerifiedAt,
 		},
 		Policy:      policyEvidence,
 		Consistency: consistency,
@@ -423,7 +426,7 @@ func (a *LocalCaptureAdapter) Capture(ctx context.Context, repo repository.Repos
 	}
 	releaseReservation = false
 	cleanupSpools = false
-	return &LocalCaptureResult{Candidate: candidate, PatchSpool: patchSpool, BlobSpool: blobSpool, Reservation: reservation, Plan: plan, capacity: a.capacity, policy: a.policy}, nil
+	return &LocalCaptureResult{Candidate: candidate, PatchSpool: patchSpool, BlobSpool: blobSpool, Reservation: reservation, Plan: plan, Policy: a.policy, capacity: a.capacity, policy: a.policy}, nil
 }
 
 type captureStatusRecord struct {
@@ -1710,6 +1713,7 @@ func attachBlobRefs(entries []captureStatusRecord, records []captureBlobRecord, 
 					Bytes:         uint64(blob.identity.Bytes),
 					Entries:       1,
 					ContentSHA256: blob.identity.SHA256,
+					VerifiedAt:    aggregate.VerifiedAt,
 				},
 			})
 		}

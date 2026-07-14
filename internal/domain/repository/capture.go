@@ -44,12 +44,13 @@ type CaptureArtifact struct {
 	Bytes         uint64
 	Entries       uint64
 	ContentSHA256 string
+	VerifiedAt    time.Time
 }
 
 // Validate checks identity shape and keeps patch and per-blob semantics
 // distinct.
 func (a CaptureArtifact) Validate() error {
-	if a.SpoolID == "" || !validCaptureText(a.SpoolID) || !validCaptureSHA256(a.ManifestHash) || a.RelativePath == "" || !validCaptureText(a.RelativePath) {
+	if a.SpoolID == "" || !validCaptureText(a.SpoolID) || !validCaptureSHA256(a.ManifestHash) || a.RelativePath == "" || !validCaptureText(a.RelativePath) || a.VerifiedAt.IsZero() {
 		return ErrInvalidLocalCaptureCandidate
 	}
 	switch a.Kind {
