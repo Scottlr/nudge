@@ -1,0 +1,4 @@
+interface:
+  display_name: "Build Nudge Platform"
+  short_description: "Build Nudge CLI and OS platform safely"
+  default_prompt: "Use $build-nudge-platform to implement Nudge composition, config, protected paths, processes, trusted executables, doctor, repair framework, or safe logging."

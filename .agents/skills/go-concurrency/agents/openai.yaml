@@ -1,0 +1,4 @@
+interface:
+  display_name: "Go Concurrency"
+  short_description: "Build bounded race-safe Go concurrency"
+  default_prompt: "Use $go-concurrency alongside $go and the primary Nudge owner to design bounded, cancellable, race-safe concurrency without moving workflow truth."

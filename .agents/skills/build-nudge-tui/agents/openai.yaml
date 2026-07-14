@@ -1,0 +1,4 @@
+interface:
+  display_name: "Build Nudge TUI"
+  short_description: "Build and visually review Nudge TUI views"
+  default_prompt: "Use $build-nudge-tui to implement bounded Nudge Bubble Tea views and run the applicable production rendered-review loop without owning product truth."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Write Nudge Pull Request"
+  short_description: "Create complete, reviewable Nudge PRs"
+  default_prompt: "Use $write-nudge-pr to create or update a Nudge pull request with accurate metadata, a meaningful body, existing labels, and a responsible assignee."

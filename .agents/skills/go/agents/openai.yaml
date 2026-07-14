@@ -1,0 +1,4 @@
+interface:
+  display_name: "Go Engineering"
+  short_description: "Write idiomatic production Go 1.25"
+  default_prompt: "Use $go alongside the primary Nudge owner to implement or review idiomatic Go 1.25 without changing product semantics."

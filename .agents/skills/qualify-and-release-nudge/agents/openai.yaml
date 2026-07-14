@@ -1,0 +1,5 @@
+interface:
+  display_name: "Qualify and Release Nudge"
+  short_description: "Qualify and release Nudge safely"
+  default_prompt: "Use $qualify-and-release-nudge to carry an evidence-bound Nudge release candidate through support, security, documentation, packaging, and authorized publication gates."
+

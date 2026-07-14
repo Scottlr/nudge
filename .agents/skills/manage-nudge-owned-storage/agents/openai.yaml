@@ -1,0 +1,4 @@
+interface:
+  display_name: "Manage Nudge Owned Storage"
+  short_description: "Manage Nudge owned storage safely"
+  default_prompt: "Use $manage-nudge-owned-storage to implement or review Nudge capacity, artifact spooling, ledger, reconciliation, export, cleanup, and focused storage repair safely."

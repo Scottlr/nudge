@@ -1,0 +1,4 @@
+interface:
+  display_name: "Integrate Nudge Codex"
+  short_description: "Integrate Nudge with Codex safely"
+  default_prompt: "Use $integrate-nudge-codex to implement Nudge's provider port, Codex app-server lifecycle, permissions, approvals, turns, or live account health."

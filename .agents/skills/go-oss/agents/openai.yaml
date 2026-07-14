@@ -1,0 +1,4 @@
+interface:
+  display_name: "Go OSS Repository"
+  short_description: "Maintain an idiomatic public Go repository"
+  default_prompt: "Use $go-oss alongside $go and the primary Nudge owner to shape an honest, idiomatic public Go CLI repository without assuming release authority."

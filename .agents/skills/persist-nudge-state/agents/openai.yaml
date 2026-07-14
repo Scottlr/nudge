@@ -1,0 +1,4 @@
+interface:
+  display_name: "Persist Nudge State"
+  short_description: "Build durable SQLite state and fencing"
+  default_prompt: "Use $persist-nudge-state to implement or review Nudge SQLite persistence, session fencing, and exact store repair safely."

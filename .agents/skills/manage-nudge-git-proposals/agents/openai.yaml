@@ -1,0 +1,4 @@
+interface:
+  display_name: "Manage Nudge Git Proposals"
+  short_description: "Implement safe Git and proposal lifecycles"
+  default_prompt: "Use $manage-nudge-git-proposals to implement Nudge targets, captures, diffs, anchors, proposal workspaces, edge-file semantics, or guarded patch application."

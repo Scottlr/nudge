@@ -1,0 +1,4 @@
+interface:
+  display_name: "Model Nudge Domain"
+  short_description: "Model Nudge domain and policy contracts"
+  default_prompt: "Use $model-nudge-domain to design Nudge entities, application state, consumer-owned ports, and policy contracts without implementing adapters."
