@@ -4,7 +4,7 @@ import (
 	"strings"
 
 	"github.com/Scottlr/nudge/internal/app"
-	nudgetui "github.com/Scottlr/nudge/internal/tui"
+	"github.com/Scottlr/nudge/internal/tui/viewport"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -30,7 +30,7 @@ func (m *Model) View() string {
 		}
 		return m.renderPlaceholder(work, "no rows available")
 	}
-	window := nudgetui.Window(len(rows), m.selectedIndex(rows), m.top, m.renderHeight(), m.overscan)
+	window := viewport.Window(len(rows), m.selectedIndex(rows), m.top, m.renderHeight(), m.overscan)
 	lineWidth := gutterWidth(rows[window.Start:window.End], m.side)
 	width := m.renderWidth()
 	lines := make([]string, 0, window.Count())
@@ -48,7 +48,7 @@ func (m *Model) View() string {
 	return strings.Join(lines, "\n")
 }
 
-func (m *Model) renderPlaceholder(work nudgetui.FrameWork, text string) string {
+func (m *Model) renderPlaceholder(work viewport.FrameWork, text string) string {
 	row := placeholderRow(m.content, text)
 	result := composeRow(row, app.SideNone, 0, m.renderWidth(), 1, m.theme, false, false, m.focused, false)
 	if !work.Admit(ansi.StringWidth(result)) {

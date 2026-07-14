@@ -6,7 +6,7 @@ import (
 	"github.com/Scottlr/nudge/internal/app"
 	"github.com/Scottlr/nudge/internal/domain/repository"
 	"github.com/Scottlr/nudge/internal/theme"
-	nudgetui "github.com/Scottlr/nudge/internal/tui"
+	"github.com/Scottlr/nudge/internal/tui/viewport"
 )
 
 const (
@@ -36,7 +36,7 @@ type Model struct {
 	pageLimit     int
 	maxPages      int
 	overscan      int
-	budget        nudgetui.RenderBudget
+	budget        viewport.RenderBudget
 	theme         theme.Theme
 	focused       bool
 	width         int
@@ -57,7 +57,7 @@ func NewModel() *Model {
 		pageLimit:     defaultPageLimit,
 		maxPages:      maxRetainedPages,
 		overscan:      defaultOverscan,
-		budget:        nudgetui.DefaultRenderBudget(),
+		budget:        viewport.DefaultRenderBudget(),
 		theme:         theme.BuiltinTerminalDefault(),
 		side:          app.SideHead,
 	}
@@ -80,7 +80,7 @@ func (m *Model) SetTheme(value theme.Theme) {
 }
 
 // SetBudget supplies the root's checked frame allowance.
-func (m *Model) SetBudget(value nudgetui.RenderBudget) {
+func (m *Model) SetBudget(value viewport.RenderBudget) {
 	if m != nil && value.Validate() == nil {
 		m.budget = value
 	}
@@ -302,7 +302,7 @@ func (m *Model) reposition() {
 			break
 		}
 	}
-	m.top = nudgetui.Window(len(rows), cursor, m.top, m.renderHeight(), m.overscan).Top
+	m.top = viewport.Window(len(rows), cursor, m.top, m.renderHeight(), m.overscan).Top
 }
 
 func (m *Model) renderHeight() int {

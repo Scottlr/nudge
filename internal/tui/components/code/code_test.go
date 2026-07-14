@@ -7,7 +7,7 @@ import (
 	"github.com/Scottlr/nudge/internal/app"
 	"github.com/Scottlr/nudge/internal/domain/repository"
 	"github.com/Scottlr/nudge/internal/highlight"
-	nudgetui "github.com/Scottlr/nudge/internal/tui"
+	"github.com/Scottlr/nudge/internal/tui/viewport"
 )
 
 func TestContentPageRequestsAreIdentityBoundAndLazy(t *testing.T) {
@@ -105,7 +105,7 @@ func TestViewUsesCellWindowBudgetAndHighlightSpans(t *testing.T) {
 	m.Update(PageResultMsg{Result: PageResult{Request: request, Page: page(t, content.ID, rows...)}})
 	m.Update(SetHighlightMsg{RowID: rows[0].ID, Side: app.SideHead, Spans: []highlight.StyledSpan{{Text: "\tΩ", Token: "Comment"}}})
 	m.SetSize(24, 3)
-	m.SetBudget(nudgetui.RenderBudget{MaxRows: 2, MaxCells: 1000})
+	m.SetBudget(viewport.RenderBudget{MaxRows: 2, MaxCells: 1000})
 	lines := strings.Split(m.View(), "\n")
 	if len(lines) > 2 || strings.Contains(m.View(), "\x1b") {
 		t.Fatalf("bounded/safe view lines=%d content=%q", len(lines), m.View())
