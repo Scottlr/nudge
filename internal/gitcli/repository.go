@@ -159,7 +159,7 @@ func (r *Resolver) ResolveRepository(ctx context.Context, startPath string) (rep
 	if err != nil {
 		return repository.Repository{}, repository.WorktreeRef{}, err
 	}
-	objectFormat, err := r.requiredLine(ctx, builder, "object format", "rev-parse", "--show-object-format")
+	objectFormat, err := r.requiredLine(ctx, builder, "object format", "rev-parse", "--show-object-format=storage")
 	if err != nil {
 		return repository.Repository{}, repository.WorktreeRef{}, err
 	}
@@ -332,15 +332,19 @@ func (r *Resolver) optionalLine(ctx context.Context, builder *CommandBuilder, na
 }
 
 func (r *Resolver) optionalObjectID(ctx context.Context, builder *CommandBuilder, ref string) (repository.ObjectID, error) {
-	value, present, err := r.optionalLine(ctx, builder, "object ID", "rev-parse", "--verify", "--quiet", ref)
+	result, err := r.run(ctx, builder, "rev-parse", "--verify", ref)
 	if err != nil {
 		var gitErr *GitError
+		if errors.As(err, &gitErr) && gitErr.Code == ErrorCommandFailed && (gitErr.ExitCode == 1 || (gitErr.ExitCode == 128 && isUnbornHeadError(gitErr.Stderr))) {
+			return "", nil
+		}
 		if errors.As(err, &gitErr) && gitErr.Code == ErrorCommandFailed && gitErr.ExitCode == 128 {
 			return "", &GitError{Code: ErrorObjectUnavailableNoFetch, Cause: err, ExitCode: gitErr.ExitCode, Stderr: gitErr.Stderr}
 		}
 		return "", err
 	}
-	if !present || value == "" {
+	value, err := parseOutputLine("object ID", result.Stdout, false)
+	if err != nil {
 		return "", err
 	}
 	objectID, err := repository.NewObjectID(value)
@@ -348,6 +352,11 @@ func (r *Resolver) optionalObjectID(ctx context.Context, builder *CommandBuilder
 		return "", malformed("invalid object ID")
 	}
 	return objectID, nil
+}
+
+func isUnbornHeadError(stderr string) bool {
+	lower := strings.ToLower(stderr)
+	return strings.Contains(lower, "needed a single revision") || strings.Contains(lower, "unknown revision")
 }
 
 func (r *Resolver) branch(ctx context.Context, builder *CommandBuilder) (string, bool, error) {
@@ -415,6 +424,7 @@ func (r *Resolver) upstream(ctx context.Context, builder *CommandBuilder, remote
 	if err != nil {
 		return nil, err
 	}
+	value = strings.TrimPrefix(value, "refs/remotes/")
 	remoteNames := make([]string, 0, len(remotes))
 	for _, remote := range remotes {
 		remoteNames = append(remoteNames, remote.Name)
