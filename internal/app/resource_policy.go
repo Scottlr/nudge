@@ -106,6 +106,31 @@ func (d DiffLimits) validate() error {
 	return nil
 }
 
+// LargeContentLimits bounds explicit immutable content opens. The hard ceiling
+// is deliberately separate from Diff.AutomaticOpenBytes: confirmation may
+// lower these values, but no runtime tuning may raise them.
+type LargeContentLimits struct {
+	ExplicitOpenBytes  ByteSize
+	ReadBytes          ByteSize
+	LineSegmentBytes   ByteSize
+	LineSegmentCells   Count
+	LineWindowLines    Count
+	LineWindowBytes    ByteSize
+	IndexBytes         ByteSize
+	CheckpointInterval ByteSize
+	Deadline           time.Duration
+}
+
+func (l LargeContentLimits) validate(automaticOpenBytes ByteSize) error {
+	if l.ExplicitOpenBytes == 0 || l.ReadBytes == 0 || l.LineSegmentBytes == 0 || l.LineSegmentCells == 0 || l.LineWindowLines == 0 || l.LineWindowBytes == 0 || l.IndexBytes == 0 || l.CheckpointInterval == 0 || l.Deadline <= 0 {
+		return ErrInvalidResourcePolicy
+	}
+	if l.ExplicitOpenBytes < automaticOpenBytes || l.ReadBytes > l.ExplicitOpenBytes || l.LineSegmentBytes > l.ReadBytes || l.LineWindowBytes > l.ExplicitOpenBytes || l.CheckpointInterval > l.ExplicitOpenBytes {
+		return ErrInvalidResourcePolicy
+	}
+	return nil
+}
+
 // ProcessLimits bounds finite child-process output.
 type ProcessLimits struct {
 	MaxOutputBytes ByteSize
@@ -356,6 +381,7 @@ type ResourcePolicy struct {
 	HistoryPageEncodedBytes ByteSize
 	MetadataCache           MetadataCacheLimits
 	Diff                    DiffLimits
+	LargeContent            LargeContentLimits
 	Process                 ProcessLimits
 	Input                   InputLimits
 	Provider                ProviderLimits
@@ -378,6 +404,7 @@ func DefaultResourcePolicy() ResourcePolicy {
 		HistoryPageEncodedBytes: 4 * MiB,
 		MetadataCache:           MetadataCacheLimits{MaxEntries: 50_000, MaxBytes: 64 * MiB},
 		Diff:                    DiffLimits{HighlightBytes: 1_000_000, AutomaticOpenBytes: 2_000_000},
+		LargeContent:            LargeContentLimits{ExplicitOpenBytes: 256 * MiB, ReadBytes: 256 * KiB, LineSegmentBytes: 64 * KiB, LineSegmentCells: 8_192, LineWindowLines: 4_096, LineWindowBytes: 4 * MiB, IndexBytes: 8 * MiB, CheckpointInterval: 1 * MiB, Deadline: 30 * time.Second},
 		Process:                 ProcessLimits{MaxOutputBytes: 256 * MiB, MaxStderrBytes: 1 * MiB},
 		Input: InputLimits{
 			ProposalSummaryBytes:      64 * KiB,
@@ -465,7 +492,7 @@ func DefaultResourcePolicy() ResourcePolicy {
 
 // Validate checks every policy boundary and cross-subsystem relationship.
 func (p ResourcePolicy) Validate() error {
-	if p.Version != CurrentResourcePolicyVersion || p.TreePage.validate() != nil || p.TreeSearch.validate() != nil || p.HistoryPage.validate() != nil || p.HistoryPageEncodedBytes == 0 || p.MetadataCache.validate() != nil || p.Diff.validate() != nil || p.Process.validate() != nil || p.Input.validate() != nil || p.Provider.validate() != nil || p.Artifact.validate() != nil || p.Storage.validate() != nil || p.Batch.validate() != nil {
+	if p.Version != CurrentResourcePolicyVersion || p.TreePage.validate() != nil || p.TreeSearch.validate() != nil || p.HistoryPage.validate() != nil || p.HistoryPageEncodedBytes == 0 || p.MetadataCache.validate() != nil || p.Diff.validate() != nil || p.LargeContent.validate(p.Diff.AutomaticOpenBytes) != nil || p.Process.validate() != nil || p.Input.validate() != nil || p.Provider.validate() != nil || p.Artifact.validate() != nil || p.Storage.validate() != nil || p.Batch.validate() != nil {
 		return ErrInvalidResourcePolicy
 	}
 	if p.Symlink.validate(p.Artifact.ProposalFileBytes) != nil {

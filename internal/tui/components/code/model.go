@@ -45,6 +45,7 @@ type Model struct {
 	left          int
 	lastError     string
 	lastSelection SelectionRejected
+	large         *largeContentProjection
 }
 
 // NewModel creates an empty bounded code pane.
@@ -60,6 +61,7 @@ func NewModel() *Model {
 		budget:        viewport.DefaultRenderBudget(),
 		theme:         theme.BuiltinTerminalDefault(),
 		side:          app.SideHead,
+		large:         newLargeContentProjection(),
 	}
 }
 
@@ -148,6 +150,9 @@ func (m *Model) clearProjection() {
 	m.searchPending = 0
 	m.searchNext = ""
 	m.top, m.left = 0, 0
+	if m.large != nil {
+		m.large.reset()
+	}
 }
 
 func (m *Model) requestPage(cursor string) []Intent {

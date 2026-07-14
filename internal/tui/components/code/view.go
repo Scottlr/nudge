@@ -17,6 +17,20 @@ func (m *Model) View() string {
 	if err != nil {
 		return ""
 	}
+	if m.large != nil && m.large.open != nil {
+		value := m.large.view(m.renderWidth(), m.renderHeight())
+		if value != "" {
+			lines := strings.Split(value, "\n")
+			admitted := make([]string, 0, len(lines))
+			for _, line := range lines {
+				if !work.Admit(ansi.StringWidth(line)) {
+					break
+				}
+				admitted = append(admitted, line)
+			}
+			return strings.Join(admitted, "\n")
+		}
+	}
 	if m.content.Validate() != nil {
 		return m.renderPlaceholder(work, "no displayed content")
 	}
