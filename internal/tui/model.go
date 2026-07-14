@@ -28,14 +28,16 @@ type Model struct {
 	events    <-chan app.Event
 	ctx       context.Context
 
-	snapshot   app.AppSnapshot
-	dimensions Dimensions
-	layout     Layout
-	focus      Pane
-	lowerPane  Pane
-	narrowPane Pane
-	overlays   OverlayStack
-	theme      theme.Theme
+	snapshot       app.AppSnapshot
+	dimensions     Dimensions
+	layout         Layout
+	focus          Pane
+	lowerPane      Pane
+	narrowPane     Pane
+	overlays       OverlayStack
+	theme          theme.Theme
+	scheduler      *RenderScheduler
+	animationFrame uint64
 
 	altScreen   bool
 	reportFocus bool
@@ -108,6 +110,7 @@ func NewModel(client app.ApplicationClient, options ...ModelOption) *Model {
 		narrowPane: PaneRepository,
 		theme:      theme.BuiltinTerminalDefault(),
 		layout:     CalculateLayout(Dimensions{}),
+		scheduler:  DefaultRenderScheduler(),
 	}
 	if client != nil {
 		model.snapshots = client.Snapshots()
@@ -151,6 +154,15 @@ func (m *Model) Focus() Pane {
 		return ""
 	}
 	return m.focus
+}
+
+// AnimationFrame returns the root-owned animation frame used by visible
+// projections. It changes only when an accepted scheduler tick arrives.
+func (m *Model) AnimationFrame() uint64 {
+	if m == nil {
+		return 0
+	}
+	return m.animationFrame
 }
 
 // Init starts one bounded receive command for each application stream.
