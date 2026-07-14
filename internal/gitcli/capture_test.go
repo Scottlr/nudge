@@ -31,7 +31,7 @@ func TestCaptureLocalCandidateStreamsTrackedAndUntrackedState(t *testing.T) {
 	resolver := newTestResolver(t, root, gitPath)
 	repo, worktree, err := resolver.ResolveRepository(context.Background(), root)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatal(describeGitError(err))
 	}
 	adapter := newCaptureTestAdapter(t, root, gitPath)
 	indexPath := filepath.Join(worktree.GitDir, "index")
@@ -99,7 +99,7 @@ func TestCaptureUnbornUsesInstalledGitEmptyTree(t *testing.T) {
 	resolver := newTestResolver(t, root, gitPath)
 	repo, worktree, err := resolver.ResolveRepository(context.Background(), root)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatal(describeGitError(err))
 	}
 	adapter := newCaptureTestAdapter(t, root, gitPath)
 	result, err := adapter.Capture(context.Background(), repo, worktree)
@@ -123,7 +123,7 @@ func TestCaptureAppliesCompleteRenameEvidence(t *testing.T) {
 	resolver := newTestResolver(t, root, gitPath)
 	repo, worktree, err := resolver.ResolveRepository(context.Background(), root)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatal(describeGitError(err))
 	}
 	result, err := newCaptureTestAdapter(t, root, gitPath).Capture(context.Background(), repo, worktree)
 	if err != nil {
@@ -152,7 +152,7 @@ func TestCaptureRecordsNonNeutralAttributeEvidence(t *testing.T) {
 	resolver := newTestResolver(t, root, gitPath)
 	repo, worktree, err := resolver.ResolveRepository(context.Background(), root)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatal(describeGitError(err))
 	}
 	result, err := newCaptureTestAdapter(t, root, gitPath).Capture(context.Background(), repo, worktree)
 	if err != nil {
@@ -173,7 +173,7 @@ func TestCaptureRejectsAssumeUnchangedAsNonCandidate(t *testing.T) {
 	resolver := newTestResolver(t, root, gitPath)
 	repo, worktree, err := resolver.ResolveRepository(context.Background(), root)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatal(describeGitError(err))
 	}
 	_, err = newCaptureTestAdapter(t, root, gitPath).Capture(context.Background(), repo, worktree)
 	var gitErr *GitError
