@@ -3,6 +3,7 @@ package gitcli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -33,7 +34,7 @@ func TestResolveNestedRepositoryPreservesGitMetadataAndIndex(t *testing.T) {
 	resolver := newTestResolver(t, root, gitPath)
 	repo, worktree, err := resolver.ResolveRepository(context.Background(), nested)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatal(describeGitError(err))
 	}
 	after, err := os.ReadFile(indexPath)
 	if err != nil {
@@ -191,4 +192,12 @@ func runGit(t *testing.T, dir, gitPath string, args ...string) []byte {
 		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, output)
 	}
 	return output
+}
+
+func describeGitError(err error) string {
+	var gitErr *GitError
+	if errors.As(err, &gitErr) {
+		return fmt.Sprintf("%s exit=%d stderr=%q cause=%v", gitErr.Code, gitErr.ExitCode, gitErr.Stderr, gitErr.Cause)
+	}
+	return err.Error()
 }
