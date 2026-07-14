@@ -2,9 +2,11 @@ package app
 
 import (
 	"sort"
+	"time"
 
 	"github.com/Scottlr/nudge/internal/domain"
 	"github.com/Scottlr/nudge/internal/domain/repository"
+	"github.com/Scottlr/nudge/internal/domain/review"
 )
 
 // RepositorySummary is the bounded repository projection exposed to clients.
@@ -51,10 +53,22 @@ type ChangedFileSummary struct {
 // ThreadSummary reserves the stable client projection for the thread slices.
 // Thread entities are introduced by the later thread tasks.
 type ThreadSummary struct {
-	ID         domain.ReviewThreadID
-	Status     string
-	AnchorPath repository.RepoPath
-	Unread     bool
+	ID                     domain.ReviewThreadID
+	SessionID              domain.ReviewSessionID
+	Title                  string
+	Status                 string
+	Resolution             review.ResolutionState
+	Conversation           review.ConversationState
+	Proposal               review.ProposalState
+	Anchor                 review.AnchorState
+	Read                   review.ReadState
+	FailurePhase           review.FailurePhase
+	ErrorCode              review.ErrorCode
+	AnchorPath             repository.RepoPath
+	Unread                 bool
+	ProviderConversationID *domain.ProviderConversationID
+	LatestProposalID       *domain.ProposalID
+	UpdatedAt              time.Time
 }
 
 // ThreadDetail is the bounded active-thread projection.
@@ -219,7 +233,25 @@ func cloneThreadSummaries(values []ThreadSummary) []ThreadSummary {
 
 func cloneThreadSummary(value ThreadSummary) ThreadSummary {
 	value.AnchorPath = repository.RepoPath(value.AnchorPath.Bytes())
+	value.ProviderConversationID = cloneProviderConversationID(value.ProviderConversationID)
+	value.LatestProposalID = cloneProposalID(value.LatestProposalID)
 	return value
+}
+
+func cloneProviderConversationID(value *domain.ProviderConversationID) *domain.ProviderConversationID {
+	if value == nil {
+		return nil
+	}
+	copyValue := *value
+	return &copyValue
+}
+
+func cloneProposalID(value *domain.ProposalID) *domain.ProposalID {
+	if value == nil {
+		return nil
+	}
+	copyValue := *value
+	return &copyValue
 }
 
 func cloneNotifications(values []Notification) []Notification {
