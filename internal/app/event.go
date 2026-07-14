@@ -66,10 +66,24 @@ type ApplicationClosed struct {
 	Revision uint64
 }
 
+// SessionRestored reports the result of durable-session restoration without
+// exposing provider or storage implementation details to a frontend.
+type SessionRestored struct {
+	Revision         uint64
+	OperationID      domain.OperationID
+	CorrelationID    CorrelationID
+	SessionID        domain.ReviewSessionID
+	TargetGeneration repository.TargetGeneration
+	ReadOnly         bool
+	Persistence      PersistenceMode
+	Degraded         bool
+}
+
 func (OperationStarted) isEvent()   {}
 func (OperationCompleted) isEvent() {}
 func (RepositoryLoaded) isEvent()   {}
 func (TargetLoaded) isEvent()       {}
+func (SessionRestored) isEvent()    {}
 func (FileSelected) isEvent()       {}
 func (Progress) isEvent()           {}
 func (OperationFailed) isEvent()    {}
@@ -108,6 +122,15 @@ func (e TargetLoaded) eventMetadata() EventMetadata {
 }
 
 func (e TargetLoaded) withRevision(revision uint64) Event {
+	e.Revision = revision
+	return e
+}
+
+func (e SessionRestored) eventMetadata() EventMetadata {
+	return EventMetadata{Revision: e.Revision, OperationID: e.OperationID, CorrelationID: e.CorrelationID, TargetGeneration: e.TargetGeneration}
+}
+
+func (e SessionRestored) withRevision(revision uint64) Event {
 	e.Revision = revision
 	return e
 }

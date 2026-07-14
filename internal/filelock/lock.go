@@ -17,6 +17,8 @@ var (
 	ErrInvalidPath = errors.New("invalid lock path")
 	// ErrClosed reports an operation on a released lock.
 	ErrClosed = errors.New("lock is closed")
+	// ErrBusy reports that another process currently owns the native lock.
+	ErrBusy = errors.New("lock is busy")
 )
 
 const retryInterval = 10 * time.Millisecond
@@ -32,6 +34,17 @@ type Lock struct {
 // Acquire opens or creates a protected lock file and waits cancellably for its
 // native exclusive lock. The caller must hold returned ownership until Close.
 func Acquire(ctx context.Context, path string) (*Lock, error) {
+	return acquire(ctx, path, true)
+}
+
+// TryAcquire attempts one non-blocking native lock acquisition. It returns
+// ErrBusy when another process owns the lock and never infers ownership from
+// lock-file contents or timestamps.
+func TryAcquire(ctx context.Context, path string) (*Lock, error) {
+	return acquire(ctx, path, false)
+}
+
+func acquire(ctx context.Context, path string, wait bool) (*Lock, error) {
 	if ctx == nil || path == "" || !filepath.IsAbs(path) || filepath.Clean(path) != path || filepath.Base(path) == "." || filepath.Base(path) == string(filepath.Separator) {
 		return nil, ErrInvalidPath
 	}
@@ -53,6 +66,10 @@ func Acquire(ctx context.Context, path string) (*Lock, error) {
 		}
 		if acquired {
 			return lock, nil
+		}
+		if !wait {
+			_ = file.Close()
+			return nil, ErrBusy
 		}
 		timer := time.NewTimer(retryInterval)
 		select {

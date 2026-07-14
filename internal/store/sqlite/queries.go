@@ -35,6 +35,12 @@ func (s *Store) UpsertRepository(ctx context.Context, repo repository.Repository
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := verifyRepositoryBinding(ctx, tx, repo); err != nil {
+		return err
+	}
+	if err := verifyWorktreeBinding(ctx, tx, worktree); err != nil {
+		return err
+	}
 	if err := upsertRepository(ctx, tx, repo); err != nil {
 		return err
 	}
@@ -118,6 +124,36 @@ func upsertWorktree(ctx context.Context, tx *sql.Tx, worktree repository.Worktre
 		formatTime(time.Now().UTC()),
 	)
 	return err
+}
+
+func verifyRepositoryBinding(ctx context.Context, tx *sql.Tx, repo repository.Repository) error {
+	var identity, objectFormat string
+	err := tx.QueryRowContext(ctx, "SELECT common_git_dir_identity, object_format FROM repositories WHERE id = ?", repo.ID).Scan(&identity, &objectFormat)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if identity != string(repo.Binding.CommonGitDirIdentity) || objectFormat != repo.Binding.ObjectFormat {
+		return app.ErrRepositoryBindingChanged
+	}
+	return nil
+}
+
+func verifyWorktreeBinding(ctx context.Context, tx *sql.Tx, worktree repository.WorktreeRef) error {
+	var rootIdentity, gitDirIdentity, objectFormat string
+	err := tx.QueryRowContext(ctx, "SELECT root_identity, git_dir_identity, object_format FROM worktrees WHERE id = ?", worktree.ID).Scan(&rootIdentity, &gitDirIdentity, &objectFormat)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if rootIdentity != string(worktree.Binding.RootIdentity) || gitDirIdentity != string(worktree.Binding.GitDirIdentity) || objectFormat != worktree.Binding.ObjectFormat {
+		return app.ErrRepositoryBindingChanged
+	}
+	return nil
 }
 
 func (s *Store) CreateSession(ctx context.Context, session review.ReviewSession, leaseID domain.SessionLeaseID) (app.SessionWriteGuard, error) {
@@ -246,9 +282,10 @@ func (s *Store) FindCompatibleSession(ctx context.Context, key review.SessionKey
 	}
 	hash := sha256.Sum256(keyJSON)
 	var data []byte
-	err = s.db.QueryRowContext(ctx, `SELECT target_json FROM review_sessions
+	var currentGeneration int64
+	err = s.db.QueryRowContext(ctx, `SELECT target_json, current_generation FROM review_sessions
 		WHERE repository_id = ? AND target_kind = ? AND session_key_hash = ? AND closed_at IS NULL
-		ORDER BY updated_at DESC, id ASC LIMIT 1`, key.RepositoryID, string(key.TargetKind), hex.EncodeToString(hash[:])).Scan(&data)
+		ORDER BY updated_at DESC, id ASC LIMIT 1`, key.RepositoryID, string(key.TargetKind), hex.EncodeToString(hash[:])).Scan(&data, &currentGeneration)
 	if err != nil {
 		return nil, mapNotFound(err)
 	}
@@ -258,6 +295,9 @@ func (s *Store) FindCompatibleSession(ctx context.Context, key review.SessionKey
 	}
 	if err := session.Validate(); err != nil {
 		return nil, fmt.Errorf("%w: session validation: %v", app.ErrReviewStoreCorrupt, err)
+	}
+	if currentGeneration <= 0 || uint64(currentGeneration) != uint64(session.Target.Generation) {
+		return nil, fmt.Errorf("%w: session generation", app.ErrReviewStoreCorrupt)
 	}
 	return &session, nil
 }
@@ -300,9 +340,13 @@ func (s *Store) WithSessionTx(ctx context.Context, guard app.SessionWriteGuard, 
 
 func verifyGuard(ctx context.Context, tx *sql.Tx, guard app.SessionWriteGuard) error {
 	var lease domain.SessionLeaseID
+	var closed sql.NullString
 	var epoch, revision int64
-	if err := tx.QueryRowContext(ctx, "SELECT writer_lease_id, writer_epoch, revision FROM review_sessions WHERE id = ?", guard.SessionID).Scan(&lease, &epoch, &revision); err != nil {
+	if err := tx.QueryRowContext(ctx, "SELECT writer_lease_id, writer_epoch, revision, closed_at FROM review_sessions WHERE id = ?", guard.SessionID).Scan(&lease, &epoch, &revision, &closed); err != nil {
 		return mapNotFound(err)
+	}
+	if closed.Valid {
+		return app.ErrSessionLeaseLost
 	}
 	if lease != guard.LeaseID || uint64(epoch) != guard.WriterEpoch {
 		return app.ErrSessionLeaseLost
@@ -317,6 +361,80 @@ type transaction struct {
 	tx              *sql.Tx
 	sessionID       domain.ReviewSessionID
 	maxMessageBytes uint64
+}
+
+func (t *transaction) SaveSession(ctx context.Context, session review.ReviewSession) error {
+	if err := session.Validate(); err != nil || session.ID != t.sessionID {
+		return app.ErrReviewStoreInput
+	}
+	key, err := review.SessionKeyFor(session)
+	if err != nil {
+		return app.ErrReviewStoreInput
+	}
+	keyJSON, err := json.Marshal(key)
+	if err != nil {
+		return err
+	}
+	keyHash := sha256.Sum256(keyJSON)
+	var repositoryID, storedKeyHash, currentTargetJSON string
+	var worktreeID sql.NullString
+	var currentGeneration int64
+	var closed sql.NullString
+	err = t.tx.QueryRowContext(ctx, `SELECT repository_id, worktree_id, session_key_hash,
+		target_json, current_generation, closed_at FROM review_sessions WHERE id = ?`, t.sessionID).
+		Scan(&repositoryID, &worktreeID, &storedKeyHash, &currentTargetJSON, &currentGeneration, &closed)
+	if errors.Is(err, sql.ErrNoRows) {
+		return app.ErrReviewStoreNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if closed.Valid || repositoryID != string(session.RepositoryID) || storedKeyHash != hex.EncodeToString(keyHash[:]) {
+		return app.ErrSessionTargetConflict
+	}
+	if key.WorktreeID != "" && (!worktreeID.Valid || worktreeID.String != string(key.WorktreeID)) {
+		return app.ErrSessionTargetConflict
+	}
+	var current review.ReviewSession
+	if err := json.Unmarshal([]byte(currentTargetJSON), &current); err != nil || current.Validate() != nil {
+		return app.ErrReviewStoreCorrupt
+	}
+	if currentGeneration <= 0 {
+		return app.ErrReviewStoreCorrupt
+	}
+	if uint64(currentGeneration) == uint64(session.Target.Generation) {
+		if current.Target.Fingerprint != session.Target.Fingerprint {
+			return app.ErrSessionTargetConflict
+		}
+	} else if uint64(currentGeneration)+1 != uint64(session.Target.Generation) || current.Target.Fingerprint == session.Target.Fingerprint {
+		return app.ErrSessionRevisionConflict
+	}
+	sessionJSON, err := json.Marshal(session)
+	if err != nil {
+		return err
+	}
+	if uint64(currentGeneration) < uint64(session.Target.Generation) {
+		if _, err := t.tx.ExecContext(ctx, `INSERT INTO target_generations(
+			session_id, generation, capture_generation_json, capture_manifest_json,
+			target_json, fingerprint, manifest_hash, policy_evaluation_json,
+			retention_reference, accepted_at
+		) VALUES(?, ?, 'null', 'null', ?, ?, '', 'null', '', ?)`,
+			t.sessionID,
+			session.Target.Generation,
+			sessionJSON,
+			session.Target.Fingerprint,
+			formatTime(session.UpdatedAt)); err != nil {
+			return err
+		}
+	}
+	_, err = t.tx.ExecContext(ctx, `UPDATE review_sessions SET target_json = ?, current_generation = ?,
+		closed_at = ?, updated_at = ? WHERE id = ? AND closed_at IS NULL`,
+		sessionJSON,
+		session.Target.Generation,
+		nullableTime(session.ClosedAt),
+		formatTime(session.UpdatedAt),
+		session.ID)
+	return err
 }
 
 func (t *transaction) SaveThread(ctx context.Context, thread review.ReviewThread) error {

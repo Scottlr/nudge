@@ -20,6 +20,7 @@ type BuildInfo struct {
 // The root invocation is the local-review command; future target modes are
 // added only when their complete behavior is implemented.
 func NewRootCommand(info BuildInfo) *cobra.Command {
+	var noPersist bool
 	command := &cobra.Command{
 		Use:           "nudge [path]",
 		Short:         "Review local Git changes safely.",
@@ -38,9 +39,10 @@ func NewRootCommand(info BuildInfo) *cobra.Command {
 					return err
 				}
 			}
-			return runLocalReview(cmd.Context(), path)
+			return runLocalReview(cmd.Context(), path, noPersist)
 		},
 	}
+	command.Flags().BoolVar(&noPersist, "no-persist", false, "Run without saving review state.")
 	command.CompletionOptions.DisableDefaultCmd = true
 	command.AddCommand(newVersionCommand(info))
 	command.AddCommand(newConfigCommand())
