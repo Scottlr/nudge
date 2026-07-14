@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -136,6 +137,7 @@ func NewCommandBuilder(config CommandBuilderConfig) (*CommandBuilder, error) {
 // Args returns the explicit argv after Git global read controls and -C.
 func (b *CommandBuilder) Args(command ...string) []string {
 	args := []string{
+		"--no-optional-locks",
 		"--no-pager",
 		"-c", "color.ui=false",
 		"-c", "core.pager=",
@@ -162,10 +164,8 @@ func (b *CommandBuilder) Run(ctx context.Context, command ...string) (process.Re
 	if ctx == nil {
 		return process.Result{}, &GitError{Code: ErrorInvalidInput}
 	}
-	for _, arg := range command {
-		if strings.IndexByte(arg, 0) >= 0 {
-			return process.Result{}, &GitError{Code: ErrorInvalidInput}
-		}
+	if err := validateCommandArgs(command); err != nil {
+		return process.Result{}, err
 	}
 	result, err := b.runner.Run(ctx, process.Spec{
 		Executable:  b.executable,
@@ -179,6 +179,64 @@ func (b *CommandBuilder) Run(ctx context.Context, command ...string) (process.Re
 		return result, nil
 	}
 	return result, classifyProcessError(err, result)
+}
+
+// RunInput executes one bounded Git read with an explicit stdin reader. It is
+// used only for Git commands whose read-only semantics require a finite input,
+// such as deriving the object-format-specific empty tree.
+func (b *CommandBuilder) RunInput(ctx context.Context, input io.Reader, command ...string) (process.Result, error) {
+	if ctx == nil || input == nil {
+		return process.Result{}, &GitError{Code: ErrorInvalidInput}
+	}
+	if err := validateCommandArgs(command); err != nil {
+		return process.Result{}, err
+	}
+	result, err := b.runner.Run(ctx, process.Spec{
+		Executable:  b.executable,
+		Args:        b.Args(command...),
+		Environment: b.policy.EnvironmentPolicy(),
+		Stdin:       input,
+		Timeout:     b.policy.Timeout,
+		StdoutLimit: b.policy.StdoutLimit,
+		StderrLimit: b.policy.StderrLimit,
+	})
+	if err == nil {
+		return result, nil
+	}
+	return result, classifyProcessError(err, result)
+}
+
+// RunStream executes one bounded Git read while writing stdout directly to an
+// owner-controlled sink. Partial stream identities are never returned as
+// complete by the process runner.
+func (b *CommandBuilder) RunStream(ctx context.Context, stdout io.Writer, command ...string) (process.StreamResult, error) {
+	if ctx == nil || stdout == nil {
+		return process.StreamResult{}, &GitError{Code: ErrorInvalidInput}
+	}
+	if err := validateCommandArgs(command); err != nil {
+		return process.StreamResult{}, err
+	}
+	result, err := b.runner.RunStream(ctx, process.Spec{
+		Executable:  b.executable,
+		Args:        b.Args(command...),
+		Environment: b.policy.EnvironmentPolicy(),
+		Timeout:     b.policy.Timeout,
+		StdoutLimit: b.policy.StdoutLimit,
+		StderrLimit: b.policy.StderrLimit,
+	}, stdout)
+	if err == nil {
+		return result, nil
+	}
+	return result, classifyProcessError(err, process.Result{ExitCode: result.ExitCode, Stderr: result.StderrTail})
+}
+
+func validateCommandArgs(command []string) error {
+	for _, arg := range command {
+		if strings.IndexByte(arg, 0) >= 0 {
+			return &GitError{Code: ErrorInvalidInput}
+		}
+	}
+	return nil
 }
 
 func classifyProcessError(cause error, result process.Result) error {
