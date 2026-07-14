@@ -583,7 +583,7 @@ func (t *transaction) SaveCaptureGeneration(ctx context.Context, generation app.
 	if err := manifest.Validate(); err != nil || manifest.CaptureID != generation.CaptureID || manifest.RepositoryID != generation.RepositoryID || manifest.WorktreeID != generation.WorktreeID {
 		return app.ErrReviewStoreInput
 	}
-	return t.saveCaptureGeneration(ctx, generation, manifest, nil, "")
+	return t.saveCaptureGeneration(ctx, generation, manifest, nil, nil, "")
 }
 
 func (t *transaction) SaveAcceptedTargetGeneration(ctx context.Context, accepted app.AcceptedTargetGeneration) error {
@@ -594,10 +594,17 @@ func (t *transaction) SaveAcceptedTargetGeneration(ctx context.Context, accepted
 	if err != nil {
 		return err
 	}
-	return t.saveCaptureGeneration(ctx, accepted.Generation, accepted.Manifest, policyJSON, accepted.RetentionReference)
+	var targetJSON []byte
+	if accepted.Target != nil {
+		targetJSON, err = json.Marshal(accepted.Target)
+		if err != nil {
+			return err
+		}
+	}
+	return t.saveCaptureGeneration(ctx, accepted.Generation, accepted.Manifest, targetJSON, policyJSON, accepted.RetentionReference)
 }
 
-func (t *transaction) saveCaptureGeneration(ctx context.Context, generation app.CaptureGeneration, manifest app.CaptureManifest, policyJSON []byte, retentionReference string) error {
+func (t *transaction) saveCaptureGeneration(ctx context.Context, generation app.CaptureGeneration, manifest app.CaptureManifest, targetJSON, policyJSON []byte, retentionReference string) error {
 	var repositoryID string
 	var worktreeID sql.NullString
 	if err := t.tx.QueryRowContext(ctx, "SELECT repository_id, worktree_id FROM review_sessions WHERE id = ?", t.sessionID).Scan(&repositoryID, &worktreeID); err != nil {
@@ -619,12 +626,13 @@ func (t *transaction) saveCaptureGeneration(ctx context.Context, generation app.
 	}
 	result, err := t.tx.ExecContext(ctx, `INSERT INTO target_generations(
 		session_id, generation, capture_id, capture_generation_json, capture_manifest_json,
-		fingerprint, manifest_hash, policy_evaluation_json, retention_reference, accepted_at
-	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		target_json, fingerprint, manifest_hash, policy_evaluation_json, retention_reference, accepted_at
+	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(session_id, generation) DO UPDATE SET
 		capture_id = excluded.capture_id,
 		capture_generation_json = excluded.capture_generation_json,
 		capture_manifest_json = excluded.capture_manifest_json,
+		target_json = excluded.target_json,
 		fingerprint = excluded.fingerprint,
 		manifest_hash = excluded.manifest_hash,
 		policy_evaluation_json = excluded.policy_evaluation_json,
@@ -636,6 +644,7 @@ func (t *transaction) saveCaptureGeneration(ctx context.Context, generation app.
 		string(generation.CaptureID),
 		generationJSON,
 		manifestJSON,
+		nullableBytes(targetJSON),
 		generation.Fingerprint,
 		generation.ManifestHash,
 		policyJSON,
@@ -1077,6 +1086,13 @@ func boolInt(value bool) int {
 
 func nullableID(value string) any {
 	if value == "" {
+		return nil
+	}
+	return value
+}
+
+func nullableBytes(value []byte) any {
+	if len(value) == 0 {
 		return nil
 	}
 	return value

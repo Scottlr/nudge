@@ -80,17 +80,20 @@ func (s ReviewTargetSpec) Validate() error {
 // ResolvedTarget is one immutable Git interpretation of a target intent.
 // Resolved object identities are kept distinct from the original expressions.
 type ResolvedTarget struct {
-	Spec            ReviewTargetSpec
-	Generation      TargetGeneration
-	Base            SnapshotRef
-	Head            SnapshotRef
-	ResolvedCommit  ObjectID
-	ResolvedParent  ObjectID
-	MergeBase       ObjectID
-	Editable        bool
-	EditDestination *domain.WorktreeID
-	Fingerprint     string
-	ResolvedAt      time.Time
+	Spec             ReviewTargetSpec
+	Generation       TargetGeneration
+	Base             SnapshotRef
+	Head             SnapshotRef
+	ResolvedCommit   ObjectID
+	ResolvedParent   ObjectID
+	ResolvedBaseRef  ObjectID
+	MergeBase        ObjectID
+	BaseBranchSource string
+	BranchRef        string
+	Editable         bool
+	EditDestination  *domain.WorktreeID
+	Fingerprint      string
+	ResolvedAt       time.Time
 }
 
 // NewResolvedTarget validates and returns one resolved target generation.
@@ -134,23 +137,43 @@ func (t ResolvedTarget) Validate() error {
 			return fmt.Errorf("%w: merge base", ErrInvalidTargetSpec)
 		}
 	}
+	if t.ResolvedBaseRef != "" {
+		if _, err := NewObjectID(string(t.ResolvedBaseRef)); err != nil {
+			return fmt.Errorf("%w: resolved base ref", ErrInvalidTargetSpec)
+		}
+	}
+	if t.BaseBranchSource != "" && !validText(t.BaseBranchSource) {
+		return ErrInvalidTargetSpec
+	}
+	if t.BranchRef != "" && !validText(t.BranchRef) {
+		return ErrInvalidTargetSpec
+	}
 
 	switch t.Spec.Kind {
 	case TargetLocal:
-		if t.Base.Kind == SnapshotWorkingTree || t.Head.Kind != SnapshotWorkingTree || t.ResolvedParent != "" || t.MergeBase != "" {
+		if t.Base.Kind == SnapshotWorkingTree || t.Head.Kind != SnapshotWorkingTree || t.ResolvedParent != "" || t.ResolvedBaseRef != "" || t.MergeBase != "" || t.BaseBranchSource != "" || t.BranchRef != "" {
 			return ErrInvalidTargetSpec
 		}
 	case TargetCommit:
-		if t.Base.Kind == SnapshotWorkingTree || t.Head.Kind != SnapshotCommit || t.ResolvedCommit == "" || t.MergeBase != "" {
+		if t.Base.Kind == SnapshotWorkingTree || t.Head.Kind != SnapshotCommit || t.ResolvedCommit == "" || t.ResolvedBaseRef != "" || t.MergeBase != "" || t.BaseBranchSource != "" || t.BranchRef != "" {
 			return ErrInvalidTargetSpec
 		}
 		if t.Head.ObjectID != t.ResolvedCommit {
 			return ErrInvalidTargetSpec
 		}
 	case TargetBranch:
-		if t.Base.Kind == SnapshotWorkingTree || t.Head.Kind != SnapshotCommit || t.ResolvedCommit == "" || t.MergeBase == "" || t.Head.ObjectID != t.ResolvedCommit {
+		if t.Base.Kind == SnapshotWorkingTree || t.Head.Kind != SnapshotCommit || t.ResolvedCommit == "" || t.ResolvedBaseRef == "" || t.MergeBase == "" || !validBaseBranchSource(t.BaseBranchSource) || t.BranchRef == "" || t.Head.ObjectID != t.ResolvedCommit {
 			return ErrInvalidTargetSpec
 		}
 	}
 	return nil
+}
+
+func validBaseBranchSource(value string) bool {
+	switch value {
+	case "explicit_branch_flag", "session_choice", "repository_preference", "discovery":
+		return true
+	default:
+		return false
+	}
 }
