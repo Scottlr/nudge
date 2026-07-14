@@ -8,6 +8,7 @@ require (
 	charm.land/lipgloss/v2 v2.0.5
 	github.com/alecthomas/chroma/v2 v2.27.0
 	github.com/charmbracelet/x/ansi v0.11.7
+	github.com/fsnotify/fsnotify v1.9.0
 	github.com/mattn/go-runewidth v0.0.24
 	github.com/pelletier/go-toml/v2 v2.2.3
 	github.com/spf13/cobra v1.10.2
