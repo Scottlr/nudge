@@ -22,22 +22,23 @@ type RelocationMetadata struct {
 // Path bytes remain repository identity and are never interpreted as native
 // paths by this package.
 type CodeAnchor struct {
-	Path              repository.RepoPath
-	PreviousPath      repository.RepoPath
-	Side              repository.DiffSide
-	StartLine         int
-	EndLine           int
-	TargetGeneration  repository.TargetGeneration
-	Base              repository.SnapshotRef
-	Head              repository.SnapshotRef
-	HunkFingerprint   string
-	SelectionHash     string
-	SelectedText      string
-	BeforeContextHash string
-	AfterContextHash  string
-	State             AnchorState
-	CreatedAt         time.Time
-	Relocation        *RelocationMetadata
+	Path               repository.RepoPath
+	PreviousPath       repository.RepoPath
+	Side               repository.DiffSide
+	StartLine          int
+	EndLine            int
+	TargetGeneration   repository.TargetGeneration
+	Base               repository.SnapshotRef
+	Head               repository.SnapshotRef
+	HunkFingerprint    string
+	SelectionHash      string
+	SelectedText       string
+	BeforeContextHash  string
+	AfterContextHash   string
+	FingerprintVersion uint32
+	State              AnchorState
+	CreatedAt          time.Time
+	Relocation         *RelocationMetadata
 }
 
 // NewCodeAnchor validates and returns one immutable anchor value.
@@ -72,7 +73,7 @@ func (a CodeAnchor) Validate() error {
 	if err := a.Head.Validate(); err != nil {
 		return fmt.Errorf("%w: head snapshot: %v", ErrInvalidCodeAnchor, err)
 	}
-	if !validMetadata(a.HunkFingerprint) || !validMetadata(a.SelectionHash) || !validOptionalMetadata(a.BeforeContextHash) || !validOptionalMetadata(a.AfterContextHash) || !validContent(a.SelectedText) {
+	if a.FingerprintVersion != 0 && a.FingerprintVersion != AnchorFingerprintVersion || !validMetadata(a.HunkFingerprint) || !validMetadata(a.SelectionHash) || !validOptionalMetadata(a.BeforeContextHash) || !validOptionalMetadata(a.AfterContextHash) || !validContent(a.SelectedText) {
 		return ErrInvalidCodeAnchor
 	}
 	if a.Relocation != nil {
