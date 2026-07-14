@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Quality (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+        go-version:
+          - stable
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ matrix.go-version }}
+          check-latest: true
+
+      - name: Check formatting
+        run: |
+          gofmt -w .
+          git diff --exit-code
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Static analysis
+        run: go tool staticcheck ./...
+
+      - name: Test
+        run: go test ./...
+
+      - name: Build
+        run: go build ./cmd/nudge
+
+  go-1-25:
+    name: Go 1.25 compatibility
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: 1.25.x
+          check-latest: true
+
+      - name: Test
+        run: go test ./...
+
+      - name: Build
+        run: go build ./cmd/nudge
