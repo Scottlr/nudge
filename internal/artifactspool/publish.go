@@ -104,7 +104,7 @@ func (h *Handle) publishLocked(ctx context.Context, expected app.ArtifactIdentit
 		return app.PublishedArtifact{}, err
 	}
 	h.setDescriptorState(app.SpoolPublished)
-	return app.PublishedArtifact{Identity: expected, Target: app.PublishTarget{OwnerKind: target.OwnerKind, RelativePath: cleanTarget, SourceRelativePath: cleanSource}}, nil
+	return app.PublishedArtifact{Identity: expected, Target: app.PublishTarget{OwnerKind: target.OwnerKind, RelativePath: cleanTarget, SourceRelativePath: cleanSource}, Limits: limits}, nil
 }
 
 func (m *Manager) destinationPath(target app.PublishTarget, maxPath app.ByteSize) (string, error) {
