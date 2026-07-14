@@ -30,6 +30,7 @@ func NewRootCommand(info BuildInfo) *cobra.Command {
 		},
 	}
 	command.AddCommand(newVersionCommand(info))
+	command.AddCommand(newConfigCommand())
 	return command
 }
 
