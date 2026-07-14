@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io/fs"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -44,9 +45,13 @@ func migrationCatalog() ([]migration, error) {
 			return nil, err
 		}
 		digest := sha256.Sum256(data)
+		owner := "core_review"
+		if strings.Contains(name, "owned_storage") {
+			owner = "owned_storage"
+		}
 		catalog = append(catalog, migration{
 			Version:  uint64(index + 1),
-			Owner:    "core_review",
+			Owner:    owner,
 			Name:     name,
 			SQL:      string(data),
 			Checksum: hex.EncodeToString(digest[:]),
