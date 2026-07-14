@@ -11,7 +11,7 @@ func TestRootCommandShowsHelp(t *testing.T) {
 	command := NewRootCommand(BuildInfo{})
 	command.SetOut(&output)
 	command.SetErr(&output)
-	command.SetArgs([]string{})
+	command.SetArgs([]string{"--help"})
 
 	if err := command.Execute(); err != nil {
 		t.Fatalf("execute root command: %v", err)

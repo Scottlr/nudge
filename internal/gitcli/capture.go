@@ -62,6 +62,16 @@ type LocalCaptureResult struct {
 	policy      app.ResourcePolicy
 }
 
+// Capacity returns the reservation owner used by this capture. It lets the
+// application transfer the typed release capability during T009 adoption
+// without exposing adapter internals or path state.
+func (r *LocalCaptureResult) Capacity() app.CapacityReservationPort {
+	if r == nil {
+		return nil
+	}
+	return r.capacity
+}
+
 // Abort releases candidate-owned spools and the matching capacity marker. It
 // never touches the user worktree, index, refs, or Git metadata.
 func (r *LocalCaptureResult) Abort(ctx context.Context) error {

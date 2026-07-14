@@ -26,9 +26,11 @@ type Model struct {
 	client    app.ApplicationClient
 	snapshots <-chan app.AppSnapshot
 	events    <-chan app.Event
+	local     <-chan app.LocalReviewSnapshot
 	ctx       context.Context
 
 	snapshot       app.AppSnapshot
+	localReview    app.LocalReviewSnapshot
 	dimensions     Dimensions
 	layout         Layout
 	focus          Pane
@@ -88,6 +90,14 @@ func WithAltScreen(enabled bool) ModelOption {
 func WithReportFocus(enabled bool) ModelOption {
 	return func(model *Model) {
 		model.reportFocus = enabled
+	}
+}
+
+// WithLocalReviewStream supplies the bounded asynchronous local-review
+// projection used by the initial command surface.
+func WithLocalReviewStream(stream <-chan app.LocalReviewSnapshot) ModelOption {
+	return func(model *Model) {
+		model.local = stream
 	}
 }
 
@@ -176,6 +186,9 @@ func (m *Model) Init() tea.Cmd {
 	}
 	if m.events != nil && !m.eventsClosed {
 		commands = append(commands, receiveEvent(m.events))
+	}
+	if m.local != nil {
+		commands = append(commands, receiveLocalReview(m.local))
 	}
 	return tea.Batch(commands...)
 }

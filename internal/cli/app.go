@@ -1,0 +1,212 @@
+package cli
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sync"
+
+	tea "charm.land/bubbletea/v2"
+	"github.com/Scottlr/nudge/internal/app"
+	"github.com/Scottlr/nudge/internal/artifactspool"
+	"github.com/Scottlr/nudge/internal/capacityprobe"
+	"github.com/Scottlr/nudge/internal/capacitystore"
+	"github.com/Scottlr/nudge/internal/config"
+	"github.com/Scottlr/nudge/internal/diff"
+	"github.com/Scottlr/nudge/internal/domain"
+	"github.com/Scottlr/nudge/internal/domain/repository"
+	"github.com/Scottlr/nudge/internal/gitcli"
+	"github.com/Scottlr/nudge/internal/highlight"
+	"github.com/Scottlr/nudge/internal/paths"
+	"github.com/Scottlr/nudge/internal/process"
+	"github.com/Scottlr/nudge/internal/tui"
+	"github.com/Scottlr/nudge/internal/workspace"
+)
+
+func runLocalReview(ctx context.Context, startPath string) error {
+	if ctx == nil {
+		return errors.New("local review: nil context")
+	}
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	if startPath == "" {
+		var err error
+		startPath, err = os.Getwd()
+		if err != nil {
+			return fmt.Errorf("local review: current directory: %w", err)
+		}
+	}
+	abs, err := filepath.Abs(startPath)
+	if err != nil {
+		return fmt.Errorf("local review: path: %w", err)
+	}
+	startPath = filepath.Clean(abs)
+	environ := processEnvironment(os.Environ())
+	locations, err := paths.Resolve(environ)
+	if err != nil {
+		return fmt.Errorf("local review: locations: %w", err)
+	}
+	loaded, err := config.Load(runCtx, locations, environ, config.CLIOverrides{})
+	if err != nil {
+		return fmt.Errorf("local review: configuration: %w", err)
+	}
+
+	trusted, err := process.NewExecutableResolver().Resolve(runCtx, process.ResolveExecutableRequest{
+		Kind:               process.ExecutableGit,
+		SearchPath:         environ["PATH"],
+		CurrentDir:         startPath,
+		WorkspaceRoots:     []string{locations.WorkspaceRoot},
+		NudgeWritableRoots: []string{locations.ConfigRoot, locations.StateRoot, locations.CacheRoot, locations.LogRoot},
+	})
+	if err != nil {
+		return fmt.Errorf("local review: resolve Git: %w", err)
+	}
+	runner := process.NewRunner()
+	policy := gitcli.DefaultMachineGitReadPolicyV1()
+	resolver, err := gitcli.NewResolver(gitcli.ResolverConfig{Executable: trusted, Runner: runner, Policy: policy})
+	if err != nil {
+		return fmt.Errorf("local review: repository resolver: %w", err)
+	}
+
+	artifactManager, err := artifactspool.NewManager(filepath.Join(locations.CacheRoot, "artifacts"))
+	if err != nil {
+		return fmt.Errorf("local review: artifact storage: %w", err)
+	}
+	capacityManager, err := capacitystore.NewManager(filepath.Join(locations.CacheRoot, "capacity"))
+	if err != nil {
+		return fmt.Errorf("local review: capacity storage: %w", err)
+	}
+	evidence, err := capacityprobe.New().Observe(runCtx, locations.CacheRoot)
+	if err != nil {
+		return fmt.Errorf("local review: capacity evidence: %w", err)
+	}
+	policyResource := app.DefaultResourcePolicy()
+	operationID, err := domain.NewOperationID(app.RandomIDSource{}.NewID())
+	if err != nil {
+		return fmt.Errorf("local review: operation identity: %w", err)
+	}
+	captureAdapter, err := gitcli.NewLocalCaptureAdapter(gitcli.LocalCaptureConfig{
+		Executable:     trusted,
+		Runner:         runner,
+		Policy:         policyResource,
+		Capacity:       capacityManager,
+		Spools:         artifactManager,
+		OperationID:    operationID,
+		VolumeID:       evidence.ID,
+		VolumeEvidence: []app.VolumeEvidence{evidence},
+	})
+	if err != nil {
+		return fmt.Errorf("local review: capture adapter: %w", err)
+	}
+	manifestStore := newLocalReviewManifests()
+	captureStore, err := workspace.NewCaptureStore(workspace.CaptureStoreConfig{
+		Committer: manifestStore,
+		Manifests: manifestStore,
+		Reader:    artifactManager,
+		Releaser:  artifactManager,
+	})
+	if err != nil {
+		return fmt.Errorf("local review: capture store: %w", err)
+	}
+	treeReader, err := gitcli.NewTreeReader(gitcli.TreeReaderConfig{Executable: trusted, Runner: runner, StartPath: startPath, Policy: policy, Limits: policyResource})
+	if err != nil {
+		return fmt.Errorf("local review: tree reader: %w", err)
+	}
+	contentLoader, err := gitcli.NewContentLoader(gitcli.ContentLoaderConfig{
+		Executable:      trusted,
+		Runner:          runner,
+		StartPath:       startPath,
+		Policy:          policy,
+		Manifests:       captureStore,
+		Artifacts:       artifactManager,
+		MaxContentBytes: app.ByteSize(loaded.Config.Review.LargeFileBytes),
+		PatchLimits:     diff.DefaultPatchParseLimits(),
+	})
+	if err != nil {
+		return fmt.Errorf("local review: content loader: %w", err)
+	}
+	highlighter, err := highlight.NewChromaHighlighter(int(loaded.Config.Review.HighlightFileBytes), highlight.NewCache(int(policyResource.MetadataCache.MaxEntries), int(policyResource.MetadataCache.MaxBytes)))
+	if err != nil {
+		return fmt.Errorf("local review: highlighter: %w", err)
+	}
+	runtime, err := app.NewLocalReview(app.LocalReviewConfig{
+		Source: app.LocalReviewSource{
+			Resolver:    resolver,
+			Capture:     captureSource{adapter: captureAdapter},
+			Store:       captureStore,
+			Tree:        treeReader,
+			Content:     contentLoader,
+			Highlighter: highlighter,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("local review: runtime: %w", err)
+	}
+	stream, err := runtime.Start(runCtx, startPath)
+	if err != nil {
+		return fmt.Errorf("local review: start: %w", err)
+	}
+	model := tui.NewModel(nil, tui.WithContext(runCtx), tui.WithLocalReviewStream(stream), tui.WithAltScreen(true), tui.WithReportFocus(true))
+	program := tea.NewProgram(model, tea.WithContext(runCtx))
+	_, err = program.Run()
+	return err
+}
+
+type captureSource struct {
+	adapter *gitcli.LocalCaptureAdapter
+}
+
+func (s captureSource) Capture(ctx context.Context, repo repository.Repository, worktree repository.WorktreeRef) (app.LocalCaptureArtifacts, error) {
+	result, err := s.adapter.Capture(ctx, repo, worktree)
+	if err != nil {
+		return app.LocalCaptureArtifacts{}, err
+	}
+	return app.LocalCaptureArtifacts{Candidate: result.Candidate, PatchSpool: result.PatchSpool, BlobSpool: result.BlobSpool, Reservation: result.Reservation, Plan: result.Plan, Policy: result.Policy, Capacity: result.Capacity()}, nil
+}
+
+type localReviewManifests struct {
+	mu        sync.Mutex
+	manifests map[domain.CaptureID]app.CaptureManifest
+}
+
+func newLocalReviewManifests() *localReviewManifests {
+	return &localReviewManifests{manifests: make(map[domain.CaptureID]app.CaptureManifest)}
+}
+
+func (m *localReviewManifests) CommitLocalCapture(_ context.Context, _ app.CaptureSessionState, generation app.CaptureGeneration, manifest app.CaptureManifest, _ app.CapacityReservation, _ app.CapacityPlan) error {
+	if m == nil || generation.Validate() != nil || manifest.Validate() != nil {
+		return app.ErrInvalidLocalCaptureManifest
+	}
+	m.mu.Lock()
+	m.manifests[generation.CaptureID] = manifest
+	m.mu.Unlock()
+	return nil
+}
+
+func (m *localReviewManifests) OpenCaptureManifest(_ context.Context, captureID domain.CaptureID) (app.CaptureManifest, error) {
+	if m == nil || captureID == "" {
+		return app.CaptureManifest{}, app.ErrCaptureNotFound
+	}
+	m.mu.Lock()
+	manifest, ok := m.manifests[captureID]
+	m.mu.Unlock()
+	if !ok {
+		return app.CaptureManifest{}, app.ErrCaptureNotFound
+	}
+	return manifest, nil
+}
+
+func processEnvironment(values []string) map[string]string {
+	result := make(map[string]string, len(values))
+	for _, value := range values {
+		for index := 0; index < len(value); index++ {
+			if value[index] == '=' && index > 0 {
+				result[value[:index]] = value[index+1:]
+				break
+			}
+		}
+	}
+	return result
+}

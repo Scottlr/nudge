@@ -36,6 +36,20 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case EventStreamClosedMsg:
 		m.eventsClosed = true
+	case LocalReviewMsg:
+		if message.Snapshot.Revision >= m.localReview.Revision {
+			m.localReview = message.Snapshot.Clone()
+		}
+		if m.local != nil {
+			return m, receiveLocalReview(m.local)
+		}
+	case LocalReviewStreamClosedMsg:
+		m.local = nil
+	case tea.KeyPressMsg:
+		switch message.Keystroke() {
+		case "q", "ctrl+c", "esc":
+			return m, func() tea.Msg { return tea.Quit() }
+		}
 	case FocusNextMsg:
 		m.moveFocus(1)
 	case FocusPreviousMsg:
@@ -108,6 +122,16 @@ func receiveEvent(stream <-chan app.Event) tea.Cmd {
 			return EventStreamClosedMsg{}
 		}
 		return EventMsg{Event: event}
+	}
+}
+
+func receiveLocalReview(stream <-chan app.LocalReviewSnapshot) tea.Cmd {
+	return func() tea.Msg {
+		snapshot, ok := <-stream
+		if !ok {
+			return LocalReviewStreamClosedMsg{}
+		}
+		return LocalReviewMsg{Snapshot: snapshot}
 	}
 }
 

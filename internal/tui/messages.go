@@ -24,6 +24,14 @@ type EventMsg struct {
 // EventStreamClosedMsg reports that the application event stream ended.
 type EventStreamClosedMsg struct{}
 
+// LocalReviewMsg carries one immutable local-review composition update.
+type LocalReviewMsg struct {
+	Snapshot app.LocalReviewSnapshot
+}
+
+// LocalReviewStreamClosedMsg reports that the local-review worker exited.
+type LocalReviewStreamClosedMsg struct{}
+
 // FocusNextMsg and FocusPreviousMsg are typed focus intents from the input
 // owner. They avoid embedding raw key handling in the root.
 type FocusNextMsg struct{}
