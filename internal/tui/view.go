@@ -259,6 +259,11 @@ func changePathForView(file repository.ChangedFile) string {
 }
 
 func (m *Model) threadBody() string {
+	if m.threadPane != nil {
+		if rendered := m.threadPane.View(); rendered != "" {
+			return rendered
+		}
+	}
 	if len(m.snapshot.Threads) == 0 {
 		return "No review threads in the current snapshot"
 	}
@@ -266,6 +271,11 @@ func (m *Model) threadBody() string {
 }
 
 func (m *Model) discussionBody() string {
+	if m.discussionPane != nil {
+		if rendered := m.discussionPane.View(); rendered != "" {
+			return rendered
+		}
+	}
 	if m.snapshot.ActiveThread == nil {
 		return "No review thread selected"
 	}

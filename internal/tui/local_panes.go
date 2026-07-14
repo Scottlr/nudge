@@ -2,8 +2,12 @@ package tui
 
 import (
 	"github.com/Scottlr/nudge/internal/app"
+	"github.com/Scottlr/nudge/internal/domain/repository"
+	"github.com/Scottlr/nudge/internal/domain/review"
 	"github.com/Scottlr/nudge/internal/highlight"
 	codepane "github.com/Scottlr/nudge/internal/tui/components/code"
+	discussionpane "github.com/Scottlr/nudge/internal/tui/components/discussion"
+	threadpane "github.com/Scottlr/nudge/internal/tui/components/threads"
 	treepane "github.com/Scottlr/nudge/internal/tui/components/tree"
 )
 
@@ -34,6 +38,7 @@ func (m *Model) syncLocalReviewPanes() {
 
 	if m.localReview.Displayed == nil || m.localReview.Displayed.Validate() != nil {
 		m.codePane.Update(codepane.SnapshotContentMsg{})
+		m.syncThreadMarkers()
 		return
 	}
 	codeIntents := m.codePane.Update(codepane.SnapshotContentMsg{Content: *m.localReview.Displayed})
@@ -50,6 +55,63 @@ func (m *Model) syncLocalReviewPanes() {
 		}
 		m.syncLocalHighlights()
 	}
+	m.syncThreadMarkers()
+}
+
+func (m *Model) syncReviewSnapshot() {
+	if m == nil {
+		return
+	}
+	if m.threadPane != nil {
+		m.threadPane.Update(threadpane.SetSnapshotMsg{Snapshot: m.snapshot})
+	}
+	if m.discussionPane != nil {
+		var thread *app.ThreadSummary
+		if m.snapshot.ActiveThread != nil {
+			copyValue := m.snapshot.ActiveThread.Summary
+			thread = &copyValue
+		}
+		m.discussionPane.Update(discussionpane.SetThreadMsg{Revision: m.snapshot.Revision, Thread: thread})
+	}
+	m.syncThreadMarkers()
+}
+
+func (m *Model) syncThreadMarkers() {
+	if m == nil || m.codePane == nil {
+		return
+	}
+	content := m.codePane.Content()
+	if content.Validate() != nil {
+		return
+	}
+	items := m.snapshot.ThreadWindow.Items
+	if len(items) == 0 {
+		items = m.snapshot.Threads
+	}
+	markers := make([]codepane.ThreadMarker, 0, len(items))
+	for _, item := range items {
+		side := app.SideHead
+		if item.AnchorSide == repository.DiffBase {
+			side = app.SideBase
+		}
+		markers = append(markers, codepane.ThreadMarker{
+			ThreadID:  item.ID,
+			Path:      item.AnchorPath.Key(),
+			Side:      side,
+			StartLine: item.AnchorStartLine,
+			EndLine:   item.AnchorEndLine,
+			Status: review.ThreadStatus{
+				Resolution:   item.Resolution,
+				Conversation: item.Conversation,
+				Proposal:     item.Proposal,
+				Anchor:       item.Anchor,
+				Read:         item.Read,
+				FailurePhase: item.FailurePhase,
+				ErrorCode:    item.ErrorCode,
+			},
+		})
+	}
+	m.codePane.Update(codepane.SetThreadMarkersMsg{ContentID: content.ID, Markers: markers})
 }
 
 func (m *Model) syncLocalHighlights() {
@@ -96,6 +158,12 @@ func (m *Model) resizeChildPanes() {
 	if m.codePane != nil {
 		setSize(m.layout.Regions.Code, m.codePane.SetSize)
 	}
+	if m.threadPane != nil {
+		setSize(m.layout.Regions.Threads, m.threadPane.SetSize)
+	}
+	if m.discussionPane != nil {
+		setSize(m.layout.Regions.Discussion, m.discussionPane.SetSize)
+	}
 	m.updateChildFocus()
 }
 
@@ -104,4 +172,10 @@ func (m *Model) updateChildFocus() {
 		return
 	}
 	m.codePane.Update(codepane.SetFocusMsg{Focused: m.focus == PaneCode})
+	if m.threadPane != nil {
+		m.threadPane.Update(threadpane.SetFocusMsg{Focused: m.focus == PaneThreads})
+	}
+	if m.discussionPane != nil {
+		m.discussionPane.Update(discussionpane.SetFocusMsg{Focused: m.focus == PaneDiscussion})
+	}
 }

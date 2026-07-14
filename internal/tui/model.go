@@ -9,6 +9,8 @@ import (
 	"github.com/Scottlr/nudge/internal/app"
 	"github.com/Scottlr/nudge/internal/theme"
 	codepane "github.com/Scottlr/nudge/internal/tui/components/code"
+	discussionpane "github.com/Scottlr/nudge/internal/tui/components/discussion"
+	threadpane "github.com/Scottlr/nudge/internal/tui/components/threads"
 	treepane "github.com/Scottlr/nudge/internal/tui/components/tree"
 )
 
@@ -35,6 +37,8 @@ type Model struct {
 	localReview    app.LocalReviewSnapshot
 	repositoryPane *treepane.Model
 	codePane       *codepane.Model
+	threadPane     *threadpane.Model
+	discussionPane *discussionpane.Model
 	dimensions     Dimensions
 	layout         Layout
 	focus          Pane
@@ -51,6 +55,7 @@ type Model struct {
 
 	snapshotClosed bool
 	eventsClosed   bool
+	sessionGuard   *app.SessionWriteGuard
 }
 
 // ModelOption configures frontend state without changing application policy.
@@ -111,6 +116,16 @@ func WithLocalReviewStream(stream <-chan app.LocalReviewSnapshot) ModelOption {
 	}
 }
 
+// WithSessionWriteGuard supplies the current guarded session fence for typed
+// thread mutations emitted by the discussion projection. The application
+// remains authoritative and rejects stale fences.
+func WithSessionWriteGuard(guard app.SessionWriteGuard) ModelOption {
+	return func(model *Model) {
+		copyValue := guard
+		model.sessionGuard = &copyValue
+	}
+}
+
 // WithDimensions seeds pure layout state for tests or embedding callers.
 func WithDimensions(width, height int) ModelOption {
 	return func(model *Model) {
@@ -130,6 +145,8 @@ func NewModel(client app.ApplicationClient, options ...ModelOption) *Model {
 		narrowPane:     PaneRepository,
 		repositoryPane: treepane.NewModel(),
 		codePane:       codepane.NewModel(),
+		threadPane:     threadpane.NewModel(),
+		discussionPane: discussionpane.NewModel(),
 		theme:          theme.BuiltinTerminalDefault(),
 		layout:         CalculateLayout(Dimensions{}),
 		scheduler:      DefaultRenderScheduler(),
@@ -147,6 +164,7 @@ func NewModel(client app.ApplicationClient, options ...ModelOption) *Model {
 		model.layout = CalculateLayout(model.dimensions)
 	}
 	model.resizeChildPanes()
+	model.syncReviewSnapshot()
 	return model
 }
 

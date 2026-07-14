@@ -46,6 +46,7 @@ type Model struct {
 	lastError     string
 	lastSelection SelectionRejected
 	large         *largeContentProjection
+	markers       map[markerKey]markerGroup
 }
 
 // NewModel creates an empty bounded code pane.
@@ -62,6 +63,7 @@ func NewModel() *Model {
 		theme:         theme.BuiltinTerminalDefault(),
 		side:          app.SideHead,
 		large:         newLargeContentProjection(),
+		markers:       make(map[markerKey]markerGroup),
 	}
 }
 
@@ -149,6 +151,7 @@ func (m *Model) clearProjection() {
 	m.searchMatches = make(map[app.CodeRowID]struct{})
 	m.searchPending = 0
 	m.searchNext = ""
+	m.markers = make(map[markerKey]markerGroup)
 	m.top, m.left = 0, 0
 	if m.large != nil {
 		m.large.reset()

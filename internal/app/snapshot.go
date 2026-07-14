@@ -61,6 +61,9 @@ type ThreadSummary struct {
 	Conversation           review.ConversationState
 	Proposal               review.ProposalState
 	Anchor                 review.AnchorState
+	AnchorSide             repository.DiffSide
+	AnchorStartLine        int
+	AnchorEndLine          int
 	Read                   review.ReadState
 	FailurePhase           review.FailurePhase
 	ErrorCode              review.ErrorCode

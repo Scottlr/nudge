@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/Scottlr/nudge/internal/app"
+	"github.com/Scottlr/nudge/internal/theme"
 	"github.com/Scottlr/nudge/internal/tui/viewport"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -53,7 +54,8 @@ func (m *Model) View() string {
 		selected := row.Evidence.ID == m.selected
 		_, matched := m.searchMatches[row.Evidence.ID]
 		anchored := m.selectionFrom != nil && *m.selectionFrom == row.Evidence.ID
-		line := composeRow(row, m.side, m.left, width, lineWidth, m.theme, selected, matched, m.focused, anchored)
+		threadMarker, threadRole := m.markerForRow(row, m.side)
+		line := composeRow(row, m.side, m.left, width, lineWidth, m.theme, selected, matched, m.focused, anchored, threadMarker, threadRole)
 		if !work.Admit(ansi.StringWidth(line)) {
 			break
 		}
@@ -64,7 +66,7 @@ func (m *Model) View() string {
 
 func (m *Model) renderPlaceholder(work viewport.FrameWork, text string) string {
 	row := placeholderRow(m.content, text)
-	result := composeRow(row, app.SideNone, 0, m.renderWidth(), 1, m.theme, false, false, m.focused, false)
+	result := composeRow(row, app.SideNone, 0, m.renderWidth(), 1, m.theme, false, false, m.focused, false, "", theme.RoleForeground)
 	if !work.Admit(ansi.StringWidth(result)) {
 		return ""
 	}
