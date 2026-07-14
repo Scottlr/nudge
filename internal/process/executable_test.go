@@ -142,5 +142,9 @@ func makeExecutableFixture(t *testing.T, directory, name string) string {
 	if err := os.WriteFile(path, data, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	return path
+	canonical, err := canonicalExistingPath(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return canonical
 }
