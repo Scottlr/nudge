@@ -1,0 +1,227 @@
+package app
+
+import (
+	"sort"
+
+	"github.com/Scottlr/nudge/internal/domain"
+	"github.com/Scottlr/nudge/internal/domain/repository"
+)
+
+// RepositorySummary is the bounded repository projection exposed to clients.
+type RepositorySummary struct {
+	ID          domain.RepositoryID
+	DisplayName string
+	WorktreeID  domain.WorktreeID
+	BranchName  string
+	Detached    bool
+}
+
+// TargetSummary is the bounded target projection exposed to clients.
+type TargetSummary struct {
+	Present         bool
+	Spec            repository.ReviewTargetSpec
+	Generation      repository.TargetGeneration
+	Editable        bool
+	EditDestination *domain.WorktreeID
+	Fingerprint     string
+}
+
+// TreeEntrySummary is metadata for one visible repository tree entry.
+type TreeEntrySummary struct {
+	Path      repository.RepoPath
+	Kind      repository.FileKind
+	Changed   bool
+	LazyChild bool
+}
+
+// TreeProjection is a bounded tree view. Large trees are paged by later
+// application queries rather than eagerly loaded into canonical state.
+type TreeProjection struct {
+	Entries []TreeEntrySummary
+}
+
+// ChangedFileSummary is the frontend-neutral summary of one changed path.
+type ChangedFileSummary struct {
+	OldPath repository.RepoPath
+	NewPath repository.RepoPath
+	Kind    repository.ChangeKind
+	Binary  bool
+}
+
+// ThreadSummary reserves the stable client projection for the thread slices.
+// Thread entities are introduced by the later thread tasks.
+type ThreadSummary struct {
+	ID         domain.ReviewThreadID
+	Status     string
+	AnchorPath repository.RepoPath
+	Unread     bool
+}
+
+// ThreadDetail is the bounded active-thread projection.
+type ThreadDetail struct {
+	Summary      ThreadSummary
+	MessageCount uint64
+}
+
+// FileView identifies the active file content request without embedding large
+// content in the application snapshot.
+type FileView struct {
+	Path             repository.RepoPath
+	TargetGeneration repository.TargetGeneration
+}
+
+// Notification is a bounded safe message for frontend presentation.
+type Notification struct {
+	Level   string
+	Code    ErrorCode
+	Message string
+}
+
+// AppSnapshot is a complete immutable projection of canonical application
+// state at one revision. Mutable slices and pointers are copied at creation.
+type AppSnapshot struct {
+	Revision      uint64
+	Repository    RepositorySummary
+	SessionID     *domain.ReviewSessionID
+	Target        TargetSummary
+	Tree          TreeProjection
+	ChangedFiles  []ChangedFileSummary
+	Threads       []ThreadSummary
+	ActiveThread  *ThreadDetail
+	ActiveFile    *FileView
+	Provider      ProviderStatus
+	Operations    []OperationState
+	Notifications []Notification
+}
+
+// Clone returns an independent snapshot copy suitable for another consumer.
+func (s AppSnapshot) Clone() AppSnapshot {
+	copySnapshot := s
+	copySnapshot.SessionID = cloneReviewSessionID(s.SessionID)
+	copySnapshot.Target.EditDestination = cloneWorktreeID(s.Target.EditDestination)
+	copySnapshot.Tree = s.Tree.clone()
+	copySnapshot.ChangedFiles = cloneChangedFileSummaries(s.ChangedFiles)
+	copySnapshot.Threads = cloneThreadSummaries(s.Threads)
+	if s.ActiveThread != nil {
+		activeThread := *s.ActiveThread
+		activeThread.Summary = cloneThreadSummary(s.ActiveThread.Summary)
+		copySnapshot.ActiveThread = &activeThread
+	}
+	if s.ActiveFile != nil {
+		activeFile := *s.ActiveFile
+		activeFile.Path = repository.RepoPath(s.ActiveFile.Path.Bytes())
+		copySnapshot.ActiveFile = &activeFile
+	}
+	copySnapshot.Operations = append([]OperationState(nil), s.Operations...)
+	copySnapshot.Notifications = cloneNotifications(s.Notifications)
+	return copySnapshot
+}
+
+func snapshotFromState(state State) AppSnapshot {
+	snapshot := AppSnapshot{
+		Revision:      state.Revision,
+		SessionID:     cloneReviewSessionID(state.SessionID),
+		Tree:          state.Tree.clone(),
+		ChangedFiles:  cloneChangedFileSummaries(state.ChangedFiles),
+		Provider:      state.Provider,
+		Threads:       nil,
+		Operations:    make([]OperationState, 0, len(state.Operations)),
+		Notifications: cloneNotifications(state.Notifications),
+	}
+
+	if state.Repository != nil {
+		snapshot.Repository = RepositorySummary{
+			ID:          state.Repository.Repository.ID,
+			DisplayName: state.Repository.Repository.DisplayName,
+		}
+		if state.Repository.Worktree != nil {
+			snapshot.Repository.WorktreeID = state.Repository.Worktree.ID
+			snapshot.Repository.BranchName = state.Repository.Worktree.BranchName
+			snapshot.Repository.Detached = state.Repository.Worktree.Detached
+		}
+	}
+
+	if state.Target != nil {
+		snapshot.Target = TargetSummary{
+			Present:         true,
+			Spec:            state.Target.Spec,
+			Generation:      state.Target.Generation,
+			Editable:        state.Target.Editable,
+			EditDestination: cloneWorktreeID(state.Target.EditDestination),
+			Fingerprint:     state.Target.Fingerprint,
+		}
+	}
+	if state.ActiveThread != nil {
+		activeThread := ThreadDetail{Summary: ThreadSummary{ID: *state.ActiveThread}}
+		snapshot.ActiveThread = &activeThread
+	}
+	if state.ActiveFile != nil {
+		snapshot.ActiveFile = &FileView{Path: repository.RepoPath(state.ActiveFile.Bytes()), TargetGeneration: targetGeneration(state.Target)}
+	}
+
+	for _, operation := range state.Operations {
+		snapshot.Operations = append(snapshot.Operations, operation)
+	}
+	sort.Slice(snapshot.Operations, func(i, j int) bool {
+		return snapshot.Operations[i].ID < snapshot.Operations[j].ID
+	})
+	return snapshot
+}
+
+func targetGeneration(target *repository.ResolvedTarget) repository.TargetGeneration {
+	if target == nil {
+		return 0
+	}
+	return target.Generation
+}
+
+func cloneWorktreeID(value *domain.WorktreeID) *domain.WorktreeID {
+	if value == nil {
+		return nil
+	}
+	copyValue := *value
+	return &copyValue
+}
+
+func (p TreeProjection) clone() TreeProjection {
+	copyProjection := p
+	copyProjection.Entries = make([]TreeEntrySummary, len(p.Entries))
+	for i, entry := range p.Entries {
+		copyProjection.Entries[i] = entry
+		copyProjection.Entries[i].Path = repository.RepoPath(entry.Path.Bytes())
+	}
+	return copyProjection
+}
+
+func cloneChangedFileSummaries(values []ChangedFileSummary) []ChangedFileSummary {
+	if len(values) == 0 {
+		return nil
+	}
+	copyValues := make([]ChangedFileSummary, len(values))
+	for i, value := range values {
+		copyValues[i] = value
+		copyValues[i].OldPath = repository.RepoPath(value.OldPath.Bytes())
+		copyValues[i].NewPath = repository.RepoPath(value.NewPath.Bytes())
+	}
+	return copyValues
+}
+
+func cloneThreadSummaries(values []ThreadSummary) []ThreadSummary {
+	if len(values) == 0 {
+		return nil
+	}
+	copyValues := make([]ThreadSummary, len(values))
+	for i, value := range values {
+		copyValues[i] = cloneThreadSummary(value)
+	}
+	return copyValues
+}
+
+func cloneThreadSummary(value ThreadSummary) ThreadSummary {
+	value.AnchorPath = repository.RepoPath(value.AnchorPath.Bytes())
+	return value
+}
+
+func cloneNotifications(values []Notification) []Notification {
+	return append([]Notification(nil), values...)
+}
