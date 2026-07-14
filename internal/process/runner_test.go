@@ -71,8 +71,20 @@ func helperSpec(mode string, args ...string) Spec {
 	if err != nil {
 		executable = os.Args[0]
 	}
+	currentDir, err := os.Getwd()
+	if err != nil {
+		panic(fmt.Sprintf("get current directory: %v", err))
+	}
+	identity, err := NewExecutableResolver().Resolve(context.Background(), ResolveExecutableRequest{
+		Kind:           ExecutableGit,
+		ConfiguredPath: executable,
+		CurrentDir:     currentDir,
+	})
+	if err != nil {
+		panic(fmt.Sprintf("resolve helper executable %q from %q: %v", executable, currentDir, err))
+	}
 	return Spec{
-		Executable: executable,
+		Executable: identity,
 		Args:       append([]string{"-test.run=TestProcessHelper", "--"}, args...),
 		Environment: EnvironmentPolicy{
 			Mode: EnvironmentMinimal,

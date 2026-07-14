@@ -42,7 +42,7 @@ type EnvironmentPolicy struct {
 // Spec describes one direct child-process invocation. Executable and Args are
 // passed to os/exec as separate values and are never interpreted by a shell.
 type Spec struct {
-	Executable  string
+	Executable  ExecutableIdentity
 	Args        []string
 	Dir         string
 	Environment EnvironmentPolicy
@@ -78,10 +78,21 @@ type Process interface {
 }
 
 // DefaultRunner is the production implementation of Runner.
-type DefaultRunner struct{}
+type DefaultRunner struct {
+	resolver ExecutableResolver
+}
 
 // NewRunner constructs the bounded process runner.
-func NewRunner() Runner { return &DefaultRunner{} }
+func NewRunner() Runner { return &DefaultRunner{resolver: NewExecutableResolver()} }
+
+// NewRunnerWithResolver constructs a runner using the supplied trusted
+// executable resolver.
+func NewRunnerWithResolver(resolver ExecutableResolver) (*DefaultRunner, error) {
+	if resolver == nil {
+		return nil, invalid("executable resolver")
+	}
+	return &DefaultRunner{resolver: resolver}, nil
+}
 
 var _ Runner = (*DefaultRunner)(nil)
 
@@ -89,7 +100,7 @@ func (r *DefaultRunner) Run(ctx context.Context, spec Spec) (Result, error) {
 	if err := validateSpec(spec); err != nil {
 		return Result{}, err
 	}
-	cmd, stdout, stderr, err := startPipedCommand(ctx, spec, false)
+	cmd, stdout, stderr, err := r.startPipedCommand(ctx, spec, false)
 	if err != nil {
 		return Result{}, err
 	}
@@ -127,7 +138,7 @@ func (r *DefaultRunner) RunStream(ctx context.Context, spec Spec, stdout io.Writ
 	if err := validateSpec(spec); err != nil {
 		return StreamResult{}, err
 	}
-	cmd, stdoutPipe, stderrPipe, err := startPipedCommand(ctx, spec, false)
+	cmd, stdoutPipe, stderrPipe, err := r.startPipedCommand(ctx, spec, false)
 	if err != nil {
 		return StreamResult{}, err
 	}
@@ -170,7 +181,7 @@ func (r *DefaultRunner) Start(ctx context.Context, spec Spec, sink StreamSink) (
 	if err := validateSpec(spec); err != nil {
 		return nil, err
 	}
-	cmd, stdout, stderr, err := startPipedCommand(ctx, spec, true)
+	cmd, stdout, stderr, err := r.startPipedCommand(ctx, spec, true)
 	if err != nil {
 		return nil, err
 	}
@@ -194,11 +205,8 @@ func (r *DefaultRunner) Start(ctx context.Context, spec Spec, sink StreamSink) (
 }
 
 func validateSpec(spec Spec) error {
-	if spec.Executable == "" {
-		return invalid("executable")
-	}
-	if strings.IndexByte(spec.Executable, 0) >= 0 {
-		return invalid("executable")
+	if err := spec.Executable.Validate(); err != nil {
+		return invalid("executable identity")
 	}
 	for _, arg := range spec.Args {
 		if strings.IndexByte(arg, 0) >= 0 {
@@ -302,7 +310,7 @@ type commandState struct {
 	finished bool
 }
 
-func startPipedCommand(ctx context.Context, spec Spec, managed bool) (*commandState, io.ReadCloser, io.ReadCloser, error) {
+func (r *DefaultRunner) startPipedCommand(ctx context.Context, spec Spec, managed bool) (*commandState, io.ReadCloser, io.ReadCloser, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -322,14 +330,22 @@ func startPipedCommand(ctx context.Context, spec Spec, managed bool) (*commandSt
 		cancel()
 	}
 
-	cmd := exec.CommandContext(childCtx, spec.Executable, spec.Args...)
+	resolver := r.resolver
+	if resolver == nil {
+		resolver = NewExecutableResolver()
+	}
+	executable, err := resolver.RevalidateForLaunch(childCtx, spec.Executable)
+	if err != nil {
+		stopContext()
+		return nil, nil, nil, err
+	}
+	cmd := exec.CommandContext(childCtx, executable.CanonicalPath, spec.Args...)
 	cmd.Dir = spec.Dir
 	cmd.Env = buildEnvironment(spec.Environment)
 	cmd.WaitDelay = processWaitDelay
 	if !managed {
 		cmd.Stdin = spec.Stdin
 	}
-	var err error
 	var stdin io.WriteCloser
 	if managed {
 		stdin, err = cmd.StdinPipe()
