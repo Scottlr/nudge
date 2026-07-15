@@ -30,6 +30,15 @@ func TestRootCommandShowsHelp(t *testing.T) {
 			t.Fatalf("root output does not expose --%s: %q", flag, output.String())
 		}
 	}
+	found := false
+	for _, child := range command.Commands() {
+		if child.Name() == "doctor" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("root command does not expose doctor")
+	}
 }
 
 func TestRootCommandRejectsTargetFlagCombinationsBeforeRun(t *testing.T) {
