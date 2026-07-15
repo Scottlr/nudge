@@ -21,16 +21,22 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.scheduler = DefaultRenderScheduler()
 	}
 	switch message := msg.(type) {
+	case tea.ColorProfileMsg:
+		return m, m.schedulerPlan(mergeTickPlans(m.applyColorProfile(message), m.syncVisibleAnimatedWork()))
 	case tea.WindowSizeMsg:
 		m.setDimensions(Dimensions{Width: message.Width, Height: message.Height})
+		return m, m.schedulerPlan(m.syncVisibleAnimatedWork())
 	case SnapshotMsg:
+		var renderPlan TickPlan
 		if message.Snapshot.Revision >= m.snapshot.Revision {
 			m.snapshot = message.Snapshot.Clone()
 			m.syncReviewSnapshot()
+			renderPlan = m.syncVisibleAnimatedWork()
 		}
 		if !m.snapshotClosed && m.snapshots != nil {
-			return m, receiveSnapshot(m.snapshots)
+			return m, tea.Batch(m.schedulerPlan(renderPlan), receiveSnapshot(m.snapshots))
 		}
+		return m, m.schedulerPlan(renderPlan)
 	case SnapshotStreamClosedMsg:
 		m.snapshotClosed = true
 	case EventMsg:
@@ -61,12 +67,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.moveFocus(-1)
 	case SetFocusMsg:
 		m.setFocus(message.Pane)
+		return m, m.schedulerPlan(m.syncVisibleAnimatedWork())
 	case SetNarrowPaneMsg:
 		m.setNarrowPane(message.Pane)
+		return m, m.schedulerPlan(m.syncVisibleAnimatedWork())
 	case StartVisibleAnimationMsg:
-		return m, m.schedulerPlan(m.scheduler.StartVisibleWork())
+		return m, m.schedulerPlan(m.scheduler.SetVisibleAnimatedWork(1))
 	case StopVisibleAnimationMsg:
-		m.scheduler.StopVisibleWork()
+		m.scheduler.SetVisibleAnimatedWork(0)
+	case SetVisibleAnimatedWorkMsg:
+		return m, m.schedulerPlan(m.scheduler.SetVisibleAnimatedWork(message.Count))
 	case SetReducedMotionMsg:
 		return m, m.schedulerPlan(m.scheduler.SetReducedMotion(message.Reduced))
 	case InvalidateRenderMsg:

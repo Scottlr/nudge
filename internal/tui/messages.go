@@ -52,6 +52,12 @@ type SetNarrowPaneMsg struct {
 type StartVisibleAnimationMsg struct{}
 type StopVisibleAnimationMsg struct{}
 
+// SetVisibleAnimatedWorkMsg declares the current count of visible animated
+// work items. The root scheduler owns the resulting timer chain.
+type SetVisibleAnimatedWorkMsg struct {
+	Count int
+}
+
 // SetReducedMotionMsg supplies the run-scoped presentation decision without
 // making the scheduler responsible for terminal capability policy.
 type SetReducedMotionMsg struct {

@@ -2,7 +2,11 @@ package tui
 
 import (
 	"testing"
+	"testing/synctest"
 	"time"
+
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/colorprofile"
 )
 
 func TestRenderSchedulerCoalescesAndStops(t *testing.T) {
@@ -56,6 +60,8 @@ func TestRootOwnsSchedulerAndAnimationFrame(t *testing.T) {
 	t.Parallel()
 
 	model := NewModel(nil)
+	updated, _ := model.Update(tea.ColorProfileMsg{Profile: colorprofile.TrueColor})
+	model = updated.(*Model)
 	updated, command := model.Update(StartVisibleAnimationMsg{})
 	model = updated.(*Model)
 	if command == nil {
@@ -71,4 +77,34 @@ func TestRootOwnsSchedulerAndAnimationFrame(t *testing.T) {
 	if model.AnimationFrame() != 1 || command == nil {
 		t.Fatalf("root did not advance and reschedule its frame: frame=%d command=%v", model.AnimationFrame(), command != nil)
 	}
+}
+
+func TestRenderSchedulerVisibleWorkCountAndSyncedStop(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		scheduler := DefaultRenderScheduler()
+		first := scheduler.SetVisibleAnimatedWork(2)
+		if first.Command == nil || scheduler.VisibleAnimatedWork() != 2 {
+			t.Fatalf("visible work = %d, plan = %#v", scheduler.VisibleAnimatedWork(), first)
+		}
+		if next := scheduler.SetVisibleAnimatedWork(3); next.Command != nil {
+			t.Fatal("changing a nonzero count created an overlapping tick")
+		}
+
+		messages := make(chan RenderTickMsg, 1)
+		go func() {
+			time.Sleep(defaultAnimationInterval)
+			messages <- RenderTickMsg{Epoch: first.Epoch}
+		}()
+		scheduler.SetVisibleAnimatedWork(0)
+		time.Sleep(defaultAnimationInterval)
+		synctest.Wait()
+		select {
+		case message := <-messages:
+			if accepted, _ := scheduler.AcceptTick(message); accepted {
+				t.Fatal("stopped scheduler accepted a queued tick")
+			}
+		default:
+			t.Fatal("synced tick command did not complete")
+		}
+	})
 }
