@@ -777,6 +777,119 @@ func (t *transaction) SaveMessage(ctx context.Context, message review.Message) e
 	return err
 }
 
+// AppendMessageBodyChunk appends one immutable, ordered streamed-body chunk.
+// The complete prefix is re-hashed from durable chunks so a caller cannot
+// advance metadata without proving the exact bytes it accepted.
+func (t *transaction) AppendMessageBodyChunk(ctx context.Context, chunk app.MessageBodyChunkWrite) error {
+	if err := chunk.Validate(); err != nil {
+		return err
+	}
+	var owner string
+	var currentLength int64
+	if err := t.tx.QueryRowContext(ctx, `SELECT review_threads.session_id, messages.body_length
+		FROM messages JOIN review_threads ON review_threads.id = messages.thread_id WHERE messages.id = ?`, chunk.MessageID).Scan(&owner, &currentLength); err != nil {
+		return mapNotFound(err)
+	}
+	if owner != string(t.sessionID) || currentLength < 0 || uint64(currentLength)+uint64(len(chunk.Bytes)) != chunk.TotalLength {
+		return app.ErrReviewStoreInput
+	}
+	var existingHash string
+	var existingBytes []byte
+	err := t.tx.QueryRowContext(ctx, "SELECT chunk_sha256, bytes FROM message_body_chunks WHERE message_id = ? AND ordinal = ?", chunk.MessageID, chunk.Ordinal).Scan(&existingHash, &existingBytes)
+	if err == nil {
+		if !strings.EqualFold(existingHash, chunk.Hash) || !bytes.Equal(existingBytes, chunk.Bytes) {
+			return app.ErrReviewStoreCorrupt
+		}
+		return nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	var highest int64
+	if err := t.tx.QueryRowContext(ctx, "SELECT COALESCE(MAX(ordinal), 0) FROM message_body_chunks WHERE message_id = ?", chunk.MessageID).Scan(&highest); err != nil {
+		return err
+	}
+	if highest < 0 || uint64(highest)+1 != chunk.Ordinal {
+		return app.ErrReviewStoreInput
+	}
+	if _, err := t.tx.ExecContext(ctx, `INSERT INTO message_body_chunks(message_id, ordinal, byte_length, chunk_sha256, bytes) VALUES(?, ?, ?, ?, ?)`, chunk.MessageID, chunk.Ordinal, len(chunk.Bytes), chunk.Hash, chunk.Bytes); err != nil {
+		return err
+	}
+	hash, length, err := t.messageBodyDigest(ctx, chunk.MessageID)
+	if err != nil {
+		return err
+	}
+	if length != chunk.TotalLength || !strings.EqualFold(hash, chunk.TotalSHA256) {
+		return app.ErrReviewStoreCorrupt
+	}
+	_, err = t.tx.ExecContext(ctx, "UPDATE messages SET body_length = ?, body_sha256 = ?, updated_at = ? WHERE id = ?", length, hash, formatTime(time.Now().UTC()), chunk.MessageID)
+	return err
+}
+
+// FinalizeMessageBody freezes one terminal identity and advances the message
+// lifecycle without rewriting any accepted chunk bytes.
+func (t *transaction) FinalizeMessageBody(ctx context.Context, identity app.MessageBodyIdentity) error {
+	if err := identity.Validate(); err != nil {
+		return err
+	}
+	var owner string
+	if err := t.tx.QueryRowContext(ctx, `SELECT review_threads.session_id FROM messages JOIN review_threads ON review_threads.id = messages.thread_id WHERE messages.id = ?`, identity.MessageID).Scan(&owner); err != nil {
+		return mapNotFound(err)
+	}
+	if owner != string(t.sessionID) {
+		return app.ErrReviewStoreInput
+	}
+	var existing string
+	err := t.tx.QueryRowContext(ctx, "SELECT message_id FROM message_body_identities WHERE message_id = ?", identity.MessageID).Scan(&existing)
+	if err == nil {
+		return app.ErrReviewStoreCorrupt
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	hash, length, err := t.messageBodyDigest(ctx, identity.MessageID)
+	if err != nil {
+		return err
+	}
+	var count int64
+	if err := t.tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM message_body_chunks WHERE message_id = ?", identity.MessageID).Scan(&count); err != nil {
+		return err
+	}
+	if count < 0 || uint64(count) != identity.ChunkCount || length != identity.ByteLength || !strings.EqualFold(hash, identity.SHA256) {
+		return app.ErrReviewStoreCorrupt
+	}
+	if _, err := t.tx.ExecContext(ctx, `INSERT INTO message_body_identities(message_id, chunk_count, byte_length, body_sha256, terminal_status, failure_phase, error_code, completed_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`, identity.MessageID, identity.ChunkCount, identity.ByteLength, identity.SHA256, string(identity.TerminalStatus), string(identity.FailurePhase), string(identity.ErrorCode), formatTime(identity.CompletedAt)); err != nil {
+		return err
+	}
+	_, err = t.tx.ExecContext(ctx, `UPDATE messages SET status = ?, body_length = ?, body_sha256 = ?, failure_phase = ?, error_code = ?, updated_at = ?, completed_at = ? WHERE id = ?`, string(identity.TerminalStatus), identity.ByteLength, identity.SHA256, string(identity.FailurePhase), string(identity.ErrorCode), formatTime(identity.CompletedAt), formatTime(identity.CompletedAt), identity.MessageID)
+	return err
+}
+
+func (t *transaction) messageBodyDigest(ctx context.Context, messageID domain.MessageID) (string, uint64, error) {
+	rows, err := t.tx.QueryContext(ctx, "SELECT bytes FROM message_body_chunks WHERE message_id = ? ORDER BY ordinal ASC", messageID)
+	if err != nil {
+		return "", 0, err
+	}
+	defer rows.Close()
+	digest := sha256.New()
+	var length uint64
+	for rows.Next() {
+		var data []byte
+		if err := rows.Scan(&data); err != nil {
+			return "", 0, err
+		}
+		length += uint64(len(data))
+		if length > app.MaxStreamedMessageBytes {
+			return "", 0, app.ErrReviewStoreInput
+		}
+		_, _ = digest.Write(data)
+	}
+	if err := rows.Err(); err != nil {
+		return "", 0, err
+	}
+	return hex.EncodeToString(digest.Sum(nil)), length, nil
+}
+
 func (t *transaction) SaveCaptureGeneration(ctx context.Context, generation app.CaptureGeneration, manifest app.CaptureManifest) error {
 	if err := generation.Validate(); err != nil {
 		return app.ErrReviewStoreInput
@@ -1273,14 +1386,68 @@ func (s *Store) ReadMessageBody(ctx context.Context, bodyRange app.BodyRange) (a
 	if err := bodyRange.Validate(); err != nil || !validSHA256(bodyRange.ExpectedSHA256) {
 		return app.MessageBodyChunk{}, app.ErrReviewStoreInput
 	}
-	var length int64
-	var digest string
-	var data []byte
-	start := int64(bodyRange.Offset) + 1
-	if err := s.db.QueryRowContext(ctx, "SELECT body_length, body_sha256, substr(content, ?, ?) FROM messages WHERE id = ?", start, int64(bodyRange.Length), bodyRange.MessageID).Scan(&length, &digest, &data); err != nil {
+	var chunkCount int64
+	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM message_body_chunks WHERE message_id = ?", bodyRange.MessageID).Scan(&chunkCount); err != nil {
 		return app.MessageBodyChunk{}, mapNotFound(err)
 	}
-	if uint64(length) != bodyRange.ExpectedLength || !strings.EqualFold(digest, bodyRange.ExpectedSHA256) || uint64(len(data)) != bodyRange.Length {
+	var length int64
+	var digest string
+	if err := s.db.QueryRowContext(ctx, "SELECT body_length, body_sha256 FROM messages WHERE id = ?", bodyRange.MessageID).Scan(&length, &digest); err != nil {
+		return app.MessageBodyChunk{}, mapNotFound(err)
+	}
+	if uint64(length) != bodyRange.ExpectedLength || !strings.EqualFold(digest, bodyRange.ExpectedSHA256) {
+		return app.MessageBodyChunk{}, app.ErrReviewStoreCorrupt
+	}
+	var data []byte
+	if chunkCount > 0 {
+		rows, err := s.db.QueryContext(ctx, "SELECT bytes, chunk_sha256 FROM message_body_chunks WHERE message_id = ? ORDER BY ordinal ASC", bodyRange.MessageID)
+		if err != nil {
+			return app.MessageBodyChunk{}, err
+		}
+		defer rows.Close()
+		var cursor uint64
+		bodyDigest := sha256.New()
+		for rows.Next() {
+			var chunk []byte
+			var chunkHash string
+			if err := rows.Scan(&chunk, &chunkHash); err != nil {
+				return app.MessageBodyChunk{}, err
+			}
+			chunkDigest := sha256.Sum256(chunk)
+			if !strings.EqualFold(hex.EncodeToString(chunkDigest[:]), chunkHash) {
+				return app.MessageBodyChunk{}, app.ErrReviewStoreCorrupt
+			}
+			_, _ = bodyDigest.Write(chunk)
+			chunkStart := cursor
+			cursor += uint64(len(chunk))
+			if cursor <= bodyRange.Offset || chunkStart >= bodyRange.Offset+bodyRange.Length {
+				continue
+			}
+			start := uint64(0)
+			if bodyRange.Offset > chunkStart {
+				start = bodyRange.Offset - chunkStart
+			}
+			end := uint64(len(chunk))
+			if bodyRange.Offset+bodyRange.Length < chunkStart+end {
+				end = bodyRange.Offset + bodyRange.Length - chunkStart
+			}
+			data = append(data, chunk[start:end]...)
+		}
+		if err := rows.Err(); err != nil {
+			return app.MessageBodyChunk{}, err
+		}
+		if cursor != uint64(length) || !strings.EqualFold(hex.EncodeToString(bodyDigest.Sum(nil)), digest) {
+			return app.MessageBodyChunk{}, app.ErrReviewStoreCorrupt
+		}
+	} else {
+		var content []byte
+		start := int64(bodyRange.Offset) + 1
+		if err := s.db.QueryRowContext(ctx, "SELECT substr(content, ?, ?) FROM messages WHERE id = ?", start, int64(bodyRange.Length), bodyRange.MessageID).Scan(&content); err != nil {
+			return app.MessageBodyChunk{}, mapNotFound(err)
+		}
+		data = content
+	}
+	if uint64(len(data)) != bodyRange.Length {
 		return app.MessageBodyChunk{}, app.ErrReviewStoreCorrupt
 	}
 	return app.MessageBodyChunk{MessageID: bodyRange.MessageID, Offset: bodyRange.Offset, Bytes: append([]byte(nil), data...), TotalLength: uint64(length), SHA256: digest, Complete: bodyRange.Offset+bodyRange.Length == uint64(length)}, nil

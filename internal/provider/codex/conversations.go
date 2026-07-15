@@ -24,7 +24,17 @@ func (c *Connection) StartConversation(ctx context.Context, request provider.Sta
 	if err := c.client.Call(ctx, "thread/start", protocol.ThreadStartParams{CWD: request.WorkingDir, Sandbox: sandbox}, &response); err != nil {
 		return "", err
 	}
-	return mapConversationResponse(response)
+	conversation, err := mapConversationResponse(response)
+	if err != nil {
+		return "", err
+	}
+	c.eventMu.Lock()
+	if c.conversationBindings == nil {
+		c.conversationBindings = make(map[provider.ProviderConversationRef]conversationEventBinding)
+	}
+	c.conversationBindings[conversation] = conversationEventBinding{ThreadID: request.ThreadID, OperationID: request.OperationID, CorrelationID: request.CorrelationID}
+	c.eventMu.Unlock()
+	return conversation, nil
 }
 
 // ResumeConversation resumes an existing opaque Codex thread. The provider
@@ -43,6 +53,14 @@ func (c *Connection) ResumeConversation(ctx context.Context, ref provider.Provid
 	resumed := provider.ProviderConversationRef(response.Thread.ID)
 	if resumed.Validate() != nil || resumed != ref {
 		return ErrInvalidConversationResponse
+	}
+	c.eventMu.RLock()
+	binding, ok := c.conversationBindings[ref]
+	c.eventMu.RUnlock()
+	if ok && binding.ConversationID != "" && binding.ThreadID != "" && binding.OperationID != "" && binding.CorrelationID != "" {
+		if err := c.publishProviderEvent(provider.ProviderEvent{Kind: provider.EventConversationResumed, ThreadID: binding.ThreadID, OperationID: binding.OperationID, CorrelationID: binding.CorrelationID, ConversationID: binding.ConversationID, ConversationRef: ref, Status: "resumed"}); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -79,6 +97,17 @@ func (c *Connection) StartTurn(ctx context.Context, ref provider.ProviderConvers
 	c.turnMu.Lock()
 	c.turns[turnRef] = ref
 	c.turnMu.Unlock()
+	c.eventMu.Lock()
+	if c.turnBindings == nil {
+		c.turnBindings = make(map[provider.ProviderTurnRef]turnEventBinding)
+	}
+	binding := turnEventBinding{ConversationRef: ref, ThreadID: request.ThreadID, OperationID: request.OperationID, CorrelationID: request.CorrelationID}
+	if conversation, ok := c.conversationBindings[ref]; ok {
+		binding.ThreadID = conversation.ThreadID
+		binding.ConversationID = conversation.ConversationID
+	}
+	c.turnBindings[turnRef] = binding
+	c.eventMu.Unlock()
 	return turnRef, nil
 }
 

@@ -433,6 +433,13 @@ func (s *ProviderConversationService) EnsureConversation(ctx context.Context, co
 		}
 	}
 	s.updateConversation(record)
+	if binder, ok := s.provider.(interface {
+		BindConversation(provider.ProviderConversationRef, domain.ProviderConversationID, domain.ReviewThreadID, domain.OperationID, provider.CorrelationID) error
+	}); ok {
+		if err := binder.BindConversation(record.ProviderConversationRef, record.ID, record.ThreadID, record.OperationID, provider.CorrelationID(record.CorrelationID)); err != nil {
+			return ProviderConversationCommit{Guard: guard, Conversation: record}, err
+		}
+	}
 	return ProviderConversationCommit{Guard: guard, Conversation: record, Events: []Event{ProviderConversationAttached{ConversationID: record.ID, ThreadID: record.ThreadID, ProviderRef: record.ProviderConversationRef, OperationID: command.OperationID, CorrelationID: command.CorrelationID}}}, nil
 }
 
@@ -597,6 +604,13 @@ func (s *ProviderConversationService) StartTurn(ctx context.Context, command Sta
 		}
 	}
 	s.updateTurn(turn)
+	if binder, ok := s.provider.(interface {
+		BindTurn(provider.ProviderTurnRef, domain.ProviderTurnID, domain.ProviderConversationID, domain.ReviewThreadID, domain.OperationID, provider.CorrelationID) error
+	}); ok {
+		if err := binder.BindTurn(turn.ProviderTurnRef, turn.ID, turn.ConversationID, turn.ThreadID, turn.OperationID, provider.CorrelationID(turn.CorrelationID)); err != nil {
+			return ProviderConversationCommit{Guard: guard, Conversation: conversation, Turn: &turn}, err
+		}
+	}
 	return ProviderConversationCommit{Guard: guard, Conversation: conversation, Turn: &turn, Events: []Event{ProviderTurnStateChanged{TurnID: turn.ID, ConversationID: turn.ConversationID, ThreadID: turn.ThreadID, State: turn.State, OperationID: command.OperationID, CorrelationID: command.CorrelationID}}}, nil
 }
 

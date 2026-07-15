@@ -38,6 +38,7 @@ const (
 	EventMessageCompleted         EventKind = "message_completed"
 	EventCommandStarted           EventKind = "command_started"
 	EventCommandCompleted         EventKind = "command_completed"
+	EventToolActivity             EventKind = "tool_activity"
 	EventFileActivity             EventKind = "file_activity"
 	EventRuntimeApprovalRequested EventKind = "runtime_approval_requested"
 	EventRuntimeApprovalResolved  EventKind = "runtime_approval_resolved"
@@ -57,21 +58,24 @@ type ProviderEvent struct {
 	ConversationRef ProviderConversationRef
 	TurnID          domain.ProviderTurnID
 	TurnRef         ProviderTurnRef
-	RequestID       ProviderRequestID
-	Capabilities    ProviderCapabilities
-	Status          string
-	Text            string
-	Error           string
-	ExpiresAt       time.Time
-	Scope           RuntimeApprovalScope
-	Decision        ApprovalDecision
-	CoalescingKey   string
-	Coalescible     bool
+	// ItemRef is the opaque provider item identity used to correlate streamed
+	// message, command, and file activity inside one turn.
+	ItemRef       string
+	RequestID     ProviderRequestID
+	Capabilities  ProviderCapabilities
+	Status        string
+	Text          string
+	Error         string
+	ExpiresAt     time.Time
+	Scope         RuntimeApprovalScope
+	Decision      ApprovalDecision
+	CoalescingKey string
+	Coalescible   bool
 }
 
 func validEventKind(kind EventKind) bool {
 	switch kind {
-	case EventConnectionChanged, EventCapabilitiesChanged, EventAccountChanged, EventRateLimitChanged, EventDisconnected, EventConversationStarted, EventConversationResumed, EventConversationFailed, EventTurnStarted, EventTurnDelta, EventTurnCompleted, EventTurnFailed, EventMessageStarted, EventMessageDelta, EventMessageCompleted, EventCommandStarted, EventCommandCompleted, EventFileActivity, EventRuntimeApprovalRequested, EventRuntimeApprovalResolved, EventProviderError:
+	case EventConnectionChanged, EventCapabilitiesChanged, EventAccountChanged, EventRateLimitChanged, EventDisconnected, EventConversationStarted, EventConversationResumed, EventConversationFailed, EventTurnStarted, EventTurnDelta, EventTurnCompleted, EventTurnFailed, EventMessageStarted, EventMessageDelta, EventMessageCompleted, EventCommandStarted, EventCommandCompleted, EventToolActivity, EventFileActivity, EventRuntimeApprovalRequested, EventRuntimeApprovalResolved, EventProviderError:
 		return true
 	default:
 		return false
@@ -80,7 +84,7 @@ func validEventKind(kind EventKind) bool {
 
 func eventNeedsIdentity(kind EventKind) bool {
 	switch kind {
-	case EventConversationStarted, EventConversationResumed, EventConversationFailed, EventTurnStarted, EventTurnDelta, EventTurnCompleted, EventTurnFailed, EventMessageStarted, EventMessageDelta, EventMessageCompleted, EventCommandStarted, EventCommandCompleted, EventFileActivity, EventRuntimeApprovalRequested, EventRuntimeApprovalResolved:
+	case EventConversationStarted, EventConversationResumed, EventConversationFailed, EventTurnStarted, EventTurnDelta, EventTurnCompleted, EventTurnFailed, EventMessageStarted, EventMessageDelta, EventMessageCompleted, EventCommandStarted, EventCommandCompleted, EventToolActivity, EventFileActivity, EventRuntimeApprovalRequested, EventRuntimeApprovalResolved:
 		return true
 	default:
 		return false
@@ -89,7 +93,7 @@ func eventNeedsIdentity(kind EventKind) bool {
 
 func eventNeedsConversation(kind EventKind) bool {
 	switch kind {
-	case EventConversationStarted, EventConversationResumed, EventConversationFailed, EventTurnStarted, EventTurnDelta, EventTurnCompleted, EventTurnFailed, EventMessageStarted, EventMessageDelta, EventMessageCompleted, EventCommandStarted, EventCommandCompleted, EventFileActivity, EventRuntimeApprovalRequested, EventRuntimeApprovalResolved:
+	case EventConversationStarted, EventConversationResumed, EventConversationFailed, EventTurnStarted, EventTurnDelta, EventTurnCompleted, EventTurnFailed, EventMessageStarted, EventMessageDelta, EventMessageCompleted, EventCommandStarted, EventCommandCompleted, EventToolActivity, EventFileActivity, EventRuntimeApprovalRequested, EventRuntimeApprovalResolved:
 		return true
 	default:
 		return false
@@ -98,7 +102,7 @@ func eventNeedsConversation(kind EventKind) bool {
 
 func eventNeedsTurn(kind EventKind) bool {
 	switch kind {
-	case EventTurnStarted, EventTurnDelta, EventTurnCompleted, EventTurnFailed, EventMessageStarted, EventMessageDelta, EventMessageCompleted, EventCommandStarted, EventCommandCompleted, EventFileActivity, EventRuntimeApprovalRequested, EventRuntimeApprovalResolved:
+	case EventTurnStarted, EventTurnDelta, EventTurnCompleted, EventTurnFailed, EventMessageStarted, EventMessageDelta, EventMessageCompleted, EventCommandStarted, EventCommandCompleted, EventToolActivity, EventFileActivity, EventRuntimeApprovalRequested, EventRuntimeApprovalResolved:
 		return true
 	default:
 		return false
@@ -121,6 +125,9 @@ func (e ProviderEvent) Validate(limits ValidationLimits) error {
 		return ErrInvalidEvent
 	}
 	if e.TurnRef != "" && e.TurnRef.Validate() != nil {
+		return ErrInvalidEvent
+	}
+	if validateText(e.ItemRef, "event item ref", limits.OpaqueRefBytes, true) != nil {
 		return ErrInvalidEvent
 	}
 	if e.RequestID != "" && e.RequestID.Validate() != nil {

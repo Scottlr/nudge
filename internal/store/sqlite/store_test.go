@@ -32,7 +32,7 @@ func TestStoreMigrationAndReviewRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("migration status: %v", err)
 	}
-	if status.Version != 7 || !validSHA256(status.Checksum) {
+	if status.Version != 8 || !validSHA256(status.Checksum) {
 		t.Fatalf("migration status = %#v", status)
 	}
 	var foreignKeys int
@@ -235,6 +235,83 @@ func TestStoreSessionLifecycleAndBindingFence(t *testing.T) {
 	replaced.Binding.CommonGitDirIdentity = repository.NativeIdentity("different-native")
 	if err := store.UpsertRepository(ctx, replaced, worktree); !errors.Is(err, app.ErrRepositoryBindingChanged) {
 		t.Fatalf("binding replacement error = %v, want binding changed", err)
+	}
+}
+
+func TestStreamedMessageBodyChunksRemainImmutableAndRangeReadable(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, testDatabasePath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	repo, worktree, session, thread, _ := testStoreValues()
+	if err := store.UpsertRepository(ctx, repo, worktree); err != nil {
+		t.Fatal(err)
+	}
+	guard, err := store.CreateSession(ctx, session, domain.SessionLeaseID("lease-stream"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := session.CreatedAt.Add(time.Minute)
+	message, err := review.NewPendingMessage(domain.MessageID("message-stream"), thread.ID, review.RoleAssistant, 1, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := message.BeginStreaming(now); err != nil {
+		t.Fatal(err)
+	}
+	if err := thread.AppendMessageID(message.ID, now); err != nil {
+		t.Fatal(err)
+	}
+	guard, err = store.WithSessionTx(ctx, guard, func(tx app.ReviewStoreTx) error {
+		if err := tx.SaveThread(ctx, thread); err != nil {
+			return err
+		}
+		return tx.SaveMessage(ctx, message)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := []byte("hello ")
+	second := []byte("world")
+	digest := sha256.Sum256(append(append([]byte(nil), first...), second...))
+	guard, err = store.WithSessionTx(ctx, guard, func(tx app.ReviewStoreTx) error {
+		stream, ok := tx.(app.MessageBodyStreamTx)
+		if !ok {
+			return errors.New("store does not implement streamed body transaction")
+		}
+		firstHash := sha256.Sum256(first)
+		return stream.AppendMessageBodyChunk(ctx, app.MessageBodyChunkWrite{MessageID: message.ID, Ordinal: 1, Bytes: first, Hash: hex.EncodeToString(firstHash[:]), TotalLength: uint64(len(first)), TotalSHA256: hex.EncodeToString(firstHash[:])})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondHash := sha256.Sum256(second)
+	guard, err = store.WithSessionTx(ctx, guard, func(tx app.ReviewStoreTx) error {
+		stream, ok := tx.(app.MessageBodyStreamTx)
+		if !ok {
+			return errors.New("store does not implement streamed body transaction")
+		}
+		return stream.AppendMessageBodyChunk(ctx, app.MessageBodyChunkWrite{MessageID: message.ID, Ordinal: 2, Bytes: second, Hash: hex.EncodeToString(secondHash[:]), TotalLength: uint64(len(first) + len(second)), TotalSHA256: hex.EncodeToString(digest[:])})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	completed := now.Add(time.Minute)
+	guard, err = store.WithSessionTx(ctx, guard, func(tx app.ReviewStoreTx) error {
+		stream, ok := tx.(app.MessageBodyStreamTx)
+		if !ok {
+			return errors.New("store does not implement streamed body transaction")
+		}
+		return stream.FinalizeMessageBody(ctx, app.MessageBodyIdentity{MessageID: message.ID, ChunkCount: 2, ByteLength: uint64(len(first) + len(second)), SHA256: hex.EncodeToString(digest[:]), TerminalStatus: review.MessageCompleted, CompletedAt: completed})
+	})
+	if err != nil || guard.ExpectedRevision == 0 {
+		t.Fatalf("finalize = guard:%#v err:%v", guard, err)
+	}
+	body, err := store.ReadMessageBody(ctx, app.BodyRange{MessageID: message.ID, ExpectedLength: 11, ExpectedSHA256: hex.EncodeToString(digest[:]), Offset: 3, Length: 5})
+	if err != nil || string(body.Bytes) != "lo wo" {
+		t.Fatalf("range = %#v err:%v", body, err)
 	}
 }
 
