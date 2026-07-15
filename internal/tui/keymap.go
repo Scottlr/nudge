@@ -12,6 +12,7 @@ import (
 	"github.com/Scottlr/nudge/internal/tui/components/discussion"
 	threadpane "github.com/Scottlr/nudge/internal/tui/components/threads"
 	"github.com/Scottlr/nudge/internal/tui/components/tree"
+	reattachpane "github.com/Scottlr/nudge/internal/tui/reattach"
 )
 
 func newDefaultCommandRegistry() (*CommandRegistry, error) {
@@ -19,7 +20,21 @@ func newDefaultCommandRegistry() (*CommandRegistry, error) {
 	registrations := []CommandRegistration{
 		commandRegistration(CommandApproveRuntimeOnce, ContextRuntimeApproval, "allow once", "Allow this exact Codex command once", []string{"y"}, runtimeApprovalAllowAvailable, false, func(m *Model) tea.Cmd { return m.resolveRuntimeApproval(true) }),
 		commandRegistration(CommandDenyRuntime, ContextRuntimeApproval, "deny runtime request", "Deny this Codex runtime request", []string{"n"}, runtimeApprovalAvailable, true, func(m *Model) tea.Cmd { return m.resolveRuntimeApproval(false) }),
-		commandRegistration(CommandCloseOverlay, ContextOverlay, "close", "Close the current modal", []string{"q", "esc", "ctrl+c"}, overlayDismissibleAvailable, false, func(m *Model) tea.Cmd { m.dismissOverlay(); return nil }),
+		commandRegistration(CommandCloseOverlay, ContextOverlay, "close", "Close the current modal", []string{"q", "esc", "ctrl+c"}, overlayDismissibleAvailable, false, func(m *Model) tea.Cmd {
+			if m.AnchorReattachmentOpen() {
+				return m.handleReattachMessage(reattachpane.CancelMsg{})
+			}
+			m.dismissOverlay()
+			return nil
+		}),
+		commandRegistration(CommandID("reattach_move_up"), ContextOverlay, "move up", "Move through anchor candidates", []string{"k", "up"}, func(m *Model) bool { return m.AnchorReattachmentOpen() }, false, func(m *Model) tea.Cmd { return m.handleReattachMessage(reattachpane.MoveSelectionMsg{Delta: -1}) }),
+		commandRegistration(CommandID("reattach_move_down"), ContextOverlay, "move down", "Move through anchor candidates", []string{"j", "down"}, func(m *Model) bool { return m.AnchorReattachmentOpen() }, false, func(m *Model) tea.Cmd { return m.handleReattachMessage(reattachpane.MoveSelectionMsg{Delta: 1}) }),
+		commandRegistration(CommandID("reattach_confirm"), ContextOverlay, "confirm anchor", "Review or confirm the selected anchor candidate", []string{"enter"}, func(m *Model) bool { return m.AnchorReattachmentOpen() }, false, func(m *Model) tea.Cmd {
+			if m.reattachPane.Confirming() {
+				return m.handleReattachMessage(reattachpane.ConfirmMsg{})
+			}
+			return m.handleReattachMessage(reattachpane.BeginConfirmMsg{})
+		}),
 		commandRegistration(CommandEditorSubmit, ContextEditor, "send reply", "Submit the active multiline reply", []string{"ctrl+enter"}, editorAvailable, false, func(m *Model) tea.Cmd {
 			return m.handleDiscussionMessage(discussion.UpdateDraftMsg{Message: comment.SubmitMsg{}})
 		}),
@@ -77,8 +92,36 @@ func overlayDismissibleAvailable(m *Model) bool {
 	if m == nil {
 		return false
 	}
+	if m.AnchorReattachmentOpen() {
+		return true
+	}
 	overlay, ok := m.overlays.Top()
 	return ok && overlay.Dismissible
+}
+
+func (m *Model) handleReattachMessage(message any) tea.Cmd {
+	if m == nil || m.reattachPane == nil {
+		return nil
+	}
+	intents := m.reattachPane.Update(message)
+	for _, intent := range intents {
+		if intent.Cancel {
+			m.reattachPane = reattachpane.NewModel("reviewer")
+			m.reattachPending = false
+			return nil
+		}
+		if intent.Reattach == nil {
+			continue
+		}
+		if m.client == nil || m.sessionGuard == nil {
+			m.reattachPane.Update(reattachpane.SetErrorMsg{Message: "session writer unavailable"})
+			continue
+		}
+		m.reattachPending = true
+		candidate := intent.Reattach
+		return dispatchCommand(m.ctx, m.client, app.ReattachAnchor{Guard: *m.sessionGuard, ThreadID: candidate.ThreadID, CurrentGeneration: candidate.CurrentGeneration, Candidate: candidate.Candidate, CandidateFingerprint: candidate.CandidateFingerprint, Actor: candidate.Actor})
+	}
+	return nil
 }
 
 func runtimeApprovalAvailable(m *Model) bool {
@@ -161,6 +204,9 @@ func (m *Model) activeContexts() []CommandContext {
 	}
 	if m.runtimeApproval != nil {
 		return []CommandContext{ContextRuntimeApproval}
+	}
+	if m.AnchorReattachmentOpen() {
+		return []CommandContext{ContextOverlay}
 	}
 	if m.overlays.Len() > 0 {
 		return []CommandContext{ContextOverlay}

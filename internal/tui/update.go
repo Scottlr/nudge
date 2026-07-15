@@ -9,6 +9,7 @@ import (
 	"github.com/Scottlr/nudge/internal/presentation"
 	discussionpane "github.com/Scottlr/nudge/internal/tui/components/discussion"
 	threadpane "github.com/Scottlr/nudge/internal/tui/components/threads"
+	reattachpane "github.com/Scottlr/nudge/internal/tui/reattach"
 )
 
 // Update applies frontend messages and returns commands for asynchronous
@@ -61,6 +62,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.discussionPaneMessage(message)...)
 	case tea.KeyPressMsg:
 		return m, m.handleKeyPress(message)
+	case reattachpane.MoveSelectionMsg, reattachpane.BeginConfirmMsg, reattachpane.ConfirmMsg, reattachpane.CancelMsg, reattachpane.SelectCandidateMsg:
+		return m, m.handleReattachMessage(message)
 	case FocusNextMsg:
 		m.moveFocus(1)
 	case FocusPreviousMsg:
@@ -98,6 +101,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, dispatchCommand(m.ctx, m.client, message.Command)
 	case DispatchResultMsg:
+		if m.reattachPending {
+			m.reattachPending = false
+			if message.Err == nil {
+				m.reattachPane = reattachpane.NewModel("reviewer")
+			} else if m.reattachPane != nil {
+				m.reattachPane.Update(reattachpane.SetErrorMsg{Message: message.Err.Error()})
+			}
+		}
 		if message.Err != nil {
 			m.lastError = presentation.ProjectTerminalText(message.Err.Error(), presentation.TerminalTextScalar)
 		} else {
@@ -105,6 +116,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case ShowOverlayMsg:
 		m.showOverlay(message.Overlay)
+	case ShowAnchorReattachmentMsg:
+		m.ShowAnchorReattachment(message.Projection)
 	case DismissOverlayMsg:
 		m.dismissOverlay()
 	case RuntimeApprovalMsg:

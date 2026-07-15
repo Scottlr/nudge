@@ -140,6 +140,22 @@ type ThreadReadChanged struct {
 	Read             bool
 }
 
+// AnchorReattached reports one durable manual anchor-version append. The
+// reducer uses the accompanying thread projection to refresh every pane by
+// stable thread ID.
+type AnchorReattached struct {
+	Revision             uint64
+	CorrelationID        CorrelationID
+	TargetGeneration     repository.TargetGeneration
+	SessionID            domain.ReviewSessionID
+	ThreadID             domain.ReviewThreadID
+	AnchorVersion        uint64
+	Path                 repository.RepoPath
+	StartLine            int
+	EndLine              int
+	CandidateFingerprint string
+}
+
 // TargetReconciled reports the authoritative generation linked to one
 // verified apply operation. Thread and provider identities remain stable.
 type TargetReconciled struct {
@@ -214,6 +230,7 @@ func (ThreadActivated) isEvent()                  {}
 func (MessageAppended) isEvent()                  {}
 func (ThreadResolutionChanged) isEvent()          {}
 func (ThreadReadChanged) isEvent()                {}
+func (AnchorReattached) isEvent()                 {}
 func (TargetReconciled) isEvent()                 {}
 func (ProposalValidityProgress) isEvent()         {}
 func (ProposalValidityEpochCompleted) isEvent()   {}
@@ -356,6 +373,16 @@ func (e ThreadReadChanged) eventMetadata() EventMetadata {
 
 func (e ThreadReadChanged) withRevision(revision uint64) Event {
 	e.Revision = revision
+	return e
+}
+
+func (e AnchorReattached) eventMetadata() EventMetadata {
+	return EventMetadata{Revision: e.Revision, CorrelationID: e.CorrelationID, TargetGeneration: e.TargetGeneration}
+}
+
+func (e AnchorReattached) withRevision(revision uint64) Event {
+	e.Revision = revision
+	e.Path = repository.RepoPath(e.Path.Bytes())
 	return e
 }
 

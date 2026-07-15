@@ -53,6 +53,36 @@ func FingerprintContext(lines []string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
+// FingerprintCapturedContent returns a stable identity for bounded captured
+// lines when the capture adapter has not supplied a stronger file identity.
+// It is only a fallback for candidate identity; accepted captures should
+// normally provide ContentIdentity directly.
+func FingerprintCapturedContent(lines []string) string {
+	h := sha256.New()
+	writeFingerprintPart(h, "nudge-captured-content-v1")
+	for _, line := range lines {
+		writeFingerprintPart(h, NormalizeAnchorFingerprintText(line))
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// AnchorCandidateFingerprint identifies one candidate independently of any
+// transient diff-row ordinal. It binds the source scope, current generation,
+// destination path, side, range, and captured content identity used to render
+// the candidate.
+func AnchorCandidateFingerprint(candidate AnchorCandidate) string {
+	h := sha256.New()
+	writeFingerprintPart(h, "nudge-anchor-candidate-v1")
+	writeFingerprintPart(h, strconv.FormatUint(uint64(candidate.Generation), 10))
+	writeFingerprintPart(h, string(candidate.SourcePath))
+	writeFingerprintPart(h, string(candidate.Path))
+	writeFingerprintPart(h, string(candidate.Side))
+	writeFingerprintPart(h, strconv.Itoa(candidate.StartLine))
+	writeFingerprintPart(h, strconv.Itoa(candidate.EndLine))
+	writeFingerprintPart(h, candidate.ContentFingerprint)
+	return hex.EncodeToString(h.Sum(nil))
+}
+
 // LegacyFingerprintSelection reproduces the pre-reconciliation anchor hash
 // so local pre-release anchors remain searchable after the v1 contract is
 // introduced.

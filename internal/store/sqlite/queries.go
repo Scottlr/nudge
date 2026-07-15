@@ -702,9 +702,21 @@ func (t *transaction) SaveThread(ctx context.Context, thread review.ReviewThread
 	if existingSession != string(t.sessionID) || createdAt != formatTime(thread.CreatedAt) {
 		return app.ErrReviewStoreInput
 	}
-	var existingAnchor []byte
-	if err := t.tx.QueryRowContext(ctx, "SELECT anchor_json FROM anchor_versions WHERE thread_id = ? AND version = ?", thread.ID, currentVersion).Scan(&existingAnchor); err != nil {
+	var existingAnchorJSON []byte
+	if err := t.tx.QueryRowContext(ctx, "SELECT anchor_json FROM anchor_versions WHERE thread_id = ? AND version = ?", thread.ID, currentVersion).Scan(&existingAnchorJSON); err != nil {
 		return fmt.Errorf("%w: anchor history: %v", app.ErrReviewStoreCorrupt, err)
+	}
+	created, err := parseTime(createdAt)
+	if err != nil {
+		return fmt.Errorf("%w: anchor history timestamp: %v", app.ErrReviewStoreCorrupt, err)
+	}
+	existingVersion, err := decodeStoredAnchorVersion(thread.ID, uint64(currentVersion), existingAnchorJSON, created)
+	if err != nil {
+		return err
+	}
+	existingAnchor, err := json.Marshal(existingVersion.Anchor)
+	if err != nil {
+		return err
 	}
 	if !bytes.Equal(existingAnchor, anchorJSON) {
 		currentVersion++
@@ -731,6 +743,104 @@ func (t *transaction) SaveThread(ctx context.Context, thread review.ReviewThread
 		thread.SessionID,
 	)
 	return err
+}
+
+// AppendAnchorVersion appends one immutable manual anchor history row and
+// advances only the thread's current-anchor pointer. The expected previous
+// anchor and session generation are checked while the writer transaction is
+// held, so a displayed candidate cannot silently attach after a refresh.
+func (t *transaction) AppendAnchorVersion(ctx context.Context, write app.AnchorVersionWrite) (app.AnchorVersionRecord, error) {
+	if err := write.Validate(); err != nil || write.ThreadID == "" {
+		return app.AnchorVersionRecord{}, app.ErrReviewStoreInput
+	}
+	var sessionID string
+	var currentGeneration int64
+	if err := t.tx.QueryRowContext(ctx, "SELECT id, current_generation FROM review_sessions WHERE id = ?", t.sessionID).Scan(&sessionID, &currentGeneration); err != nil {
+		return app.AnchorVersionRecord{}, mapNotFound(err)
+	}
+	if sessionID != string(t.sessionID) || repository.TargetGeneration(currentGeneration) != write.CurrentGeneration {
+		return app.AnchorVersionRecord{}, app.ErrSessionRevisionConflict
+	}
+	var threadSession string
+	var currentVersion int64
+	var currentAnchorJSON []byte
+	if err := t.tx.QueryRowContext(ctx, "SELECT session_id, current_anchor_version FROM review_threads WHERE id = ?", write.ThreadID).Scan(&threadSession, &currentVersion); err != nil {
+		return app.AnchorVersionRecord{}, mapNotFound(err)
+	}
+	if threadSession != string(t.sessionID) {
+		return app.AnchorVersionRecord{}, app.ErrReviewStoreInput
+	}
+	if err := t.tx.QueryRowContext(ctx, "SELECT anchor_json FROM anchor_versions WHERE thread_id = ? AND version = ?", write.ThreadID, currentVersion).Scan(&currentAnchorJSON); err != nil {
+		return app.AnchorVersionRecord{}, app.ErrReviewStoreCorrupt
+	}
+	var currentCreatedAt string
+	if err := t.tx.QueryRowContext(ctx, "SELECT created_at FROM anchor_versions WHERE thread_id = ? AND version = ?", write.ThreadID, currentVersion).Scan(&currentCreatedAt); err != nil {
+		return app.AnchorVersionRecord{}, app.ErrReviewStoreCorrupt
+	}
+	created, err := parseTime(currentCreatedAt)
+	if err != nil {
+		return app.AnchorVersionRecord{}, app.ErrReviewStoreCorrupt
+	}
+	currentRecord, err := decodeStoredAnchorVersion(write.ThreadID, uint64(currentVersion), currentAnchorJSON, created)
+	if err != nil {
+		return app.AnchorVersionRecord{}, err
+	}
+	previousJSON, err := json.Marshal(write.PreviousAnchor)
+	if err != nil {
+		return app.AnchorVersionRecord{}, err
+	}
+	currentJSON, err := json.Marshal(currentRecord.Anchor)
+	if err != nil {
+		return app.AnchorVersionRecord{}, err
+	}
+	if !bytes.Equal(previousJSON, currentJSON) || currentRecord.Anchor.TargetGeneration != write.CurrentGeneration {
+		return app.AnchorVersionRecord{}, app.ErrAnchorCandidateStale
+	}
+	record := app.AnchorVersionRecord{ThreadID: write.ThreadID, Version: uint64(currentVersion) + 1, Anchor: write.Anchor, Method: write.Method, PreviousVersion: uint64(currentVersion), Candidate: candidateCopy(write.Candidate), Actor: write.Actor, CreatedAt: write.CreatedAt.UTC()}
+	if err := record.Validate(); err != nil {
+		return app.AnchorVersionRecord{}, app.ErrReviewStoreInput
+	}
+	data, err := json.Marshal(record)
+	if err != nil {
+		return app.AnchorVersionRecord{}, err
+	}
+	if _, err := t.tx.ExecContext(ctx, "INSERT INTO anchor_versions(thread_id, version, anchor_json, created_at) VALUES(?, ?, ?, ?)", write.ThreadID, record.Version, data, formatTime(record.CreatedAt)); err != nil {
+		return app.AnchorVersionRecord{}, err
+	}
+	if _, err := t.tx.ExecContext(ctx, "UPDATE review_threads SET current_anchor_version = ?, updated_at = ? WHERE id = ? AND session_id = ?", record.Version, formatTime(record.CreatedAt), write.ThreadID, t.sessionID); err != nil {
+		return app.AnchorVersionRecord{}, err
+	}
+	return record, nil
+}
+
+func candidateCopy(candidate review.AnchorCandidate) *review.AnchorCandidate {
+	copyValue := candidate
+	copyValue.SourcePath = append([]byte(nil), candidate.SourcePath...)
+	copyValue.Path = append([]byte(nil), candidate.Path...)
+	copyValue.BeforeContext = append([]string(nil), candidate.BeforeContext...)
+	copyValue.AfterContext = append([]string(nil), candidate.AfterContext...)
+	return &copyValue
+}
+
+func decodeStoredAnchorVersion(threadID domain.ReviewThreadID, version uint64, data []byte, createdAt time.Time) (app.AnchorVersionRecord, error) {
+	var record app.AnchorVersionRecord
+	if err := json.Unmarshal(data, &record); err == nil && record.Method != "" && record.Anchor.Validate() == nil {
+		record.ThreadID = threadID
+		record.Version = version
+		record.CreatedAt = createdAt
+		if record.Validate() == nil {
+			return record, nil
+		}
+	}
+	var anchor review.CodeAnchor
+	if err := json.Unmarshal(data, &anchor); err != nil || anchor.Validate() != nil {
+		return app.AnchorVersionRecord{}, app.ErrReviewStoreCorrupt
+	}
+	legacy := app.AnchorVersionRecord{ThreadID: threadID, Version: version, Anchor: anchor, Method: review.AnchorVersionMethodLegacy, CreatedAt: createdAt}
+	if err := legacy.Validate(); err != nil {
+		return app.AnchorVersionRecord{}, app.ErrReviewStoreCorrupt
+	}
+	return legacy, nil
 }
 
 func (t *transaction) SaveMessage(ctx context.Context, message review.Message) error {
@@ -1164,7 +1274,7 @@ func (s *Store) ListThreadSummaries(ctx context.Context, sessionID domain.Review
 		return app.ThreadPageResult{}, app.ErrSessionRevisionConflict
 	}
 	query := `SELECT t.id, t.title, t.resolution, t.conversation, t.proposal, t.read_state,
-		t.failure_phase, t.error_code, t.provider_conversation_id, t.latest_proposal_id, t.updated_at, a.anchor_json
+		t.failure_phase, t.error_code, t.provider_conversation_id, t.latest_proposal_id, t.updated_at, t.current_anchor_version, a.anchor_json
 		FROM review_threads t JOIN anchor_versions a
 		ON a.thread_id = t.id AND a.version = t.current_anchor_version
 		WHERE t.session_id = ?`
@@ -1184,23 +1294,25 @@ func (s *Store) ListThreadSummaries(ctx context.Context, sessionID domain.Review
 	result := app.ThreadPageResult{Revision: revision}
 	for rows.Next() {
 		var id, title, resolution, conversation, proposal, readState, failurePhase, errorCode, updatedAt string
+		var currentVersion int64
 		var providerID, proposalID sql.NullString
 		var anchorJSON []byte
-		if err := rows.Scan(&id, &title, &resolution, &conversation, &proposal, &readState, &failurePhase, &errorCode, &providerID, &proposalID, &updatedAt, &anchorJSON); err != nil {
+		if err := rows.Scan(&id, &title, &resolution, &conversation, &proposal, &readState, &failurePhase, &errorCode, &providerID, &proposalID, &updatedAt, &currentVersion, &anchorJSON); err != nil {
 			return app.ThreadPageResult{}, err
 		}
 		if len(result.Items) >= int(page.Limit) {
 			result.HasMore = true
 			break
 		}
-		var anchor review.CodeAnchor
-		if err := json.Unmarshal(anchorJSON, &anchor); err != nil || anchor.Validate() != nil {
-			return app.ThreadPageResult{}, app.ErrReviewStoreCorrupt
-		}
 		when, err := parseTime(updatedAt)
 		if err != nil {
 			return app.ThreadPageResult{}, app.ErrReviewStoreCorrupt
 		}
+		version, err := decodeStoredAnchorVersion(domain.ReviewThreadID(id), uint64(currentVersion), anchorJSON, when)
+		if err != nil {
+			return app.ThreadPageResult{}, err
+		}
+		anchor := version.Anchor
 		item := app.ThreadSummary{
 			ID:           domain.ReviewThreadID(id),
 			SessionID:    sessionID,
@@ -1256,23 +1368,25 @@ func (s *Store) LoadThread(ctx context.Context, threadID domain.ReviewThreadID) 
 		return review.ReviewThread{}, err
 	}
 	var sessionID, title, resolution, conversation, proposal, readState, failurePhase, errorCode, updatedAt, createdAt string
+	var currentVersion int64
 	var providerID, proposalID sql.NullString
 	var anchorJSON []byte
 	if err := s.db.QueryRowContext(ctx, `SELECT t.session_id, t.title, t.resolution, t.conversation, t.proposal,
-		t.read_state, t.failure_phase, t.error_code, t.provider_conversation_id, t.latest_proposal_id, t.created_at, t.updated_at, a.anchor_json
+		t.read_state, t.failure_phase, t.error_code, t.provider_conversation_id, t.latest_proposal_id, t.created_at, t.updated_at, t.current_anchor_version, a.anchor_json
 		FROM review_threads t JOIN anchor_versions a
 		ON a.thread_id = t.id AND a.version = t.current_anchor_version WHERE t.id = ?`, threadID).Scan(
-		&sessionID, &title, &resolution, &conversation, &proposal, &readState, &failurePhase, &errorCode, &providerID, &proposalID, &createdAt, &updatedAt, &anchorJSON); err != nil {
+		&sessionID, &title, &resolution, &conversation, &proposal, &readState, &failurePhase, &errorCode, &providerID, &proposalID, &createdAt, &updatedAt, &currentVersion, &anchorJSON); err != nil {
 		return review.ReviewThread{}, mapNotFound(err)
-	}
-	var anchor review.CodeAnchor
-	if err := json.Unmarshal(anchorJSON, &anchor); err != nil || anchor.Validate() != nil {
-		return review.ReviewThread{}, app.ErrReviewStoreCorrupt
 	}
 	created, err := parseTime(createdAt)
 	if err != nil {
 		return review.ReviewThread{}, app.ErrReviewStoreCorrupt
 	}
+	version, err := decodeStoredAnchorVersion(threadID, uint64(currentVersion), anchorJSON, created)
+	if err != nil {
+		return review.ReviewThread{}, err
+	}
+	anchor := version.Anchor
 	updated, err := parseTime(updatedAt)
 	if err != nil {
 		return review.ReviewThread{}, app.ErrReviewStoreCorrupt
@@ -1303,6 +1417,45 @@ func (s *Store) LoadThread(ctx context.Context, threadID domain.ReviewThreadID) 
 		return review.ReviewThread{}, app.ErrReviewStoreCorrupt
 	}
 	return thread, nil
+}
+
+// ListAnchorVersions returns the immutable anchor history in append order.
+// Legacy rows remain readable and are labelled without inventing method or
+// candidate evidence that was not persisted at creation time.
+func (s *Store) ListAnchorVersions(ctx context.Context, threadID domain.ReviewThreadID) ([]app.AnchorVersionRecord, error) {
+	if err := s.ensureOpen(); err != nil {
+		return nil, err
+	}
+	if threadID == "" {
+		return nil, app.ErrReviewStoreInput
+	}
+	rows, err := s.db.QueryContext(ctx, "SELECT version, anchor_json, created_at FROM anchor_versions WHERE thread_id = ? ORDER BY version ASC", threadID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []app.AnchorVersionRecord
+	for rows.Next() {
+		var version int64
+		var data []byte
+		var createdAt string
+		if err := rows.Scan(&version, &data, &createdAt); err != nil {
+			return nil, err
+		}
+		created, err := parseTime(createdAt)
+		if err != nil || version <= 0 {
+			return nil, app.ErrReviewStoreCorrupt
+		}
+		record, err := decodeStoredAnchorVersion(threadID, uint64(version), data, created)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func (s *Store) ListMessages(ctx context.Context, threadID domain.ReviewThreadID, page app.MessagePage) (app.MessagePageResult, error) {

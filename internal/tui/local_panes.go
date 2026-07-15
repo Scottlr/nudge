@@ -9,6 +9,7 @@ import (
 	discussionpane "github.com/Scottlr/nudge/internal/tui/components/discussion"
 	threadpane "github.com/Scottlr/nudge/internal/tui/components/threads"
 	treepane "github.com/Scottlr/nudge/internal/tui/components/tree"
+	reattachpane "github.com/Scottlr/nudge/internal/tui/reattach"
 )
 
 // syncLocalReviewPanes adopts the immutable pages already carried by the
@@ -178,5 +179,8 @@ func (m *Model) updateChildFocus() {
 	}
 	if m.discussionPane != nil {
 		m.discussionPane.Update(discussionpane.SetFocusMsg{Focused: m.focus == PaneDiscussion})
+	}
+	if m.reattachPane != nil {
+		m.reattachPane.Update(reattachpane.SetSizeMsg{Width: maxInt(m.dimensions.Width-4, 0), Height: maxInt(m.dimensions.Height-4, 0)})
 	}
 }

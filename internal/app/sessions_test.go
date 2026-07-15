@@ -319,6 +319,9 @@ func (fakeSessionTx) SaveCaptureGeneration(context.Context, CaptureGeneration, C
 func (fakeSessionTx) SaveAcceptedTargetGeneration(context.Context, AcceptedTargetGeneration) error {
 	return nil
 }
+func (fakeSessionTx) AppendAnchorVersion(context.Context, AnchorVersionWrite) (AnchorVersionRecord, error) {
+	return AnchorVersionRecord{}, nil
+}
 func (fakeSessionTx) CreateReconciliation(context.Context, ReconciliationOperation) error { return nil }
 func (fakeSessionTx) UpdateReconciliation(context.Context, ReconciliationOperation) error { return nil }
 func (fakeSessionTx) StageReconciliationResult(context.Context, ReconciliationAnchorResult) error {
