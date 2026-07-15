@@ -91,6 +91,9 @@ type Projection struct {
 	Destination         string
 	Warnings            []string
 	NoChanges           bool
+	FailedAttemptID     domain.OperationID
+	FailedAttemptReason string
+	ResultDisposition   review.ProposalResultDisposition
 }
 
 func (p Projection) Validate() error {
@@ -99,6 +102,12 @@ func (p Projection) Validate() error {
 	}
 	if p.NoChanges {
 		if p.Version != 0 || p.PatchSHA256 != "" || p.IndexHash != "" || p.ArtifactID != "" || p.PatchBytes != 0 || p.FileCount != 0 || p.HunkCount != 0 || p.RowCount != 0 || p.Status != "" {
+			return ErrInvalidProjection
+		}
+		if p.FailedAttemptID != "" && (p.ResultDisposition != review.ProposalResultPresent && p.ResultDisposition != review.ProposalResultDiscarding || p.FailedAttemptReason == "" || !utf8.ValidString(string(p.FailedAttemptID))) {
+			return ErrInvalidProjection
+		}
+		if p.FailedAttemptID == "" && p.ResultDisposition != "" && p.ResultDisposition != review.ProposalResultNone {
 			return ErrInvalidProjection
 		}
 		return validateProjectionText(p.ScopeReason, p.StatusReason, p.ApplicabilityReason, p.Destination, p.Warnings)
@@ -348,6 +357,26 @@ type ApproveProposalIntent struct {
 
 type RejectProposalIntent struct{ Identity ActionIdentity }
 
+// ResultDiscardIdentity binds failed-result cleanup to the exact terminal
+// attempt currently visible in proposal mode.
+type ResultDiscardIdentity struct {
+	ProposalID domain.ProposalID
+	AttemptID  domain.OperationID
+}
+
+func (i ResultDiscardIdentity) Validate(p Projection) error {
+	if p.Validate() != nil || !p.NoChanges || p.FailedAttemptID == "" || i.ProposalID != p.ProposalID || i.AttemptID != p.FailedAttemptID {
+		return ErrInvalidProjection
+	}
+	return nil
+}
+
+// DiscardProposalResultIntent is deliberately distinct from RejectProposalIntent.
+type DiscardProposalResultIntent struct {
+	Identity ResultDiscardIdentity
+	Reason   string
+}
+
 // ModeIntent returns the root to discussion after a terminal review outcome.
 type ModeIntent struct {
 	Mode     Mode
@@ -362,6 +391,7 @@ type Intent struct {
 	Range     *PatchRangeRequest
 	Approve   *ApproveProposalIntent
 	Reject    *RejectProposalIntent
+	Discard   *DiscardProposalResultIntent
 	Mode      *ModeIntent
 }
 
@@ -375,6 +405,7 @@ const (
 	confirmationNone    confirmationKind = ""
 	confirmationApprove confirmationKind = "approve"
 	confirmationReject  confirmationKind = "reject"
+	confirmationDiscard confirmationKind = "discard"
 )
 
 type reviewEvidence struct {
@@ -499,6 +530,12 @@ func (m *Model) CanApprove() bool {
 		return false
 	}
 	return true
+}
+
+// CanDiscardResult reports whether an exact terminal failed-result reset may
+// be confirmed. A ready version never satisfies this gate.
+func (m *Model) CanDiscardResult() bool {
+	return m != nil && m.projection.Validate() == nil && m.projection.NoChanges && m.projection.FailedAttemptID != "" && (m.projection.ResultDisposition == review.ProposalResultPresent || m.projection.ResultDisposition == review.ProposalResultDiscarding)
 }
 
 // DisclosureSummary returns bounded evidence counts for status bars and tests.

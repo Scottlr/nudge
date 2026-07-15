@@ -50,6 +50,8 @@ type BeginApproveMsg struct{}
 type ConfirmApproveMsg struct{}
 type BeginRejectMsg struct{}
 type ConfirmRejectMsg struct{}
+type BeginDiscardMsg struct{}
+type ConfirmDiscardMsg struct{}
 type CancelConfirmationMsg struct{}
 type SetFocusMsg struct{ Focused bool }
 type SetModeMsg struct{ Mode Mode }
@@ -79,7 +81,11 @@ func (m *Model) replaceProjection(next Projection) []Intent {
 	m.projection = cloneProjection(next)
 	m.lastError = ""
 	if next.NoChanges {
-		m.mode = ModeDiscussion
+		if next.FailedAttemptID == "" {
+			m.mode = ModeDiscussion
+		} else {
+			m.mode = ModeReview
+		}
 		return nil
 	}
 	m.mode = ModeReview
@@ -256,7 +262,7 @@ func (m *Model) handleApprove(confirm bool) []Intent {
 }
 
 func (m *Model) handleReject(confirm bool) []Intent {
-	if m == nil || m.projection.Validate() != nil || m.projection.NoChanges || (m.projection.Status != review.ProposalVersionReady && m.projection.Status != review.ProposalVersionStale) {
+	if m == nil || m.projection.Validate() != nil || m.projection.NoChanges || m.projection.Status != review.ProposalVersionReady {
 		return nil
 	}
 	if !confirm {
@@ -268,6 +274,22 @@ func (m *Model) handleReject(confirm bool) []Intent {
 	}
 	m.confirmation = confirmationNone
 	return []Intent{{Reject: &RejectProposalIntent{Identity: m.actionIdentity()}}}
+}
+
+func (m *Model) handleDiscard(confirm bool) []Intent {
+	if m == nil || !m.CanDiscardResult() {
+		return nil
+	}
+	if !confirm {
+		m.confirmation = confirmationDiscard
+		return nil
+	}
+	if m.confirmation != confirmationDiscard || !m.CanDiscardResult() {
+		m.confirmation = confirmationNone
+		return nil
+	}
+	m.confirmation = confirmationNone
+	return []Intent{{Discard: &DiscardProposalResultIntent{Identity: ResultDiscardIdentity{ProposalID: m.projection.ProposalID, AttemptID: m.projection.FailedAttemptID}, Reason: "failed proposal result discarded"}}}
 }
 
 func (m *Model) actionIdentity() ActionIdentity {
@@ -434,12 +456,16 @@ func (m *Model) Update(message any) []Intent {
 		return m.handleReject(false)
 	case ConfirmRejectMsg:
 		return m.handleReject(true)
+	case BeginDiscardMsg:
+		return m.handleDiscard(false)
+	case ConfirmDiscardMsg:
+		return m.handleDiscard(true)
 	case CancelConfirmationMsg:
 		m.confirmation = confirmationNone
 	case SetFocusMsg:
 		m.focused = value.Focused
 	case SetModeMsg:
-		if value.Mode.Validate() == nil && (value.Mode == ModeDiscussion || !m.projection.NoChanges) {
+		if value.Mode.Validate() == nil && (value.Mode == ModeDiscussion || !m.projection.NoChanges || m.projection.FailedAttemptID != "") {
 			m.mode = value.Mode
 		}
 	case ReturnToDiscussionMsg:

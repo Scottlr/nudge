@@ -170,6 +170,16 @@ func (r *Reducer) handleCommand(command Command) (ReducerResponse, error) {
 			return ReducerResponse{}, ErrInvalidReducerInput
 		}
 		return r.cancelOperation(CancelOperation{OperationID: value.AttemptID, CorrelationID: value.CorrelationID})
+	case RejectProposal:
+		if value.Guard.Validate() != nil || value.ThreadID == "" || value.ProposalID == "" || value.Version == 0 || value.OperationID == "" || value.CorrelationID == "" || !safeOptionalText(value.Reason, 256) {
+			return ReducerResponse{}, ErrInvalidReducerInput
+		}
+		return r.startOperation(OperationRejectProposal, value.CorrelationID, 0, false)
+	case DiscardProposalResult:
+		if value.Guard.Validate() != nil || value.ProposalID == "" || value.AttemptID == "" || value.OperationID == "" || value.CorrelationID == "" || !safeOptionalText(value.Reason, 256) {
+			return ReducerResponse{}, ErrInvalidReducerInput
+		}
+		return r.startOperation(OperationDiscardProposalResult, value.CorrelationID, 0, false)
 	case Shutdown:
 		return r.shutdown()
 	case CreateThread:
@@ -544,4 +554,19 @@ func safeText(value string) bool {
 		}
 	}
 	return true
+}
+
+func safeOptionalText(value string, maxBytes int) bool {
+	if value == "" {
+		return true
+	}
+	if len([]byte(value)) > maxBytes || !utf8.ValidString(value) {
+		return false
+	}
+	for _, r := range value {
+		if unicode.IsControl(r) {
+			return false
+		}
+	}
+	return strings.TrimSpace(value) != ""
 }

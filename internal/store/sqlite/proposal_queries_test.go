@@ -234,6 +234,51 @@ func TestProposalWorkspaceAndVersionRoundTrip(t *testing.T) {
 		t.Fatalf("no-change aggregate = %#v err=%v", aggregate, err)
 	}
 
+	failed := attempt
+	failed.ID = domain.OperationID("attempt-3")
+	guard, err = withProposalTx(ctx, store, guard, func(tx app.ProposalWorkspaceStoreTx) error { return tx.RecordProposalAttempt(ctx, failed) })
+	if err != nil {
+		t.Fatalf("record failed attempt: %v", err)
+	}
+	failed.Outcome = review.ProposalAttemptFailed
+	failed.ResultDisposition = review.ProposalResultPresent
+	failed.FailurePhase = review.ProposalFailureDerivation
+	failed.Reason = "unsupported result"
+	failed.FinishedAt = timePointer(now.Add(4 * time.Minute))
+	guard, err = withProposalTx(ctx, store, guard, func(tx app.ProposalWorkspaceStoreTx) error { return tx.RecordProposalAttempt(ctx, failed) })
+	if err != nil {
+		t.Fatalf("persist failed attempt: %v", err)
+	}
+	failed.ResultDisposition = review.ProposalResultDiscarding
+	failed.ResultDispositionReason = "discard requested"
+	failed.ResultDispositionChangedAt = timePointer(now.Add(5 * time.Minute))
+	guard, err = store.WithSessionTx(ctx, guard, func(tx app.ReviewStoreTx) error {
+		dispositionTx, ok := tx.(app.ProposalResultDispositionStoreTx)
+		if !ok {
+			return errors.New("result disposition transaction extension unavailable")
+		}
+		return dispositionTx.TransitionProposalResultDisposition(ctx, failed)
+	})
+	if err != nil {
+		t.Fatalf("mark failed result discarding: %v", err)
+	}
+	failed.ResultDisposition = review.ProposalResultDiscarded
+	failed.ResultDispositionChangedAt = timePointer(now.Add(6 * time.Minute))
+	guard, err = store.WithSessionTx(ctx, guard, func(tx app.ReviewStoreTx) error {
+		dispositionTx, ok := tx.(app.ProposalResultDispositionStoreTx)
+		if !ok {
+			return errors.New("result disposition transaction extension unavailable")
+		}
+		return dispositionTx.TransitionProposalResultDisposition(ctx, failed)
+	})
+	if err != nil {
+		t.Fatalf("mark failed result discarded: %v", err)
+	}
+	aggregate, err = store.LoadProposalAggregate(ctx, intent.ID)
+	if err != nil || aggregate.Attempts[2].ResultDisposition != review.ProposalResultDiscarded || aggregate.Attempts[2].ResultDispositionReason != "discard requested" {
+		t.Fatalf("discarded attempt round trip = %#v err=%v", aggregate.Attempts, err)
+	}
+
 	if _, err := store.WithSessionTx(ctx, guard, func(tx app.ReviewStoreTx) error {
 		proposalTx, ok := tx.(app.ProposalWorkspaceStoreTx)
 		if !ok {
@@ -258,6 +303,11 @@ func withProposalTx(ctx context.Context, store app.ReviewStore, guard app.Sessio
 func captureIDPointer(value string) *domain.CaptureID {
 	id := domain.CaptureID(value)
 	return &id
+}
+
+func timePointer(value time.Time) *time.Time {
+	copyValue := value
+	return &copyValue
 }
 
 func providerTurnPointer(value string) *domain.ProviderTurnID {

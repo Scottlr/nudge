@@ -24,3 +24,11 @@ type ProposalWorkspaceStoreTx interface {
 	PublishProposal(context.Context, review.ProposedPatch) error
 	TransitionProposal(context.Context, review.ProposalTransition) error
 }
+
+// ProposalResultDispositionStoreTx is the optional durable seam for the
+// two-phase failed-result discard decision. It remains separate from the
+// general proposal transaction so read-only and legacy stores do not gain
+// mutation authority accidentally.
+type ProposalResultDispositionStoreTx interface {
+	TransitionProposalResultDisposition(context.Context, review.ProposalAttempt) error
+}

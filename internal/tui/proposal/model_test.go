@@ -102,6 +102,25 @@ func TestNoChangesHasNoProposalActions(t *testing.T) {
 	}
 }
 
+func TestFailedResultUsesDistinctConfirmedDiscardAction(t *testing.T) {
+	model := NewModel()
+	model.Update(SetProjectionMsg{Projection: Projection{Revision: 1, ProposalID: "proposal-1", NoChanges: true, FailedAttemptID: "attempt-1", FailedAttemptReason: "oversize result", ResultDisposition: review.ProposalResultPresent}})
+	if model.Mode() != ModeReview || !model.CanDiscardResult() {
+		t.Fatalf("failed result state = mode %q canDiscard=%v", model.Mode(), model.CanDiscardResult())
+	}
+	model.Update(BeginDiscardMsg{})
+	if model.Confirmation() != string(confirmationDiscard) {
+		t.Fatalf("discard confirmation = %q", model.Confirmation())
+	}
+	intents := model.Update(ConfirmDiscardMsg{})
+	if len(intents) != 1 || intents[0].Discard == nil || intents[0].Discard.Identity.AttemptID != "attempt-1" {
+		t.Fatalf("discard intent = %#v", intents)
+	}
+	if strings.Contains(model.View(), "Reject proposal") {
+		t.Fatal("failed result displayed reject action")
+	}
+}
+
 func proposalProjection() Projection {
 	return Projection{
 		Revision: 1, ProposalID: "proposal-1", Version: 1, PatchSHA256: strings.Repeat("a", 64), IndexHash: strings.Repeat("c", 64), ArtifactID: "artifact-1", PatchBytes: 5, FileCount: 1, HunkCount: 1, RowCount: 1,

@@ -203,28 +203,30 @@ func (p Proposal) Validate() error {
 // ProposalAttempt records one provider-turn derivation attempt, including
 // terminal no-change evidence that is not itself a proposal version.
 type ProposalAttempt struct {
-	ID                      domain.OperationID
-	ProposalID              domain.ProposalID
-	WorkspaceID             domain.WorkspaceID
-	ThreadID                domain.ReviewThreadID
-	ProviderConversationID  *domain.ProviderConversationID
-	ProviderTurnID          *domain.ProviderTurnID
-	ProviderConversationRef string
-	ProviderTurnRef         string
-	SourceGeneration        GenerationProvenance
-	Baseline                *SnapshotIdentity
-	Result                  *SnapshotIdentity
-	VersionNumber           *ProposalVersionNumber
-	Outcome                 ProposalAttemptOutcome
-	ResultDisposition       ProposalResultDisposition
-	FailurePhase            ProposalFailurePhase
-	Reason                  string
-	StartedAt               time.Time
-	FinishedAt              *time.Time
+	ID                         domain.OperationID
+	ProposalID                 domain.ProposalID
+	WorkspaceID                domain.WorkspaceID
+	ThreadID                   domain.ReviewThreadID
+	ProviderConversationID     *domain.ProviderConversationID
+	ProviderTurnID             *domain.ProviderTurnID
+	ProviderConversationRef    string
+	ProviderTurnRef            string
+	SourceGeneration           GenerationProvenance
+	Baseline                   *SnapshotIdentity
+	Result                     *SnapshotIdentity
+	VersionNumber              *ProposalVersionNumber
+	Outcome                    ProposalAttemptOutcome
+	ResultDisposition          ProposalResultDisposition
+	FailurePhase               ProposalFailurePhase
+	Reason                     string
+	ResultDispositionReason    string
+	StartedAt                  time.Time
+	FinishedAt                 *time.Time
+	ResultDispositionChangedAt *time.Time
 }
 
 func (a ProposalAttempt) Validate() error {
-	if a.ID == "" || a.ProposalID == "" || a.WorkspaceID == "" || a.ThreadID == "" || a.SourceGeneration.Validate() != nil || a.Outcome.Validate() != nil || a.ResultDisposition.Validate() != nil || a.FailurePhase.Validate() != nil || a.StartedAt.IsZero() || !utf8.ValidString(a.Reason) || !utf8.ValidString(a.ProviderConversationRef) || !utf8.ValidString(a.ProviderTurnRef) {
+	if a.ID == "" || a.ProposalID == "" || a.WorkspaceID == "" || a.ThreadID == "" || a.SourceGeneration.Validate() != nil || a.Outcome.Validate() != nil || a.ResultDisposition.Validate() != nil || a.FailurePhase.Validate() != nil || a.StartedAt.IsZero() || !utf8.ValidString(a.Reason) || !utf8.ValidString(a.ResultDispositionReason) || !utf8.ValidString(a.ProviderConversationRef) || !utf8.ValidString(a.ProviderTurnRef) {
 		return ErrInvalidProposal
 	}
 	if a.ProviderConversationID != nil && *a.ProviderConversationID == "" || a.ProviderTurnID != nil && *a.ProviderTurnID == "" {
@@ -236,7 +238,7 @@ func (a ProposalAttempt) Validate() error {
 	if a.VersionNumber != nil && *a.VersionNumber == 0 {
 		return ErrInvalidProposal
 	}
-	if a.FinishedAt != nil && (a.FinishedAt.IsZero() || a.FinishedAt.Before(a.StartedAt)) {
+	if a.FinishedAt != nil && (a.FinishedAt.IsZero() || a.FinishedAt.Before(a.StartedAt)) || a.ResultDispositionChangedAt != nil && (a.ResultDispositionChangedAt.IsZero() || a.ResultDispositionChangedAt.Before(a.StartedAt)) {
 		return ErrInvalidProposal
 	}
 	if a.Outcome == ProposalAttemptVersionPublished && a.VersionNumber == nil {
@@ -355,6 +357,7 @@ type ProposedPatch struct {
 	ScopeReason             string
 	Status                  ProposalStatus
 	StatusReason            string
+	StatusChangedAt         *time.Time
 	CreatedAt               time.Time
 }
 
@@ -369,7 +372,7 @@ func NewProposedPatch(patch ProposedPatch) (ProposedPatch, error) {
 }
 
 func (p ProposedPatch) Validate() error {
-	if p.ProposalID == "" || p.WorkspaceID == "" || p.ThreadID == "" || p.AttemptID == "" || p.SourceGeneration.Validate() != nil || p.Baseline.Validate() != nil || p.Result.Validate() != nil || p.Destination.Validate() != nil || p.Version == 0 || !utf8.ValidString(p.PatchFormat) || p.PatchFormat == "" || !validSHA256(p.PatchSHA256) || p.Scope.Validate() != nil || !utf8.ValidString(p.ScopeReason) || !utf8.ValidString(p.StatusReason) || p.Status.Validate() != nil || p.CreatedAt.IsZero() {
+	if p.ProposalID == "" || p.WorkspaceID == "" || p.ThreadID == "" || p.AttemptID == "" || p.SourceGeneration.Validate() != nil || p.Baseline.Validate() != nil || p.Result.Validate() != nil || p.Destination.Validate() != nil || p.Version == 0 || !utf8.ValidString(p.PatchFormat) || p.PatchFormat == "" || !validSHA256(p.PatchSHA256) || p.Scope.Validate() != nil || !utf8.ValidString(p.ScopeReason) || !utf8.ValidString(p.StatusReason) || p.Status.Validate() != nil || p.CreatedAt.IsZero() || p.StatusChangedAt != nil && (p.StatusChangedAt.IsZero() || p.StatusChangedAt.Before(p.CreatedAt)) {
 		return ErrInvalidProposal
 	}
 	if p.Baseline.ID == p.Result.ID {

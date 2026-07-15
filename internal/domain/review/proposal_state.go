@@ -42,7 +42,7 @@ func (s WorkspaceState) CanTransitionTo(next WorkspaceState) bool {
 	case WorkspaceResetting:
 		return next == WorkspaceReady || next == WorkspaceRepairRequired || next == WorkspaceRemoved
 	case WorkspaceRepairRequired:
-		return next == WorkspaceRemoved
+		return next == WorkspaceResetting || next == WorkspaceRemoved
 	case WorkspaceRemoved:
 		return false
 	default:
@@ -73,6 +73,11 @@ const (
 	ProposalVersionApplied  ProposalStatus = "applied"
 	ProposalVersionFailed   ProposalStatus = "failed"
 )
+
+// ProposalStatusRejected is the product-facing name for a rejected immutable
+// proposal version. Keep the version-prefixed constant for storage and older
+// callers while exposing the terminology used by application commands.
+const ProposalStatusRejected = ProposalVersionRejected
 
 func (s ProposalStatus) Validate() error {
 	switch s {
@@ -184,6 +189,16 @@ func (d ProposalResultDisposition) Validate() error {
 	default:
 		return errors.New("invalid proposal result disposition")
 	}
+}
+
+// CanTransitionTo reports the only result-disposition changes allowed by the
+// explicit failed-result discard workflow. A repeated terminal write is
+// idempotent and never reopens discarded result state.
+func (d ProposalResultDisposition) CanTransitionTo(next ProposalResultDisposition) bool {
+	if d == next {
+		return d == ProposalResultDiscarding || d == ProposalResultDiscarded
+	}
+	return d == ProposalResultPresent && next == ProposalResultDiscarding || d == ProposalResultDiscarding && next == ProposalResultDiscarded
 }
 
 // ProposalScope classifies whether a derived patch stays within the confirmed

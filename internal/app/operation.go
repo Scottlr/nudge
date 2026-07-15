@@ -30,11 +30,13 @@ var (
 type OperationKind string
 
 const (
-	OperationOpenRepository  OperationKind = "open_repository"
-	OperationSelectTarget    OperationKind = "select_target"
-	OperationSelectFile      OperationKind = "select_file"
-	OperationRefreshTarget   OperationKind = "refresh_target"
-	OperationRequestProposal OperationKind = "request_proposal"
+	OperationOpenRepository        OperationKind = "open_repository"
+	OperationSelectTarget          OperationKind = "select_target"
+	OperationSelectFile            OperationKind = "select_file"
+	OperationRefreshTarget         OperationKind = "refresh_target"
+	OperationRequestProposal       OperationKind = "request_proposal"
+	OperationRejectProposal        OperationKind = "reject_proposal"
+	OperationDiscardProposalResult OperationKind = "discard_proposal_result"
 )
 
 // OperationStatus describes the lifecycle of one application operation.
