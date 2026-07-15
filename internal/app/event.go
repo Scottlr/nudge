@@ -142,21 +142,23 @@ type ThreadReadChanged struct {
 // ThreadReadStateChanged is the descriptive alias for ThreadReadChanged.
 type ThreadReadStateChanged = ThreadReadChanged
 
-func (OperationStarted) isEvent()        {}
-func (OperationCompleted) isEvent()      {}
-func (RepositoryLoaded) isEvent()        {}
-func (TargetLoaded) isEvent()            {}
-func (SessionRestored) isEvent()         {}
-func (FileSelected) isEvent()            {}
-func (Progress) isEvent()                {}
-func (OperationFailed) isEvent()         {}
-func (OperationCancelled) isEvent()      {}
-func (ApplicationClosed) isEvent()       {}
-func (ThreadCreated) isEvent()           {}
-func (ThreadActivated) isEvent()         {}
-func (MessageAppended) isEvent()         {}
-func (ThreadResolutionChanged) isEvent() {}
-func (ThreadReadChanged) isEvent()       {}
+func (OperationStarted) isEvent()             {}
+func (OperationCompleted) isEvent()           {}
+func (RepositoryLoaded) isEvent()             {}
+func (TargetLoaded) isEvent()                 {}
+func (SessionRestored) isEvent()              {}
+func (FileSelected) isEvent()                 {}
+func (Progress) isEvent()                     {}
+func (OperationFailed) isEvent()              {}
+func (OperationCancelled) isEvent()           {}
+func (ApplicationClosed) isEvent()            {}
+func (ThreadCreated) isEvent()                {}
+func (ThreadActivated) isEvent()              {}
+func (MessageAppended) isEvent()              {}
+func (ThreadResolutionChanged) isEvent()      {}
+func (ThreadReadChanged) isEvent()            {}
+func (ProviderConversationAttached) isEvent() {}
+func (ProviderTurnStateChanged) isEvent()     {}
 
 func (e OperationStarted) eventMetadata() EventMetadata {
 	return EventMetadata{Revision: e.Revision, OperationID: e.OperationID, CorrelationID: e.CorrelationID, TargetGeneration: e.TargetGeneration}
@@ -291,6 +293,24 @@ func (e ThreadReadChanged) eventMetadata() EventMetadata {
 }
 
 func (e ThreadReadChanged) withRevision(revision uint64) Event {
+	e.Revision = revision
+	return e
+}
+
+func (e ProviderConversationAttached) eventMetadata() EventMetadata {
+	return EventMetadata{Revision: e.Revision, OperationID: e.OperationID, CorrelationID: e.CorrelationID}
+}
+
+func (e ProviderConversationAttached) withRevision(revision uint64) Event {
+	e.Revision = revision
+	return e
+}
+
+func (e ProviderTurnStateChanged) eventMetadata() EventMetadata {
+	return EventMetadata{Revision: e.Revision, OperationID: e.OperationID, CorrelationID: e.CorrelationID}
+}
+
+func (e ProviderTurnStateChanged) withRevision(revision uint64) Event {
 	e.Revision = revision
 	return e
 }

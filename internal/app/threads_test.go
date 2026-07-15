@@ -223,6 +223,18 @@ func (s *threadTestStore) ListMessages(_ context.Context, threadID domain.Review
 func (s *threadTestStore) ReadMessageBody(context.Context, BodyRange) (MessageBodyChunk, error) {
 	return MessageBodyChunk{}, ErrReviewStoreNotFound
 }
+func (s *threadTestStore) LoadProviderConversation(context.Context, domain.ProviderConversationID) (*ProviderConversationRecord, error) {
+	return nil, ErrReviewStoreNotFound
+}
+func (s *threadTestStore) LoadProviderConversationForThread(context.Context, domain.ReviewThreadID) (*ProviderConversationRecord, error) {
+	return nil, ErrReviewStoreNotFound
+}
+func (s *threadTestStore) LoadProviderTurn(context.Context, domain.ProviderTurnID) (*ProviderTurnRecord, error) {
+	return nil, ErrReviewStoreNotFound
+}
+func (s *threadTestStore) ListProviderTurns(context.Context, domain.ReviewThreadID) ([]ProviderTurnRecord, error) {
+	return nil, nil
+}
 
 func (s *threadTestStore) WithSessionTx(_ context.Context, guard SessionWriteGuard, fn func(ReviewStoreTx) error) (SessionWriteGuard, error) {
 	current, ok := s.guards[guard.SessionID]
@@ -269,6 +281,14 @@ func (t *threadTestTx) SaveMessage(_ context.Context, message review.Message) er
 		return errThreadTestMessageWrite
 	}
 	t.messages[message.ID] = message
+	return nil
+}
+
+func (t *threadTestTx) SaveProviderConversation(context.Context, ProviderConversationRecord) error {
+	return nil
+}
+
+func (t *threadTestTx) SaveProviderTurn(context.Context, ProviderTurnRecord) error {
 	return nil
 }
 

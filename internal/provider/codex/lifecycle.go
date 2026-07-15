@@ -209,7 +209,7 @@ func (c *Connector) connect(ctx context.Context) (*Connection, ConnectionStatus,
 	if err != nil {
 		return nil, ConnectionStatus{State: ConnectionUnavailable, Message: "provider_unavailable", Account: AccountStatus{State: AccountUnavailable}}, err
 	}
-	connection := &Connection{client: client, owner: c, status: ConnectionStatus{State: ConnectionConnecting, Account: AccountStatus{State: AccountUnknown}}}
+	connection := &Connection{client: client, owner: c, turns: make(map[provider.ProviderTurnRef]provider.ProviderConversationRef), status: ConnectionStatus{State: ConnectionConnecting, Account: AccountStatus{State: AccountUnknown}}}
 	if err := connection.registerHandlers(); err != nil {
 		_ = client.Close()
 		return nil, ConnectionStatus{State: ConnectionUnavailable, Message: "provider_unavailable", Account: AccountStatus{State: AccountUnavailable}}, err
@@ -248,8 +248,10 @@ func (c *Connector) connect(ctx context.Context) (*Connection, ConnectionStatus,
 		State:   ConnectionConnected,
 		Version: version,
 		Capabilities: provider.ProviderCapabilities{
-			AccountLogin: true,
-			RateLimits:   true,
+			AccountLogin:       true,
+			RateLimits:         true,
+			ResumeConversation: true,
+			Steering:           true,
 		},
 		Account: account,
 	}
@@ -268,6 +270,8 @@ type Connection struct {
 
 	statusMu    sync.RWMutex
 	status      ConnectionStatus
+	turnMu      sync.Mutex
+	turns       map[provider.ProviderTurnRef]provider.ProviderConversationRef
 	closeOnce   sync.Once
 	monitorOnce sync.Once
 	monitorDone chan struct{}

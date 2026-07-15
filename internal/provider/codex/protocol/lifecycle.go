@@ -76,3 +76,72 @@ type AccountUpdatedNotification struct {
 	AuthMode string `json:"authMode,omitempty"`
 	PlanType string `json:"planType,omitempty"`
 }
+
+// ThreadStartParams intentionally contains no prompt or permission content;
+// later tasks own the detailed context and policy mapping.
+type ThreadStartParams struct{}
+
+// ThreadResumeParams identifies one opaque Codex thread.
+type ThreadResumeParams struct {
+	ThreadID string `json:"threadId"`
+}
+
+// ThreadSummary is the minimum stable response shape needed for identity
+// mapping. Other thread history fields remain inside the protocol boundary.
+type ThreadSummary struct {
+	ID string `json:"id"`
+}
+
+// ThreadStartResponse is the stable response envelope.
+type ThreadStartResponse struct {
+	Thread ThreadSummary `json:"thread"`
+}
+
+// ThreadResumeResponse is the stable response envelope.
+type ThreadResumeResponse struct {
+	Thread ThreadSummary `json:"thread"`
+}
+
+// UserInput is the narrow text input form used by T029's turn mapping.
+type UserInput struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+// TurnStartParams starts one turn in one opaque Codex thread.
+type TurnStartParams struct {
+	ThreadID string      `json:"threadId"`
+	Input    []UserInput `json:"input"`
+}
+
+// TurnSummary is the minimum stable response shape needed for identity
+// mapping.
+type TurnSummary struct {
+	ID string `json:"id"`
+}
+
+// TurnStartResponse is the stable response envelope.
+type TurnStartResponse struct {
+	Turn TurnSummary `json:"turn"`
+}
+
+// TurnSteerParams supplies intentional guidance to one active turn.
+type TurnSteerParams struct {
+	ThreadID       string      `json:"threadId"`
+	ExpectedTurnID string      `json:"expectedTurnId"`
+	Input          []UserInput `json:"input"`
+}
+
+// TurnSteerResponse returns the provider's active turn identity.
+type TurnSteerResponse struct {
+	TurnID string `json:"turnId"`
+}
+
+// TurnInterruptParams identifies one active turn in one thread.
+type TurnInterruptParams struct {
+	ThreadID string `json:"threadId"`
+	TurnID   string `json:"turnId"`
+}
+
+// TurnInterruptResponse is intentionally empty in the stable schema.
+type TurnInterruptResponse struct{}

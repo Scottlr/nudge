@@ -264,6 +264,18 @@ func (s *fakeSessionStore) ListMessages(context.Context, domain.ReviewThreadID, 
 func (s *fakeSessionStore) ReadMessageBody(context.Context, BodyRange) (MessageBodyChunk, error) {
 	return MessageBodyChunk{}, ErrReviewStoreNotFound
 }
+func (s *fakeSessionStore) LoadProviderConversation(context.Context, domain.ProviderConversationID) (*ProviderConversationRecord, error) {
+	return nil, ErrReviewStoreNotFound
+}
+func (s *fakeSessionStore) LoadProviderConversationForThread(context.Context, domain.ReviewThreadID) (*ProviderConversationRecord, error) {
+	return nil, ErrReviewStoreNotFound
+}
+func (s *fakeSessionStore) LoadProviderTurn(context.Context, domain.ProviderTurnID) (*ProviderTurnRecord, error) {
+	return nil, ErrReviewStoreNotFound
+}
+func (s *fakeSessionStore) ListProviderTurns(context.Context, domain.ReviewThreadID) ([]ProviderTurnRecord, error) {
+	return nil, nil
+}
 
 func (s *fakeSessionStore) WithSessionTx(_ context.Context, guard SessionWriteGuard, fn func(ReviewStoreTx) error) (SessionWriteGuard, error) {
 	current, ok := s.guards[guard.SessionID]
@@ -297,6 +309,10 @@ func (t fakeSessionTx) SaveSession(_ context.Context, session review.ReviewSessi
 }
 func (fakeSessionTx) SaveThread(context.Context, review.ReviewThread) error { return nil }
 func (fakeSessionTx) SaveMessage(context.Context, review.Message) error     { return nil }
+func (fakeSessionTx) SaveProviderConversation(context.Context, ProviderConversationRecord) error {
+	return nil
+}
+func (fakeSessionTx) SaveProviderTurn(context.Context, ProviderTurnRecord) error { return nil }
 func (fakeSessionTx) SaveCaptureGeneration(context.Context, CaptureGeneration, CaptureManifest) error {
 	return nil
 }
