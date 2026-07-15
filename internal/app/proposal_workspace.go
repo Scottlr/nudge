@@ -85,10 +85,15 @@ type WorkspaceSourceIdentity struct {
 	Kind         string
 	ID           string
 	ManifestHash string
+	Generation   repository.TargetGeneration
+	Fingerprint  string
 }
 
 func (s WorkspaceSourceIdentity) Validate() error {
 	if s.Kind == "" || s.ID == "" || !validWorkspaceHash(s.ManifestHash) {
+		return ErrInvalidProposalWorkspaceLifecycle
+	}
+	if (s.Generation == 0) != (s.Fingerprint == "") || s.Fingerprint != "" && !validWorkspaceHash(s.Fingerprint) {
 		return ErrInvalidProposalWorkspaceLifecycle
 	}
 	return nil
