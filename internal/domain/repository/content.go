@@ -27,7 +27,7 @@ type FileContent struct {
 
 // Validate checks content identity and bounded-read metadata.
 func (c FileContent) Validate() error {
-	if c.Snapshot.Validate() != nil || c.Path.Validate() != nil || !c.Kind.valid() || c.Kind == FileKindDirectory || c.Mode == 0 || !validContentHash(c.ContentHash) {
+	if c.Snapshot.Validate() != nil || c.Path.Validate() != nil || !c.Kind.valid() || c.Kind == FileKindDirectory || ValidateGitMode(c.Mode) != nil || gitModeClassFileKind(ClassifyGitMode(c.Mode)) != c.Kind || !validContentHash(c.ContentHash) {
 		return ErrInvalidFileContent
 	}
 	if c.MetadataOnly && c.ContentClass == "" {

@@ -79,18 +79,24 @@ type ThreadBadge struct {
 
 // TreeRow is inert display metadata derived from one immutable tree entry.
 type TreeRow struct {
-	Path         repository.RepoPath
-	Name         repository.RepoPath
-	Kind         repository.FileKind
-	Depth        int
-	LazyChild    bool
-	Change       repository.ChangeKind
-	Staged       bool
-	Unstaged     bool
-	Conflict     bool
-	ThreadCount  int
-	ThreadStatus string
-	Loading      bool
+	Path           repository.RepoPath
+	Name           repository.RepoPath
+	Kind           repository.FileKind
+	ModeClass      repository.GitModeClass
+	OldKind        repository.FileKind
+	NewKind        repository.FileKind
+	OldMode        uint32
+	NewMode        uint32
+	ModeTransition *repository.ModeTransition
+	Depth          int
+	LazyChild      bool
+	Change         repository.ChangeKind
+	Staged         bool
+	Unstaged       bool
+	Conflict       bool
+	ThreadCount    int
+	ThreadStatus   string
+	Loading        bool
 }
 
 func rowFromEntry(entry repository.TreeEntry, badge ThreadBadge) TreeRow {
@@ -98,6 +104,7 @@ func rowFromEntry(entry repository.TreeEntry, badge ThreadBadge) TreeRow {
 		Path:         repository.RepoPath(entry.Path.Bytes()),
 		Name:         repository.RepoPath(entry.Name.Bytes()),
 		Kind:         entry.Kind,
+		ModeClass:    entry.ModeClass,
 		LazyChild:    entry.LazyChild,
 		ThreadCount:  maxInt(badge.Count, 0),
 		ThreadStatus: badge.Status,
@@ -107,6 +114,14 @@ func rowFromEntry(entry repository.TreeEntry, badge ThreadBadge) TreeRow {
 		row.Staged = entry.ChangedSummary.Staged
 		row.Unstaged = entry.ChangedSummary.Unstaged
 		row.Conflict = entry.ChangedSummary.Conflict != nil
+		row.OldKind = entry.ChangedSummary.OldFileKind
+		row.NewKind = entry.ChangedSummary.NewFileKind
+		row.OldMode = entry.ChangedSummary.OldMode
+		row.NewMode = entry.ChangedSummary.NewMode
+		if entry.ChangedSummary.ModeTransition != nil {
+			transition := *entry.ChangedSummary.ModeTransition
+			row.ModeTransition = &transition
+		}
 	}
 	return row
 }

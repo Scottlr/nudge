@@ -105,6 +105,47 @@ func TestResolveCapabilityRequiresExactEvidenceAndCurrentQualification(t *testin
 	}
 }
 
+func TestResolveCapabilityGatesModeTransitionsByCurrentEvidence(t *testing.T) {
+	t.Parallel()
+
+	policy := NewCapabilityPolicyV1()
+	request := qualifiedRequest(policy, repository.FileKindRegular, repository.ChangeModified, PathClassNormal, IndexClean)
+	transition, err := repository.NewModeTransition(0o100644, 0o100755)
+	if err != nil {
+		t.Fatalf("NewModeTransition() error = %v", err)
+	}
+	request.ModeTransition = &transition
+
+	blocked, err := ResolveCapability(policy, request)
+	if err != nil {
+		t.Fatalf("ResolveCapability() error = %v", err)
+	}
+	if blocked.Propose || blocked.Apply || blocked.ReasonsByAxis[CapabilityApply][0].Code != ReasonExecutableModeUnrepresentable {
+		t.Fatalf("mode transition without evidence = %+v", blocked)
+	}
+
+	request.Current.Mode = &ModeCapabilityEvidence{
+		Version:              ModeCapabilityEvidenceVersion,
+		Transition:           transition,
+		GenericTransition:    true,
+		OldEndpointSupported: true,
+		NewEndpointSupported: true,
+		PlatformSupported:    true,
+		CoreFilemode:         true,
+		ModeRepresentable:    true,
+		ModeReadbackVerified: true,
+		ContentUnchanged:     true,
+		IndexUnchanged:       true,
+	}
+	qualified, err := ResolveCapability(policy, request)
+	if err != nil {
+		t.Fatalf("ResolveCapability() with mode evidence error = %v", err)
+	}
+	if !qualified.Propose || !qualified.Apply {
+		t.Fatalf("qualified mode transition = %+v", qualified)
+	}
+}
+
 func TestCaptureEvaluationAndDiscussionAvailability(t *testing.T) {
 	t.Parallel()
 

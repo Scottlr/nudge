@@ -94,6 +94,9 @@ func (e ResultSnapshotEntry) Validate() error {
 	if pathErr != nil || e.Reason.Validate() != nil || e.NativePath != nil && (e.NativePath.Validate() != nil || e.NativePath.RepoPathKey != path.Key()) {
 		return ErrInvalidResultSnapshot
 	}
+	if e.Kind != repository.FileKindUnknown && (repository.ValidateGitMode(e.Mode) != nil || resultModeKind(e.Mode) != e.Kind) {
+		return ErrInvalidResultSnapshot
+	}
 	switch e.Kind {
 	case repository.FileKindDirectory:
 		if e.Mode == 0 || e.Bytes != 0 || e.SHA256 != "" || len(e.LinkTarget) != 0 || !validResultHash(e.NativeIdentityHash) || e.NativeAlias != nil {
@@ -121,6 +124,19 @@ func (e ResultSnapshotEntry) Validate() error {
 		return ErrInvalidResultSnapshot
 	}
 	return nil
+}
+
+func resultModeKind(mode uint32) repository.FileKind {
+	switch repository.ClassifyGitMode(mode) {
+	case repository.ModeRegularNonExecutable, repository.ModeRegularExecutable:
+		return repository.FileKindRegular
+	case repository.ModeSymlink:
+		return repository.FileKindSymlink
+	case repository.ModeTree:
+		return repository.FileKindDirectory
+	default:
+		return repository.FileKindUnknown
+	}
 }
 
 // ResultManifest is the independently hashed enumeration of the complete
@@ -223,13 +239,14 @@ func (c ResultRenameCandidate) Validate() error {
 
 // ResultDeltaEntry records every raw path present on either side.
 type ResultDeltaEntry struct {
-	Path       repository.RepoPath     `json:"path"`
-	Baseline   *WorkspaceManifestEntry `json:"baseline,omitempty"`
-	Result     *ResultSnapshotEntry    `json:"result,omitempty"`
-	Kinds      []ResultDeltaKind       `json:"kinds"`
-	Complete   bool                    `json:"complete"`
-	Reason     ResultSnapshotReason    `json:"reason"`
-	Candidates []ResultRenameCandidate `json:"candidates,omitempty"`
+	Path           repository.RepoPath        `json:"path"`
+	Baseline       *WorkspaceManifestEntry    `json:"baseline,omitempty"`
+	Result         *ResultSnapshotEntry       `json:"result,omitempty"`
+	ModeTransition *repository.ModeTransition `json:"mode_transition,omitempty"`
+	Kinds          []ResultDeltaKind          `json:"kinds"`
+	Complete       bool                       `json:"complete"`
+	Reason         ResultSnapshotReason       `json:"reason"`
+	Candidates     []ResultRenameCandidate    `json:"candidates,omitempty"`
 }
 
 func (e ResultDeltaEntry) Validate() error {
@@ -242,6 +259,13 @@ func (e ResultDeltaEntry) Validate() error {
 		}
 	}
 	if e.Baseline != nil && e.Baseline.Validate() != nil || e.Result != nil && e.Result.Validate() != nil {
+		return ErrInvalidResultSnapshot
+	}
+	if e.ModeTransition != nil {
+		if e.Baseline == nil || e.Result == nil || e.ModeTransition.Validate() != nil || e.ModeTransition.OldMode != e.Baseline.Mode || e.ModeTransition.NewMode != e.Result.Mode {
+			return ErrInvalidResultSnapshot
+		}
+	} else if e.Baseline != nil && e.Result != nil && (e.Baseline.Mode != e.Result.Mode || e.Baseline.Kind != e.Result.Kind) {
 		return ErrInvalidResultSnapshot
 	}
 	for _, candidate := range e.Candidates {
@@ -296,6 +320,13 @@ func CompareResultManifest(baseline WorkspaceManifest, result ResultManifest) (R
 		baseEntry, hasBase := base[key]
 		resultEntry, hasResult := observed[key]
 		entry := ResultDeltaEntry{Path: repository.RepoPath([]byte(string(key))), Complete: result.Complete}
+		if hasBase && hasResult && (baseEntry.Mode != resultEntry.Mode || baseEntry.Kind != resultEntry.Kind) {
+			transition, transitionErr := repository.NewModeTransition(baseEntry.Mode, resultEntry.Mode)
+			if transitionErr != nil {
+				return ResultDelta{}, ErrInvalidResultSnapshot
+			}
+			entry.ModeTransition = &transition
+		}
 		if hasBase {
 			value := baseEntry
 			value.Path = append([]byte(nil), baseEntry.Path...)
@@ -622,6 +653,10 @@ func cloneDeltaEntries(entries []ResultDeltaEntry) []ResultDeltaEntry {
 	for index, entry := range entries {
 		copyEntries[index] = entry
 		copyEntries[index].Path = append([]byte(nil), entry.Path...)
+		if entry.ModeTransition != nil {
+			transition := *entry.ModeTransition
+			copyEntries[index].ModeTransition = &transition
+		}
 		if entry.Baseline != nil {
 			base := *entry.Baseline
 			base.Path = append([]byte(nil), base.Path...)
@@ -691,6 +726,16 @@ func resultDeltaHash(delta ResultDelta) string {
 			writeResultTextSemanticsHash(h, entry.Baseline.TextSemantics)
 			writeResultHashBytes(h, entry.Baseline.LinkTarget)
 			writeResultNativePathHash(h, entry.Baseline.NativePath)
+		}
+		if entry.ModeTransition == nil {
+			writeResultHashBool(h, false)
+		} else {
+			writeResultHashBool(h, true)
+			writeResultHashString(h, string(entry.ModeTransition.OldClass))
+			writeResultHashString(h, string(entry.ModeTransition.NewClass))
+			writeResultHashString(h, string(entry.ModeTransition.Kind))
+			writeResultHashString(h, entry.ModeTransition.EvidenceHash)
+			writeResultHashString(h, entry.ModeTransition.PolicyVersion)
 		}
 		if entry.Result == nil {
 			writeResultHashBool(h, false)

@@ -875,6 +875,10 @@ func cloneChangedFile(value repository.ChangedFile) repository.ChangedFile {
 		semantics := *value.NewTextSemantics
 		value.NewTextSemantics = &semantics
 	}
+	if value.ModeTransition != nil {
+		transition := *value.ModeTransition
+		value.ModeTransition = &transition
+	}
 	return value
 }
 

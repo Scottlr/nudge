@@ -123,7 +123,13 @@ func rowBadge(row TreeRow) string {
 		case row.Unstaged:
 			stage = ",unstaged"
 		}
-		return "[" + string(row.Change) + stage + "]"
+		badge := "[" + string(row.Change) + stage + "]"
+		if row.ModeTransition != nil {
+			badge += " " + modeTransitionBadge(*row.ModeTransition)
+		} else if row.OldKind != "" && row.NewKind != "" && row.OldKind != row.NewKind {
+			badge += fmt.Sprintf(" [type:%s->%s]", row.OldKind, row.NewKind)
+		}
+		return badge
 	}
 	if row.ThreadCount > 0 {
 		status := presentation.ProjectTerminalText(row.ThreadStatus, presentation.TerminalTextScalar)
@@ -133,6 +139,19 @@ func rowBadge(row TreeRow) string {
 		return fmt.Sprintf("[threads:%d]", row.ThreadCount)
 	}
 	return ""
+}
+
+func modeTransitionBadge(transition repository.ModeTransition) string {
+	switch transition.Kind {
+	case repository.ModeExecutableOn:
+		return "[mode:executable on]"
+	case repository.ModeExecutableOff:
+		return "[mode:executable off]"
+	case repository.ModeTypeChanged:
+		return fmt.Sprintf("[type:%s->%s]", transition.OldClass, transition.NewClass)
+	default:
+		return ""
+	}
 }
 
 func (m *Model) rowStyle(row TreeRow) lipgloss.Style {

@@ -43,7 +43,7 @@ type IndexStage struct {
 }
 
 func (s IndexStage) validate() error {
-	if s.Mode == 0 || validatePresentObjectID(s.ObjectID) != nil {
+	if ValidateGitMode(s.Mode) != nil || validatePresentObjectID(s.ObjectID) != nil {
 		return ErrInvalidConflictEvidence
 	}
 	return nil
@@ -88,6 +88,7 @@ type ChangedFile struct {
 	NewMode          uint32
 	OldObjectID      *ObjectID
 	NewObjectID      *ObjectID
+	ModeTransition   *ModeTransition
 	ContentClass     ContentClassV1
 	OldTextSemantics *TextByteSemantics
 	NewTextSemantics *TextByteSemantics
@@ -108,6 +109,16 @@ func (f ChangedFile) Validate() error {
 	}
 	if err := validateChangeSide(f.NewPath, f.NewFileKind, f.NewMode, f.NewObjectID); err != nil {
 		return err
+	}
+	if f.ModeTransition != nil {
+		if f.OldPath == nil || f.NewPath == nil || f.ModeTransition.Validate() != nil || f.ModeTransition.OldMode != f.OldMode || f.ModeTransition.NewMode != f.NewMode {
+			return ErrInvalidChangedFile
+		}
+		if f.ModeTransition.Kind == ModeTypeChanged && f.Kind != ChangeTypeChanged {
+			return ErrInvalidChangedFile
+		}
+	} else if f.OldPath != nil && f.NewPath != nil && (f.OldMode != f.NewMode || f.OldFileKind != f.NewFileKind) {
+		return ErrInvalidChangedFile
 	}
 
 	oldPresent := f.OldPath != nil
@@ -130,7 +141,7 @@ func (f ChangedFile) Validate() error {
 			return ErrInvalidChangedFile
 		}
 	case ChangeTypeChanged:
-		if !oldPresent || !newPresent || f.OldFileKind == f.NewFileKind {
+		if !oldPresent || !newPresent || f.OldFileKind == f.NewFileKind || f.ModeTransition == nil || f.ModeTransition.Kind != ModeTypeChanged {
 			return ErrInvalidChangedFile
 		}
 	case ChangeUntracked:
@@ -170,10 +181,28 @@ func validateChangeSide(path *RepoPath, kind FileKind, mode uint32, objectID *Ob
 	if kind != FileKindUnknown && mode == 0 {
 		return ErrInvalidChangedFile
 	}
+	if kind != FileKindUnknown && ValidateGitMode(mode) != nil || kind != FileKindUnknown && gitModeClassFileKind(ClassifyGitMode(mode)) != kind {
+		return ErrInvalidChangedFile
+	}
 	if objectID != nil && validatePresentObjectID(*objectID) != nil {
 		return ErrInvalidChangedFile
 	}
 	return nil
+}
+
+func gitModeClassFileKind(class GitModeClass) FileKind {
+	switch class {
+	case ModeRegularNonExecutable, ModeRegularExecutable:
+		return FileKindRegular
+	case ModeSymlink:
+		return FileKindSymlink
+	case ModeGitlink:
+		return FileKindGitlink
+	case ModeTree:
+		return FileKindDirectory
+	default:
+		return FileKindUnknown
+	}
 }
 
 func validatePresentObjectID(id ObjectID) error {

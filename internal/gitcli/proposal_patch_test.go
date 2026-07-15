@@ -38,10 +38,10 @@ func TestProposalPatchGeneratorAndArtifactIndex(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(resultRoot, "binary.dat"), []byte{0, 1, 2, 255}, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	baseEntry := testPatchWorkspaceEntry(t, "main.go", []byte("before\n"), 0o100600)
+	baseEntry := testPatchWorkspaceEntry(t, "main.go", []byte("before\n"), 0o100644)
 	resultEntries := []app.ResultSnapshotEntry{
-		{Path: []byte("main.go"), Kind: repository.FileKindRegular, Mode: 0o100600, Bytes: 6, SHA256: testPatchHash([]byte("after\n")), NativeIdentityHash: strings.Repeat("a", 64), Complete: true},
-		{Path: []byte("binary.dat"), Kind: repository.FileKindRegular, Mode: 0o100600, Bytes: 4, SHA256: testPatchHash([]byte{0, 1, 2, 255}), ContentClass: repository.ContentClassRegularBinary, NativeIdentityHash: strings.Repeat("b", 64), Complete: true},
+		{Path: []byte("main.go"), Kind: repository.FileKindRegular, Mode: 0o100644, Bytes: 6, SHA256: testPatchHash([]byte("after\n")), NativeIdentityHash: strings.Repeat("a", 64), Complete: true},
+		{Path: []byte("binary.dat"), Kind: repository.FileKindRegular, Mode: 0o100644, Bytes: 4, SHA256: testPatchHash([]byte{0, 1, 2, 255}), ContentClass: repository.ContentClassRegularBinary, NativeIdentityHash: strings.Repeat("b", 64), Complete: true},
 	}
 	baseline, err := app.NewWorkspaceManifest([]app.WorkspaceManifestEntry{baseEntry})
 	if err != nil {

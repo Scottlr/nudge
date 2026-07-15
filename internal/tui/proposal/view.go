@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Scottlr/nudge/internal/domain/repository"
 	"github.com/Scottlr/nudge/internal/domain/review"
 	"github.com/Scottlr/nudge/internal/presentation"
 	"github.com/Scottlr/nudge/internal/theme"
@@ -130,6 +131,11 @@ func (m *Model) renderEntry(entry Entry) string {
 		role = theme.RoleWarning
 	}
 	label := m.entryTitle(entry)
+	if entry.ModeTransition != nil {
+		label += " " + modeTransitionLabel(*entry.ModeTransition)
+	} else if entry.OldKind != "" && entry.NewKind != "" && entry.OldKind != entry.NewKind {
+		label += fmt.Sprintf(" [type:%s->%s]", entry.OldKind, entry.NewKind)
+	}
 	if entry.Binary {
 		label += " [binary]"
 	}
@@ -137,6 +143,19 @@ func (m *Model) renderEntry(entry Entry) string {
 		label += " [unsupported]"
 	}
 	return m.styled(role, fmt.Sprintf("%s %3d  %-10s %s", marker, entry.Ordinal+1, entryKind(entry), ansi.Truncate(label, maxInt(m.width-24, 16), m.theme.Glyph(theme.GlyphEllipsis))))
+}
+
+func modeTransitionLabel(transition repository.ModeTransition) string {
+	switch transition.Kind {
+	case repository.ModeExecutableOn:
+		return "[mode:executable on]"
+	case repository.ModeExecutableOff:
+		return "[mode:executable off]"
+	case repository.ModeTypeChanged:
+		return fmt.Sprintf("[type:%s->%s]", transition.OldClass, transition.NewClass)
+	default:
+		return ""
+	}
 }
 
 func (m *Model) renderRange(entry Entry) string {

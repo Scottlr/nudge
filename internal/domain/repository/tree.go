@@ -106,6 +106,7 @@ type TreeEntry struct {
 	Parent         RepoPath
 	Kind           FileKind
 	Mode           uint32
+	ModeClass      GitModeClass
 	ObjectID       *ObjectID
 	LazyChild      bool
 	ChangedSummary *ChangedFile
@@ -133,7 +134,7 @@ func (e TreeEntry) Validate() error {
 	if !bytes.Equal(expected, e.Path) {
 		return ErrInvalidTreeEntry
 	}
-	if !e.Kind.valid() || (e.Kind == FileKindUnknown && e.Mode != 0) || (e.Kind != FileKindUnknown && e.Mode == 0) {
+	if !e.Kind.valid() || (e.Kind == FileKindUnknown && e.Mode != 0) || (e.Kind != FileKindUnknown && ValidateGitMode(e.Mode) != nil) || e.Kind != FileKindUnknown && gitModeClassFileKind(ClassifyGitMode(e.Mode)) != e.Kind || e.ModeClass != "" && (e.ModeClass.Validate() != nil || e.ModeClass != ClassifyGitMode(e.Mode)) {
 		return ErrInvalidTreeEntry
 	}
 	if e.LazyChild && e.Kind != FileKindDirectory {

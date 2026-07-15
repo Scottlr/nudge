@@ -41,6 +41,7 @@ type TargetSummary struct {
 type TreeEntrySummary struct {
 	Path      repository.RepoPath
 	Kind      repository.FileKind
+	ModeClass repository.GitModeClass
 	Changed   bool
 	LazyChild bool
 }
@@ -53,10 +54,15 @@ type TreeProjection struct {
 
 // ChangedFileSummary is the frontend-neutral summary of one changed path.
 type ChangedFileSummary struct {
-	OldPath repository.RepoPath
-	NewPath repository.RepoPath
-	Kind    repository.ChangeKind
-	Binary  bool
+	OldPath        repository.RepoPath
+	NewPath        repository.RepoPath
+	Kind           repository.ChangeKind
+	OldKind        repository.FileKind
+	NewKind        repository.FileKind
+	OldMode        uint32
+	NewMode        uint32
+	ModeTransition *repository.ModeTransition
+	Binary         bool
 }
 
 // ThreadSummary reserves the stable client projection for the thread slices.
@@ -272,6 +278,10 @@ func cloneChangedFileSummaries(values []ChangedFileSummary) []ChangedFileSummary
 		copyValues[i] = value
 		copyValues[i].OldPath = repository.RepoPath(value.OldPath.Bytes())
 		copyValues[i].NewPath = repository.RepoPath(value.NewPath.Bytes())
+		if value.ModeTransition != nil {
+			transition := *value.ModeTransition
+			copyValues[i].ModeTransition = &transition
+		}
 	}
 	return copyValues
 }

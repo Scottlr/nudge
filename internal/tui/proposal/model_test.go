@@ -60,6 +60,25 @@ func TestReviewRequiresExactEvidenceBeforeApprove(t *testing.T) {
 	}
 }
 
+func TestModeTransitionLabelExposesExecutableAndTypeChanges(t *testing.T) {
+	t.Parallel()
+
+	on, err := repository.NewModeTransition(0o100644, 0o100755)
+	if err != nil {
+		t.Fatalf("executable transition: %v", err)
+	}
+	if got := modeTransitionLabel(on); got != "[mode:executable on]" {
+		t.Fatalf("executable label = %q", got)
+	}
+	typeChange, err := repository.NewModeTransition(0o100644, 0o120000)
+	if err != nil {
+		t.Fatalf("type transition: %v", err)
+	}
+	if got := modeTransitionLabel(typeChange); got != "[type:regular_non_executable->symlink]" {
+		t.Fatalf("type label = %q", got)
+	}
+}
+
 func TestProposalIdentityAndStatusChangesInvalidateReviewState(t *testing.T) {
 	model := NewModel()
 	projection := proposalProjection()

@@ -212,7 +212,7 @@ func enumerateResultRoot(ctx context.Context, root string, policy app.ResourcePo
 				reason = firstFreezeReason(reason, app.ResultReasonNativeIdentity)
 				return filepath.SkipDir
 			}
-			entries = append(entries, app.ResultSnapshotEntry{Path: rawPath.Bytes(), Kind: repository.FileKindDirectory, Mode: 0o40000 | uint32(info.Mode().Perm()), NativeIdentityHash: hashNativeIdentity(identity), Complete: true})
+			entries = append(entries, app.ResultSnapshotEntry{Path: rawPath.Bytes(), Kind: repository.FileKindDirectory, Mode: 0o40000, NativeIdentityHash: hashNativeIdentity(identity), Complete: true})
 		case info.Mode()&os.ModeSymlink != 0:
 			target, readErr := os.Readlink(path)
 			if readErr != nil {
@@ -341,7 +341,7 @@ func scanResultFile(ctx context.Context, root, nativePath string, rawPath reposi
 		}
 		textSemantics = &semantics
 	}
-	entry := app.ResultSnapshotEntry{Path: rawPath.Bytes(), Kind: repository.FileKindRegular, Mode: 0o100000 | uint32(initial.Mode().Perm()), Bytes: size, SHA256: hex.EncodeToString(hash.Sum(nil)), ContentClass: contentClass, TextSemantics: textSemantics, NativeIdentityHash: identity.FileIdentityHash, NativeAlias: &identity, Complete: true}
+	entry := app.ResultSnapshotEntry{Path: rawPath.Bytes(), Kind: repository.FileKindRegular, Mode: snapshotLogicalMode(repository.FileKindRegular, uint32(initial.Mode().Perm())), Bytes: size, SHA256: hex.EncodeToString(hash.Sum(nil)), ContentClass: contentClass, TextSemantics: textSemantics, NativeIdentityHash: identity.FileIdentityHash, NativeAlias: &identity, Complete: true}
 	if nativeResolver != nil {
 		token, evidence, resolveErr := nativeResolver.Resolve(ctx, verifiedRoot, rawPath, repository.NativeReadExisting)
 		if resolveErr != nil {
