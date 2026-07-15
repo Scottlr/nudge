@@ -122,10 +122,22 @@ func parseRawDiff(data []byte) ([]repository.ChangedFile, error) {
 			continue
 		}
 		separator := bytes.IndexByte(record, '\t')
-		if separator <= 0 || separator == len(record)-1 {
+		if separator == 0 {
 			return nil, malformedTree("raw diff record")
 		}
-		fields := strings.Fields(string(record[:separator]))
+		header := record
+		var oldPathBytes []byte
+		if separator > 0 {
+			header = record[:separator]
+			oldPathBytes = record[separator+1:]
+		} else {
+			if index+1 >= len(parts) || len(parts[index+1]) == 0 {
+				return nil, malformedTree("raw diff path")
+			}
+			oldPathBytes = parts[index+1]
+			index++
+		}
+		fields := strings.Fields(string(header))
 		if len(fields) != 5 || len(fields[0]) < 2 {
 			return nil, malformedTree("raw diff header")
 		}
@@ -149,7 +161,7 @@ func parseRawDiff(data []byte) ([]repository.ChangedFile, error) {
 		if status == "" {
 			return nil, malformedTree("empty raw diff status")
 		}
-		oldPathValue, err := repository.NewRepoPath(record[separator+1:])
+		oldPathValue, err := repository.NewRepoPath(oldPathBytes)
 		if err != nil {
 			return nil, malformedTree("raw diff path")
 		}

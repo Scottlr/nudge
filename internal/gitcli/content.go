@@ -143,6 +143,33 @@ func (l *GitContentLoader) LoadDiff(ctx context.Context, captureID domain.Captur
 	return repository.FileDiff{}, ErrContentNotFound
 }
 
+// LoadTargetDiff parses a complete immutable object-to-object diff and
+// returns the requested file section. The current worktree and index are not
+// consulted.
+func (l *GitContentLoader) LoadTargetDiff(ctx context.Context, target repository.ResolvedTarget, file repository.ChangedFile) (repository.FileDiff, error) {
+	if l == nil || ctx == nil || target.Validate() != nil || target.Spec.Kind == repository.TargetLocal || file.Validate() != nil || target.Base.ObjectID == "" || target.Head.ObjectID == "" {
+		return repository.FileDiff{}, ErrInvalidContentLoader
+	}
+	result, err := l.builder.Run(ctx, "diff", "--no-ext-diff", "--no-textconv", "--binary", "--full-index", "--find-renames", string(target.Base.ObjectID), string(target.Head.ObjectID), "--")
+	if err != nil {
+		return repository.FileDiff{}, err
+	}
+	files, err := diff.ParsePatch(result.Stdout)
+	if err != nil {
+		return repository.FileDiff{}, err
+	}
+	for _, value := range files {
+		if changedFileMatches(value.File, file) || changedFilePathsMatch(value.File, file) {
+			return value, nil
+		}
+	}
+	return repository.FileDiff{}, ErrContentNotFound
+}
+
+func changedFilePathsMatch(left, right repository.ChangedFile) bool {
+	return sameRepoPath(left.OldPath, right.OldPath) && sameRepoPath(left.NewPath, right.NewPath)
+}
+
 func (l *GitContentLoader) captureManifest(ctx context.Context, captureID domain.CaptureID) (app.CaptureManifest, error) {
 	if l.manifests == nil {
 		return app.CaptureManifest{}, ErrInvalidContentLoader

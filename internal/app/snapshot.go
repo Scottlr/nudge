@@ -20,12 +20,20 @@ type RepositorySummary struct {
 
 // TargetSummary is the bounded target projection exposed to clients.
 type TargetSummary struct {
-	Present         bool
-	Spec            repository.ReviewTargetSpec
-	Generation      repository.TargetGeneration
-	Editable        bool
-	EditDestination *domain.WorktreeID
-	Fingerprint     string
+	Present          bool
+	Spec             repository.ReviewTargetSpec
+	Generation       repository.TargetGeneration
+	Editable         bool
+	EditDestination  *domain.WorktreeID
+	Fingerprint      string
+	DirtyWorktree    bool
+	NoFetchWarning   bool
+	BaseBranchSource string
+	BranchRef        string
+	BaseBranchRef    string
+	BaseObjectID     repository.ObjectID
+	MergeBase        repository.ObjectID
+	HeadObjectID     repository.ObjectID
 }
 
 // TreeEntrySummary is metadata for one visible repository tree entry.
@@ -173,12 +181,20 @@ func snapshotFromState(state State) AppSnapshot {
 
 	if state.Target != nil {
 		snapshot.Target = TargetSummary{
-			Present:         true,
-			Spec:            state.Target.Spec,
-			Generation:      state.Target.Generation,
-			Editable:        state.Target.Editable,
-			EditDestination: cloneWorktreeID(state.Target.EditDestination),
-			Fingerprint:     state.Target.Fingerprint,
+			Present:          true,
+			Spec:             state.Target.Spec,
+			Generation:       state.Target.Generation,
+			Editable:         state.Target.Editable,
+			EditDestination:  cloneWorktreeID(state.Target.EditDestination),
+			Fingerprint:      state.Target.Fingerprint,
+			DirtyWorktree:    state.Target.DirtyWorktree,
+			NoFetchWarning:   state.Target.NoFetchWarning,
+			BaseBranchSource: string(state.Target.BaseBranchSource),
+			BranchRef:        state.Target.BranchRef,
+			BaseBranchRef:    state.Target.BaseBranchRef,
+			BaseObjectID:     state.Target.ResolvedBaseRef,
+			MergeBase:        state.Target.MergeBase,
+			HeadObjectID:     state.Target.ResolvedCommit,
 		}
 	}
 	if state.ActiveThreadDetail != nil {

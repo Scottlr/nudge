@@ -25,6 +25,21 @@ func TestRootCommandShowsHelp(t *testing.T) {
 	if command.Flags().Lookup("theme") == nil || !strings.Contains(output.String(), "--theme") {
 		t.Fatalf("root output does not expose --theme: %q", output.String())
 	}
+	for _, flag := range []string{"local", "commit", "branch"} {
+		if command.Flags().Lookup(flag) == nil || !strings.Contains(output.String(), "--"+flag) {
+			t.Fatalf("root output does not expose --%s: %q", flag, output.String())
+		}
+	}
+}
+
+func TestRootCommandRejectsTargetFlagCombinationsBeforeRun(t *testing.T) {
+	for _, args := range [][]string{{"--local", "--branch", "main"}, {"--commit", "HEAD", "--branch", "main"}, {"--branch"}} {
+		command := NewRootCommand(BuildInfo{})
+		command.SetArgs(args)
+		if err := command.Execute(); err == nil {
+			t.Fatalf("args %#v unexpectedly succeeded", args)
+		}
+	}
 }
 
 func TestVersionCommandUsesInjectedBuildInfo(t *testing.T) {

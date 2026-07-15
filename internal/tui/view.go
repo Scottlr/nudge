@@ -160,8 +160,10 @@ func (m *Model) statusBar(rect Rect) string {
 		phase = localPhaseLabel(m.localReview.Phase)
 	}
 	target := "no target"
-	if m.localReview.Target != nil || m.snapshot.Target.Present {
-		target = "HEAD -> working tree"
+	if m.localReview.Target != nil {
+		target = targetStatusLabel(*m.localReview.Target)
+	} else if m.snapshot.Target.Present {
+		target = targetSummaryStatusLabel(m.snapshot.Target)
 	}
 	changed := len(m.localReview.ChangedFiles)
 	provider := string(m.snapshot.Provider.Connection)
@@ -179,6 +181,59 @@ func (m *Model) statusBar(rect Rect) string {
 	status := fmt.Sprintf("%s | %s | %s | %s | changed %d | focus %s | Codex %s | theme %s | %s%s", repositoryName, branch, target, phase, changed, m.focus, provider, themeStatus, hints, m.statusError())
 	style, _ := m.theme.StyleFor(theme.RoleMuted)
 	return style.Lipgloss().Width(rect.Width).Height(rect.Height).MaxWidth(rect.Width).MaxHeight(rect.Height).Render(ansi.Truncate(safeText(status), rect.Width, ""))
+}
+
+func targetStatusLabel(target repository.ResolvedTarget) string {
+	if target.Spec.Kind != repository.TargetBranch {
+		return "HEAD -> working tree"
+	}
+	value := "branch " + safeText(target.Spec.BaseBranch)
+	if target.BaseBranchRef != "" {
+		value += " [" + safeText(target.BaseBranchRef) + "]"
+	}
+	if target.BaseBranchSource != "" {
+		value += " via " + safeText(target.BaseBranchSource)
+	}
+	value += " " + shortObjectID(target.ResolvedBaseRef) + "/" + shortObjectID(target.MergeBase) + "/" + shortObjectID(target.ResolvedCommit)
+	if target.DirtyWorktree {
+		value += " dirty"
+	}
+	if target.NoFetchWarning {
+		value += " local refs/no fetch"
+	}
+	return value
+}
+
+func targetSummaryStatusLabel(target app.TargetSummary) string {
+	if target.Spec.Kind != repository.TargetBranch {
+		return "HEAD -> working tree"
+	}
+	value := "branch " + safeText(target.Spec.BaseBranch)
+	if target.BaseBranchRef != "" {
+		value += " [" + safeText(target.BaseBranchRef) + "]"
+	}
+	if target.BaseBranchSource != "" {
+		value += " via " + safeText(target.BaseBranchSource)
+	}
+	value += " " + shortObjectID(target.BaseObjectID) + "/" + shortObjectID(target.MergeBase) + "/" + shortObjectID(target.HeadObjectID)
+	if target.DirtyWorktree {
+		value += " dirty"
+	}
+	if target.NoFetchWarning {
+		value += " local refs/no fetch"
+	}
+	return value
+}
+
+func shortObjectID(value repository.ObjectID) string {
+	if value == "" {
+		return "-"
+	}
+	value = repository.ObjectID(safeText(string(value)))
+	if len(value) > 12 {
+		return string(value[:12])
+	}
+	return string(value)
 }
 
 func (m *Model) syncCommandHints() {

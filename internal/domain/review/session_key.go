@@ -11,11 +11,12 @@ import (
 // restoring an unfinished review session. It is derived from verified
 // repository/worktree and target evidence, never from a display path.
 type SessionKey struct {
-	RepositoryID domain.RepositoryID
-	WorktreeID   domain.WorktreeID
-	TargetKind   repository.TargetKind
-	FrozenCommit repository.ObjectID
-	BaseIdentity string
+	RepositoryID   domain.RepositoryID
+	WorktreeID     domain.WorktreeID
+	TargetKind     repository.TargetKind
+	FrozenCommit   repository.ObjectID
+	BaseIdentity   string
+	BranchIdentity string
 }
 
 // NewSessionKey validates and returns a compatibility key.
@@ -34,15 +35,15 @@ func (k SessionKey) Validate() error {
 	}
 	switch k.TargetKind {
 	case repository.TargetLocal:
-		if k.WorktreeID == "" || k.FrozenCommit != "" {
+		if k.WorktreeID == "" || k.FrozenCommit != "" || k.BranchIdentity != "" {
 			return ErrInvalidReviewSession
 		}
 	case repository.TargetCommit:
-		if k.FrozenCommit == "" || k.WorktreeID != "" {
+		if k.FrozenCommit == "" || k.WorktreeID != "" || k.BranchIdentity != "" {
 			return ErrInvalidReviewSession
 		}
 	case repository.TargetBranch:
-		if k.WorktreeID == "" || k.FrozenCommit == "" {
+		if k.WorktreeID == "" || k.FrozenCommit == "" || k.BranchIdentity == "" || !validMetadata(k.BranchIdentity) {
 			return ErrInvalidReviewSession
 		}
 	default:
@@ -63,7 +64,19 @@ func SessionKeyFor(session ReviewSession) (SessionKey, error) {
 	} else if session.Target.Head.Kind == repository.SnapshotWorkingTree {
 		worktreeID = session.Target.Head.WorktreeID
 	}
-	base, err := json.Marshal(session.Target.Base)
+	baseValue := any(session.Target.Base)
+	if session.TargetSpec.Kind == repository.TargetBranch {
+		baseValue = struct {
+			Base            repository.SnapshotRef
+			ResolvedBaseRef repository.ObjectID
+			MergeBase       repository.ObjectID
+		}{
+			Base:            session.Target.Base,
+			ResolvedBaseRef: session.Target.ResolvedBaseRef,
+			MergeBase:       session.Target.MergeBase,
+		}
+	}
+	base, err := json.Marshal(baseValue)
 	if err != nil {
 		return SessionKey{}, err
 	}
@@ -73,6 +86,9 @@ func SessionKeyFor(session ReviewSession) (SessionKey, error) {
 		TargetKind:   session.TargetSpec.Kind,
 		FrozenCommit: session.Target.ResolvedCommit,
 		BaseIdentity: string(base),
+	}
+	if session.TargetSpec.Kind == repository.TargetBranch {
+		key.BranchIdentity = session.Target.BranchRef
 	}
 	return NewSessionKey(key)
 }

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Scottlr/nudge/internal/domain/repository"
 	"github.com/Scottlr/nudge/internal/process"
 )
 
@@ -64,15 +65,24 @@ const (
 	ErrorNativeIdentityUnavailable ErrorCode = "repository_identity_unavailable"
 	ErrorObjectUnavailableNoFetch  ErrorCode = "object_unavailable_no_fetch"
 	ErrorOutputLimit               ErrorCode = "git_output_limit"
+	ErrorBranchDetached            ErrorCode = "git_branch_target_detached"
+	ErrorHeadUnavailable           ErrorCode = "git_head_unavailable"
+	ErrorBaseUnavailable           ErrorCode = "git_base_unavailable"
+	ErrorBaseDiscoveryUnavailable  ErrorCode = "git_base_discovery_unavailable"
+	ErrorMergeBaseMissing          ErrorCode = "git_merge_base_missing"
+	ErrorMergeBaseAmbiguous        ErrorCode = "git_merge_base_ambiguous"
+	ErrorMergeBaseLimit            ErrorCode = "git_merge_base_limit"
+	ErrorMergeBaseSelectionInvalid ErrorCode = "git_merge_base_selection_invalid"
 )
 
 // GitError exposes only a stable safe code. Stderr and the process cause stay
 // private for diagnostics and are never included in Error's text.
 type GitError struct {
-	Code     ErrorCode
-	ExitCode int
-	Stderr   string
-	Cause    error
+	Code       ErrorCode
+	ExitCode   int
+	Stderr     string
+	Candidates []repository.ObjectID
+	Cause      error
 }
 
 func (e *GitError) Error() string {

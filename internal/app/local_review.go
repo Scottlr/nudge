@@ -52,6 +52,7 @@ type LocalReviewConfig struct {
 	Persistence         PersistenceMode
 	Sessions            *SessionManager
 	PersistenceDegraded bool
+	Branch              *BranchReviewConfig
 }
 
 // LocalReviewSnapshot is a bounded immutable projection of local-review
@@ -139,6 +140,7 @@ type LocalReview struct {
 	persistence         PersistenceMode
 	sessions            *SessionManager
 	persistenceDegraded bool
+	branch              *BranchReviewConfig
 
 	mu      sync.Mutex
 	started bool
@@ -162,9 +164,14 @@ func NewLocalReview(config LocalReviewConfig) (*LocalReview, error) {
 	if persistence != PersistenceDurable && persistence != PersistenceNoPersist {
 		return nil, ErrInvalidLocalReviewSource
 	}
+	if config.Branch != nil {
+		if err := config.Branch.validate(); err != nil || config.Source.Changed == nil || config.Source.Content == nil {
+			return nil, ErrInvalidLocalReviewSource
+		}
+	}
 	return &LocalReview{
 		source: config.Source, ids: config.IDs, clock: config.Clock, persistence: persistence,
-		sessions: config.Sessions, persistenceDegraded: config.PersistenceDegraded,
+		sessions: config.Sessions, persistenceDegraded: config.PersistenceDegraded, branch: config.Branch,
 	}, nil
 }
 
@@ -243,6 +250,10 @@ func (r *LocalReview) run(ctx context.Context, startPath string, stream chan<- L
 		return
 	}
 	if !publish(LocalReviewSnapshot{Phase: LocalReviewCapturing, Repository: repositoryState}) {
+		return
+	}
+	if r.branch != nil {
+		r.runBranch(ctx, stream, publish, fail, repo, worktree, repositoryState)
 		return
 	}
 	artifacts, err := r.source.Capture.Capture(ctx, repo, worktree)
@@ -357,7 +368,14 @@ func (r *LocalReview) run(ctx context.Context, startPath string, stream chan<- L
 	if !publish(LocalReviewSnapshot{Phase: LocalReviewLoadingFile, Repository: repositoryState, Target: &target, CaptureID: adoption.Generation.CaptureID, TreePage: page, ChangedFiles: changes, ActiveFile: &active}) {
 		return
 	}
-	diffValue, err := r.source.Content.LoadDiff(ctx, adoption.Generation.CaptureID, active)
+	var diffValue repository.FileDiff
+	if target.Spec.Kind == repository.TargetLocal {
+		diffValue, err = r.source.Content.LoadDiff(ctx, adoption.Generation.CaptureID, active)
+	} else if loader, ok := r.source.Content.(TargetContentLoader); ok {
+		diffValue, err = loader.LoadTargetDiff(ctx, target, active)
+	} else {
+		err = errors.New("target content loader unavailable")
+	}
 	if err != nil {
 		fail(LocalReviewLoadingFile, "load file diff", err, repositoryState, &target, adoption.Generation.CaptureID, page, changes)
 		return
@@ -390,6 +408,99 @@ func (r *LocalReview) run(ctx context.Context, startPath string, stream chan<- L
 		highlighted = &value
 	}
 	publish(LocalReviewSnapshot{Phase: LocalReviewReady, Repository: repositoryState, Target: &target, CaptureID: adoption.Generation.CaptureID, TreePage: page, ChangedFiles: changes, ActiveFile: &active, FileContent: content, FileDiff: &diffValue, Displayed: &displayed, DisplayedPage: &displayedPage, Highlighted: highlighted})
+}
+
+func (r *LocalReview) runBranch(ctx context.Context, _ chan<- LocalReviewSnapshot, publish func(LocalReviewSnapshot) bool, fail func(LocalReviewPhase, string, error, *RepositoryState, *repository.ResolvedTarget, domain.CaptureID, TreePage, []repository.ChangedFile), repo repository.Repository, worktree repository.WorktreeRef, repositoryState *RepositoryState) {
+	target, err := OpenBranchTarget(ctx, OpenBranchTargetRequest{
+		Repository:         repo,
+		Worktree:           worktree,
+		ExplicitExpression: r.branch.ExplicitBaseExpression,
+		SessionExpression:  r.branch.SessionBaseExpression,
+		Persistence:        r.persistence,
+		Preferences:        r.branch.Preferences,
+		Discover:           r.branch.Discover,
+		Resolver:           r.branch.Resolver,
+		Generation:         1,
+	})
+	if err != nil {
+		fail(LocalReviewCapturing, "resolve branch target", err, repositoryState, nil, "", TreePage{}, nil)
+		return
+	}
+	var sessionHandle *SessionHandle
+	if r.sessions != nil {
+		handle, openErr := r.sessions.OpenSession(ctx, OpenSessionRequest{Repository: repo, Worktree: worktree, Target: target, Mode: SessionWritable, Persistence: r.persistence})
+		if openErr != nil {
+			fail(LocalReviewCapturing, "open review session", openErr, repositoryState, &target, "", TreePage{}, nil)
+			return
+		}
+		sessionHandle = &handle
+		r.persistenceDegraded = r.persistenceDegraded || handle.PersistenceDegraded
+		defer func() { _ = r.sessions.ReleaseSession(context.Background(), sessionHandle) }()
+		target = handle.Session.Target
+	}
+	if !publish(LocalReviewSnapshot{Phase: LocalReviewLoadingTree, Repository: repositoryState, Target: &target}) {
+		return
+	}
+	page, err := r.source.Tree.ListTree(ctx, target, TreeQuery{Filter: TreeFilterChanged})
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			publish(LocalReviewSnapshot{Phase: LocalReviewCancelled, Repository: repositoryState, Target: &target})
+			return
+		}
+		fail(LocalReviewLoadingTree, "load branch tree", err, repositoryState, &target, "", TreePage{}, nil)
+		return
+	}
+	changes, err := r.source.Changed.ChangedFiles(ctx, target)
+	if err != nil {
+		fail(LocalReviewLoadingTree, "load branch changes", err, repositoryState, &target, "", page, nil)
+		return
+	}
+	if len(changes) == 0 {
+		publish(LocalReviewSnapshot{Phase: LocalReviewClean, Repository: repositoryState, Target: &target, TreePage: page})
+		return
+	}
+	active := firstChangedFile(changes)
+	if !publish(LocalReviewSnapshot{Phase: LocalReviewLoadingFile, Repository: repositoryState, Target: &target, TreePage: page, ChangedFiles: changes, ActiveFile: &active}) {
+		return
+	}
+	loader, ok := r.source.Content.(TargetContentLoader)
+	if !ok {
+		fail(LocalReviewLoadingFile, "load branch diff", errors.New("target content loader unavailable"), repositoryState, &target, "", page, changes)
+		return
+	}
+	diffValue, err := loader.LoadTargetDiff(ctx, target, active)
+	if err != nil {
+		fail(LocalReviewLoadingFile, "load branch diff", err, repositoryState, &target, "", page, changes)
+		return
+	}
+	var content *repository.FileContent
+	contentPath, contentSnapshot := active.NewPath, target.Head
+	if contentPath == nil {
+		contentPath, contentSnapshot = active.OldPath, target.Base
+	}
+	if contentPath != nil && contentSnapshot.Validate() == nil {
+		loaded, loadErr := r.source.Content.LoadFile(ctx, "", contentSnapshot, *contentPath)
+		if loadErr != nil {
+			fail(LocalReviewLoadingFile, "load branch file", loadErr, repositoryState, &target, "", page, changes)
+			return
+		}
+		content = &loaded
+	}
+	displayed, displayedPage, err := displayedDiff(target, "", active, diffValue, content)
+	if err != nil {
+		fail(LocalReviewLoadingFile, "build branch diff", err, repositoryState, &target, "", page, changes)
+		return
+	}
+	var highlighted *highlight.HighlightedFile
+	if content != nil && contentPath != nil {
+		value, highlightErr := r.source.Highlighter.Highlight(ctx, *content, string(contentPath.Bytes()), "github")
+		if highlightErr != nil {
+			fail(LocalReviewLoadingFile, "highlight branch file", highlightErr, repositoryState, &target, "", page, changes)
+			return
+		}
+		highlighted = &value
+	}
+	publish(LocalReviewSnapshot{Phase: LocalReviewReady, Repository: repositoryState, Target: &target, TreePage: page, ChangedFiles: changes, ActiveFile: &active, FileContent: content, FileDiff: &diffValue, Displayed: &displayed, DisplayedPage: &displayedPage, Highlighted: highlighted})
 }
 
 func changedFilesFromCandidate(candidate repository.LocalCaptureCandidate) []repository.ChangedFile {
