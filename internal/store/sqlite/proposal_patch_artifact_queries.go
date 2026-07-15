@@ -15,6 +15,21 @@ import (
 var _ app.ProposalPatchArtifactStore = (*Store)(nil)
 var _ app.ProposalPatchArtifactStoreTx = (*transaction)(nil)
 
+func (t *transaction) validateProposalPatchArtifact(ctx context.Context, patch review.ProposedPatch) error {
+	var data []byte
+	if err := t.tx.QueryRowContext(ctx, "SELECT artifact_json FROM proposal_patch_artifacts WHERE id = ? AND attempt_id = ?", patch.Artifact.ArtifactID, patch.AttemptID).Scan(&data); err != nil {
+		return mapProposalPatchArtifactNotFound(err)
+	}
+	var artifact app.ProposalPatchArtifact
+	if json.Unmarshal(data, &artifact) != nil || artifact.Validate() != nil {
+		return app.ErrReviewStoreCorrupt
+	}
+	if artifact.SessionID != t.sessionID || artifact.ProposalID != patch.ProposalID || artifact.WorkspaceID != patch.WorkspaceID || artifact.ThreadID != patch.ThreadID || artifact.AttemptID != patch.AttemptID || artifact.Baseline != patch.Baseline || artifact.Result != patch.Result || artifact.PatchFormatVersion != patch.Artifact.PatchFormatVersion || artifact.RenamePolicyVersion != patch.Artifact.RenamePolicyVersion || artifact.ConversionPolicyVersion != patch.Artifact.ConversionPolicyVersion || artifact.PatchSHA256 != patch.PatchSHA256 || artifact.Index.Hash != patch.Artifact.IndexHash || artifact.Published.Identity.SpoolID != patch.Artifact.SpoolID || artifact.Published.Identity.ManifestHash != patch.Artifact.ManifestHash || uint64(artifact.Published.Identity.Bytes) != patch.Artifact.PatchBytes || uint64(artifact.Summary.FileCount) != patch.Artifact.FileCount || uint64(artifact.Summary.HunkCount) != patch.Artifact.HunkCount || uint64(artifact.Summary.RowCount) != patch.Artifact.RowCount || uint64(artifact.Summary.BinaryFiles) != patch.Artifact.BinaryFiles {
+		return review.ErrProposalConflict
+	}
+	return nil
+}
+
 // AdoptProposalPatchArtifact records one complete patch/index pair after its
 // published artifact target has been independently verified. The patch bytes
 // remain in the owner-controlled artifact target; SQLite stores its identity

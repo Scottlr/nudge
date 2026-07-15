@@ -166,6 +166,11 @@ func (t *transaction) PublishProposal(ctx context.Context, patch review.Proposed
 	if err := json.Unmarshal(attemptJSON, &attempt); err != nil || attempt.Outcome != review.ProposalAttemptDeriving || attempt.VersionNumber != nil || !sameGeneration(attempt.SourceGeneration, patch.SourceGeneration) {
 		return review.ErrProposalConflict
 	}
+	if patch.Artifact != (review.ProposedPatchArtifactReference{}) {
+		if err := t.validateProposalPatchArtifact(ctx, patch); err != nil {
+			return err
+		}
+	}
 	attempt.VersionNumber = proposalVersionPointer(patch.Version)
 	attempt.Outcome = review.ProposalAttemptVersionPublished
 	attempt.ResultDisposition = review.ProposalResultPresent
@@ -247,9 +252,19 @@ func (t *transaction) PublishProposal(ctx context.Context, patch review.Proposed
 	if err := readyRows.Close(); err != nil {
 		return err
 	}
+	patchBytes := patch.PatchBytes
+	artifactID, artifactSpoolID, artifactManifestHash, artifactIndexHash := any(nil), any(nil), any(nil), any(nil)
+	if patch.Artifact != (review.ProposedPatchArtifactReference{}) {
+		patchBytes = []byte{}
+		artifactID = patch.Artifact.ArtifactID
+		artifactSpoolID = patch.Artifact.SpoolID
+		artifactManifestHash = patch.Artifact.ManifestHash
+		artifactIndexHash = patch.Artifact.IndexHash
+	}
 	if _, err := t.tx.ExecContext(ctx, `INSERT INTO proposal_versions(
-		proposal_id, version, attempt_id, status, patch_sha256, patch_bytes, patch_json, created_at)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?)`, patch.ProposalID, patch.Version, patch.AttemptID, string(patch.Status), patch.PatchSHA256, patch.PatchBytes, patchJSON, formatTime(patch.CreatedAt)); err != nil {
+		proposal_id, version, attempt_id, status, patch_sha256, patch_bytes, patch_json, created_at,
+		artifact_id, artifact_spool_id, artifact_manifest_hash, artifact_index_hash)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, patch.ProposalID, patch.Version, patch.AttemptID, string(patch.Status), patch.PatchSHA256, patchBytes, patchJSON, formatTime(patch.CreatedAt), artifactID, artifactSpoolID, artifactManifestHash, artifactIndexHash); err != nil {
 		return err
 	}
 	for index, file := range patch.Files {
@@ -383,19 +398,29 @@ func (s *Store) LoadProposalAggregate(ctx context.Context, proposalID domain.Pro
 		return review.ProposalAggregate{}, err
 	}
 	_ = rows.Close()
-	versionRows, err := s.db.QueryContext(ctx, `SELECT patch_json, patch_bytes, patch_sha256 FROM proposal_versions WHERE proposal_id = ? ORDER BY version ASC`, proposalID)
+	versionRows, err := s.db.QueryContext(ctx, `SELECT patch_json, patch_bytes, patch_sha256, artifact_id, artifact_spool_id, artifact_manifest_hash, artifact_index_hash FROM proposal_versions WHERE proposal_id = ? ORDER BY version ASC`, proposalID)
 	if err != nil {
 		return review.ProposalAggregate{}, err
 	}
 	for versionRows.Next() {
 		var data, patchBytes []byte
 		var patchSHA string
-		if err := versionRows.Scan(&data, &patchBytes, &patchSHA); err != nil {
+		var artifactID, artifactSpoolID, artifactManifestHash, artifactIndexHash sql.NullString
+		if err := versionRows.Scan(&data, &patchBytes, &patchSHA, &artifactID, &artifactSpoolID, &artifactManifestHash, &artifactIndexHash); err != nil {
 			_ = versionRows.Close()
 			return review.ProposalAggregate{}, err
 		}
 		var patch review.ProposedPatch
-		if err := json.Unmarshal(data, &patch); err != nil || !bytes.Equal(patch.PatchBytes, patchBytes) || patch.PatchSHA256 != patchSHA {
+		if err := json.Unmarshal(data, &patch); err != nil || patch.Validate() != nil || patch.PatchSHA256 != patchSHA {
+			_ = versionRows.Close()
+			return review.ProposalAggregate{}, app.ErrReviewStoreCorrupt
+		}
+		if patch.Artifact == (review.ProposedPatchArtifactReference{}) {
+			if len(patchBytes) == 0 || !bytes.Equal(patch.PatchBytes, patchBytes) || artifactID.Valid || artifactSpoolID.Valid || artifactManifestHash.Valid || artifactIndexHash.Valid {
+				_ = versionRows.Close()
+				return review.ProposalAggregate{}, app.ErrReviewStoreCorrupt
+			}
+		} else if len(patchBytes) != 0 || !artifactID.Valid || !artifactSpoolID.Valid || !artifactManifestHash.Valid || !artifactIndexHash.Valid || patch.Artifact.ArtifactID != artifactID.String || patch.Artifact.SpoolID != artifactSpoolID.String || patch.Artifact.ManifestHash != artifactManifestHash.String || patch.Artifact.IndexHash != artifactIndexHash.String {
 			_ = versionRows.Close()
 			return review.ProposalAggregate{}, app.ErrReviewStoreCorrupt
 		}
