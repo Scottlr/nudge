@@ -35,27 +35,29 @@ type Model struct {
 	local     <-chan app.LocalReviewSnapshot
 	ctx       context.Context
 
-	snapshot       app.AppSnapshot
-	localReview    app.LocalReviewSnapshot
-	repositoryPane *treepane.Model
-	codePane       *codepane.Model
-	threadPane     *threadpane.Model
-	discussionPane *discussionpane.Model
-	dimensions     Dimensions
-	layout         Layout
-	focus          Pane
-	lowerPane      Pane
-	narrowPane     Pane
-	overlays       OverlayStack
-	theme          theme.Theme
-	themeHealth    theme.Health
-	terminalInput  terminal.Input
-	terminalPolicy terminal.Policy
-	commands       *CommandRegistry
-	focusTarget    FocusTargetID
-	focusRestore   *FocusTargetID
-	scheduler      *RenderScheduler
-	animationFrame uint64
+	snapshot        app.AppSnapshot
+	localReview     app.LocalReviewSnapshot
+	repositoryPane  *treepane.Model
+	codePane        *codepane.Model
+	threadPane      *threadpane.Model
+	discussionPane  *discussionpane.Model
+	dimensions      Dimensions
+	layout          Layout
+	focus           Pane
+	lowerPane       Pane
+	narrowPane      Pane
+	overlays        OverlayStack
+	runtimeApproval *app.RuntimeApproval
+	runtimeProvider RuntimeApprovalResponder
+	theme           theme.Theme
+	themeHealth     theme.Health
+	terminalInput   terminal.Input
+	terminalPolicy  terminal.Policy
+	commands        *CommandRegistry
+	focusTarget     FocusTargetID
+	focusRestore    *FocusTargetID
+	scheduler       *RenderScheduler
+	animationFrame  uint64
 
 	altScreen   bool
 	reportFocus bool
@@ -130,6 +132,14 @@ func WithSessionWriteGuard(guard app.SessionWriteGuard) ModelOption {
 	return func(model *Model) {
 		copyValue := guard
 		model.sessionGuard = &copyValue
+	}
+}
+
+// WithRuntimeApprovalProvider supplies the provider response port used by the
+// explicit runtime approval commands. Proposal approval uses another context.
+func WithRuntimeApprovalProvider(provider RuntimeApprovalResponder) ModelOption {
+	return func(model *Model) {
+		model.runtimeProvider = provider
 	}
 }
 

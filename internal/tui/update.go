@@ -107,6 +107,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.showOverlay(message.Overlay)
 	case DismissOverlayMsg:
 		m.dismissOverlay()
+	case RuntimeApprovalMsg:
+		m.showRuntimeApproval(message.Approval)
+	case ClearRuntimeApprovalMsg:
+		m.clearRuntimeApproval()
 	case QuitIntentMsg:
 		return m, func() tea.Msg { return tea.Quit() }
 	}

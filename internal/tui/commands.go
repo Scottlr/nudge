@@ -12,20 +12,22 @@ import (
 type CommandID string
 
 const (
-	CommandQuit             CommandID = "quit"
-	CommandCloseOverlay     CommandID = "close_overlay"
-	CommandEditorCancel     CommandID = "editor_cancel"
-	CommandEditorSubmit     CommandID = "editor_submit"
-	CommandFocusNext        CommandID = "focus_next"
-	CommandFocusPrevious    CommandID = "focus_previous"
-	CommandMoveUp           CommandID = "move_up"
-	CommandMoveDown         CommandID = "move_down"
-	CommandActivate         CommandID = "activate"
-	CommandToggleSelection  CommandID = "toggle_selection"
-	CommandToggleFileFilter CommandID = "toggle_file_filter"
-	CommandReply            CommandID = "reply"
-	CommandResolve          CommandID = "resolve"
-	CommandHelp             CommandID = "help"
+	CommandQuit               CommandID = "quit"
+	CommandCloseOverlay       CommandID = "close_overlay"
+	CommandEditorCancel       CommandID = "editor_cancel"
+	CommandEditorSubmit       CommandID = "editor_submit"
+	CommandFocusNext          CommandID = "focus_next"
+	CommandFocusPrevious      CommandID = "focus_previous"
+	CommandMoveUp             CommandID = "move_up"
+	CommandMoveDown           CommandID = "move_down"
+	CommandActivate           CommandID = "activate"
+	CommandToggleSelection    CommandID = "toggle_selection"
+	CommandToggleFileFilter   CommandID = "toggle_file_filter"
+	CommandReply              CommandID = "reply"
+	CommandResolve            CommandID = "resolve"
+	CommandHelp               CommandID = "help"
+	CommandApproveRuntimeOnce CommandID = "approve_runtime_once"
+	CommandDenyRuntime        CommandID = "deny_runtime"
 )
 
 // CommandContext identifies the active input owner. Contexts are ordered from
@@ -33,10 +35,11 @@ const (
 type CommandContext string
 
 const (
-	ContextOverlay CommandContext = "overlay"
-	ContextEditor  CommandContext = "editor"
-	ContextPane    CommandContext = "pane"
-	ContextGlobal  CommandContext = "global"
+	ContextOverlay         CommandContext = "overlay"
+	ContextEditor          CommandContext = "editor"
+	ContextPane            CommandContext = "pane"
+	ContextGlobal          CommandContext = "global"
+	ContextRuntimeApproval CommandContext = "runtime_approval"
 )
 
 var (

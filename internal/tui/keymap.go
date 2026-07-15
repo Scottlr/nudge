@@ -17,6 +17,8 @@ import (
 func newDefaultCommandRegistry() (*CommandRegistry, error) {
 	registry := NewCommandRegistry()
 	registrations := []CommandRegistration{
+		commandRegistration(CommandApproveRuntimeOnce, ContextRuntimeApproval, "allow once", "Allow this exact Codex command once", []string{"y"}, runtimeApprovalAllowAvailable, false, func(m *Model) tea.Cmd { return m.resolveRuntimeApproval(true) }),
+		commandRegistration(CommandDenyRuntime, ContextRuntimeApproval, "deny runtime request", "Deny this Codex runtime request", []string{"n"}, runtimeApprovalAvailable, true, func(m *Model) tea.Cmd { return m.resolveRuntimeApproval(false) }),
 		commandRegistration(CommandCloseOverlay, ContextOverlay, "close", "Close the current modal", []string{"q", "esc", "ctrl+c"}, overlayDismissibleAvailable, false, func(m *Model) tea.Cmd { m.dismissOverlay(); return nil }),
 		commandRegistration(CommandEditorSubmit, ContextEditor, "send reply", "Submit the active multiline reply", []string{"ctrl+enter"}, editorAvailable, false, func(m *Model) tea.Cmd {
 			return m.handleDiscussionMessage(discussion.UpdateDraftMsg{Message: comment.SubmitMsg{}})
@@ -77,6 +79,14 @@ func overlayDismissibleAvailable(m *Model) bool {
 	}
 	overlay, ok := m.overlays.Top()
 	return ok && overlay.Dismissible
+}
+
+func runtimeApprovalAvailable(m *Model) bool {
+	return m != nil && m.runtimeApproval != nil
+}
+
+func runtimeApprovalAllowAvailable(m *Model) bool {
+	return runtimeApprovalAvailable(m) && app.CanApproveRuntimeApproval(*m.runtimeApproval)
 }
 
 type movePaneMessage struct{ delta int }
@@ -148,6 +158,9 @@ func (m *Model) handleDiscussionMessage(message any) tea.Cmd {
 func (m *Model) activeContexts() []CommandContext {
 	if m == nil {
 		return nil
+	}
+	if m.runtimeApproval != nil {
+		return []CommandContext{ContextRuntimeApproval}
 	}
 	if m.overlays.Len() > 0 {
 		return []CommandContext{ContextOverlay}

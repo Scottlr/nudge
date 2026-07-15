@@ -51,6 +51,27 @@ func (s *Store) UpsertRepository(ctx context.Context, repo repository.Repository
 	return tx.Commit()
 }
 
+// SaveRuntimeApprovalRecord stores only whitelist/decision metadata. Exact
+// command arguments, network targets, prompts, and provider bodies never
+// reach this SQL boundary.
+func (s *Store) SaveRuntimeApprovalRecord(ctx context.Context, record app.RuntimeApprovalRecord) error {
+	if err := s.ensureOpen(); err != nil {
+		return err
+	}
+	if err := record.Validate(); err != nil {
+		return err
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	_, err := s.db.ExecContext(ctx, `INSERT INTO runtime_approval_records(
+		id, turn_id, kind, scope_class, executable_name, argument_hash,
+		network_host_class, decision, requested_at, resolved_at)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, record.ID, record.TurnID, record.Kind,
+		record.ScopeClass, record.ExecutableName, record.ArgumentHash, record.NetworkHostClass,
+		record.Decision, formatTime(record.RequestedAt), formatTime(record.ResolvedAt))
+	return err
+}
+
 func upsertRepository(ctx context.Context, tx *sql.Tx, repo repository.Repository) error {
 	_, err := tx.ExecContext(ctx, `INSERT INTO repositories(
 		id, common_git_dir, common_git_dir_identity, binding_version, object_format,

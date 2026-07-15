@@ -5,6 +5,7 @@ import (
 
 	"github.com/Scottlr/nudge/internal/domain"
 	"github.com/Scottlr/nudge/internal/domain/repository"
+	"github.com/Scottlr/nudge/internal/provider"
 )
 
 // CorrelationID ties a command, its asynchronous result, and emitted events
@@ -74,26 +75,36 @@ type CancelOperation struct {
 	CorrelationID CorrelationID
 }
 
+// RespondToRuntimeApproval is an explicit one-shot runtime decision. It is
+// independent from proposal approval and carries only provider-neutral scope
+// identity; exact command text remains an ephemeral presentation value.
+type RespondToRuntimeApproval struct {
+	Response      provider.RuntimeApprovalResponse
+	CorrelationID CorrelationID
+}
+
 // Shutdown stops the application runtime after committing cancellation of
 // active operations.
 type Shutdown struct {
 	CorrelationID CorrelationID
 }
 
-func (OpenRepository) isReducerInput()  {}
-func (SelectTarget) isReducerInput()    {}
-func (SelectFile) isReducerInput()      {}
-func (RefreshTarget) isReducerInput()   {}
-func (OpenSession) isReducerInput()     {}
-func (CloseSession) isReducerInput()    {}
-func (CancelOperation) isReducerInput() {}
-func (Shutdown) isReducerInput()        {}
+func (OpenRepository) isReducerInput()           {}
+func (SelectTarget) isReducerInput()             {}
+func (SelectFile) isReducerInput()               {}
+func (RefreshTarget) isReducerInput()            {}
+func (OpenSession) isReducerInput()              {}
+func (CloseSession) isReducerInput()             {}
+func (CancelOperation) isReducerInput()          {}
+func (RespondToRuntimeApproval) isReducerInput() {}
+func (Shutdown) isReducerInput()                 {}
 
-func (OpenRepository) isCommand()  {}
-func (SelectTarget) isCommand()    {}
-func (SelectFile) isCommand()      {}
-func (RefreshTarget) isCommand()   {}
-func (OpenSession) isCommand()     {}
-func (CloseSession) isCommand()    {}
-func (CancelOperation) isCommand() {}
-func (Shutdown) isCommand()        {}
+func (OpenRepository) isCommand()           {}
+func (SelectTarget) isCommand()             {}
+func (SelectFile) isCommand()               {}
+func (RefreshTarget) isCommand()            {}
+func (OpenSession) isCommand()              {}
+func (CloseSession) isCommand()             {}
+func (CancelOperation) isCommand()          {}
+func (RespondToRuntimeApproval) isCommand() {}
+func (Shutdown) isCommand()                 {}

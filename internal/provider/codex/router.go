@@ -156,6 +156,9 @@ func (c *Client) dispatchServerRequest(frame protocol.Frame) bool {
 		var err error
 		result, err = handler(c.ctx, protocol.ServerRequest{ID: frame.ID, Method: frame.Method, Params: frame.Params})
 		if err != nil {
+			if errors.Is(err, ErrServerRequestDeferred) {
+				return true
+			}
 			rpcErr = &protocol.RPCError{Code: -32000, Message: "server request handler failed"}
 		} else if len(result) == 0 || !json.Valid(result) {
 			rpcErr = &protocol.RPCError{Code: -32000, Message: "invalid server request result"}

@@ -212,7 +212,11 @@ func hintsFor(entries []HelpEntry, ids ...CommandID) []string {
 func (m *Model) renderOverlay(overlay Overlay) string {
 	lines := []string{safeText(overlay.Title), safeText(overlay.Body)}
 	if m.commands != nil {
-		entries := m.commands.Entries(m, []CommandContext{ContextOverlay})
+		context := ContextOverlay
+		if m.runtimeApproval != nil {
+			context = ContextRuntimeApproval
+		}
+		entries := m.commands.Entries(m, []CommandContext{context})
 		if hints := hintsForEntries(entries); hints != "" {
 			lines = append(lines, "", hints)
 		}

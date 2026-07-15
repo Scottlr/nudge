@@ -10,6 +10,7 @@ import (
 
 	"github.com/Scottlr/nudge/internal/domain"
 	"github.com/Scottlr/nudge/internal/domain/repository"
+	"github.com/Scottlr/nudge/internal/provider"
 )
 
 // ReducerConfig supplies the owned clock and identity source used by a
@@ -154,6 +155,11 @@ func (r *Reducer) handleCommand(command Command) (ReducerResponse, error) {
 		}), nil
 	case CancelOperation:
 		return r.cancelOperation(value)
+	case RespondToRuntimeApproval:
+		if value.Response.RequestID == "" || value.Response.ThreadID == "" || value.Response.OperationID == "" || value.Response.CorrelationID.Validate() != nil || value.Response.TurnRef.Validate() != nil || (value.Response.Decision != provider.ApprovalAllowOnce && value.Response.Decision != provider.ApprovalDeny) || value.Response.Scope.Validate(provider.DefaultValidationLimits()) != nil {
+			return ReducerResponse{}, ErrInvalidReducerInput
+		}
+		return r.commit("", RuntimeApprovalDecisionRequested{RequestID: value.Response.RequestID, TurnRef: value.Response.TurnRef, Decision: value.Response.Decision, CorrelationID: value.CorrelationID}), nil
 	case Shutdown:
 		return r.shutdown()
 	case CreateThread:
