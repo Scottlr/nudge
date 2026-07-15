@@ -383,6 +383,9 @@ func crossCheckProposalPatch(baseline WorkspaceManifest, delta ResultDelta, entr
 		if file.Binary && !binaryPatchClassesReady(byPath, file) {
 			return ErrProposalPatchArtifactNotReady
 		}
+		if !file.Binary && !textPatchSemanticsReady(byPath, file) {
+			return ErrProposalPatchArtifactNotReady
+		}
 		if file.OldPath != nil && file.NewPath != nil && (file.Kind == repository.ChangeRenamed || file.Kind == repository.ChangeCopied) {
 			if !renamePatchMatchesDelta(delta, file, renamePolicyVersion) {
 				return ErrInvalidProposalPatchArtifact
@@ -415,6 +418,33 @@ func crossCheckProposalPatch(baseline WorkspaceManifest, delta ResultDelta, entr
 		return ErrInvalidProposalPatchArtifact
 	}
 	return nil
+}
+
+func textPatchSemanticsReady(delta map[repository.RepoPathKey]ResultDeltaEntry, file repository.ChangedFile) bool {
+	check := func(path *repository.RepoPath, baseline bool, kind repository.FileKind) bool {
+		if path == nil || kind != repository.FileKindRegular {
+			return true
+		}
+		entry, ok := delta[path.Key()]
+		if !ok {
+			return false
+		}
+		var value *repository.TextByteSemantics
+		var class repository.ContentClassV1
+		if baseline {
+			if entry.Baseline == nil {
+				return false
+			}
+			class, value = entry.Baseline.ContentClass, entry.Baseline.TextSemantics
+		} else {
+			if entry.Result == nil {
+				return false
+			}
+			class, value = entry.Result.ContentClass, entry.Result.TextSemantics
+		}
+		return class != repository.ContentClassRegularTextUTF8 || value != nil
+	}
+	return check(file.OldPath, true, file.OldFileKind) && check(file.NewPath, false, file.NewFileKind)
 }
 
 func binaryPatchClassesReady(delta map[repository.RepoPathKey]ResultDeltaEntry, file repository.ChangedFile) bool {
@@ -557,6 +587,8 @@ func writeChangedFileHash(h interface{ Write([]byte) (int, error) }, file reposi
 	writeArtifactHashUint(h, uint64(file.OldMode))
 	writeArtifactHashUint(h, uint64(file.NewMode))
 	writeArtifactHashString(h, string(file.ContentClass))
+	writeArtifactTextSemanticsHash(h, file.OldTextSemantics)
+	writeArtifactTextSemanticsHash(h, file.NewTextSemantics)
 	writeArtifactHashBool(h, file.Binary)
 	if file.Rename == nil {
 		writeArtifactHashUint(h, 0)
@@ -567,6 +599,24 @@ func writeChangedFileHash(h interface{ Write([]byte) (int, error) }, file reposi
 		writeArtifactHashString(h, string(file.Rename.Kind))
 		writeArtifactHashString(h, file.Rename.EvidenceHash)
 	}
+}
+
+func writeArtifactTextSemanticsHash(h interface{ Write([]byte) (int, error) }, value *repository.TextByteSemantics) {
+	if value == nil {
+		writeArtifactHashUint(h, 0)
+		return
+	}
+	writeArtifactHashUint(h, 1)
+	writeArtifactHashString(h, string(value.Encoding))
+	writeArtifactHashUint(h, value.ByteLength)
+	writeArtifactHashString(h, value.SHA256)
+	writeArtifactHashBool(h, value.HasBOM)
+	writeArtifactHashUint(h, value.Endings.LFCount)
+	writeArtifactHashUint(h, value.Endings.CRLFCount)
+	writeArtifactHashUint(h, value.Endings.CRCount)
+	writeArtifactHashBool(h, value.Endings.FinalLF)
+	writeArtifactHashBool(h, value.Endings.Mixed)
+	writeArtifactHashBool(h, value.Empty)
 }
 
 func writeArtifactHashPath(h interface{ Write([]byte) (int, error) }, path *repository.RepoPath) {

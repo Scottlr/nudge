@@ -124,7 +124,8 @@ func MaterializeTree(ctx context.Context, source TrustedTreeSource, root Workspa
 		}
 		hash := sha256.New()
 		classifier := repository.NewContentClassifierV1(false)
-		written, copyErr := copyMaterializedStream(ctx, file, reader, hash, classifier, &total, policy.Artifact.SnapshotBytes)
+		textSemanticsWriter := repository.NewTextByteSemanticsWriter()
+		written, copyErr := copyMaterializedStream(ctx, file, reader, hash, classifier, textSemanticsWriter, &total, policy.Artifact.SnapshotBytes)
 		mode := os.FileMode(entry.Mode & 0o700)
 		if mode == 0 {
 			mode = 0o600
@@ -144,7 +145,16 @@ func MaterializeTree(ctx context.Context, source TrustedTreeSource, root Workspa
 		if chmodErr != nil {
 			return app.WorkspaceManifest{}, chmodErr
 		}
-		manifestEntries = append(manifestEntries, app.WorkspaceManifestEntry{Path: entry.Path.Bytes(), Kind: entry.Kind, Mode: entry.Mode, Bytes: written, SHA256: hex.EncodeToString(hash.Sum(nil)), ContentClass: classifier.Classify()})
+		contentClass := classifier.Classify()
+		var textSemantics *repository.TextByteSemantics
+		if contentClass == repository.ContentClassRegularTextUTF8 {
+			semantics, semanticsErr := textSemanticsWriter.Semantics(written)
+			if semanticsErr != nil {
+				return app.WorkspaceManifest{}, semanticsErr
+			}
+			textSemantics = &semantics
+		}
+		manifestEntries = append(manifestEntries, app.WorkspaceManifestEntry{Path: entry.Path.Bytes(), Kind: entry.Kind, Mode: entry.Mode, Bytes: written, SHA256: hex.EncodeToString(hash.Sum(nil)), ContentClass: contentClass, TextSemantics: textSemantics})
 	}
 	manifest, err := app.NewWorkspaceManifest(manifestEntries)
 	if err != nil {
@@ -209,7 +219,7 @@ func CopyManifestToRoot(ctx context.Context, source WorkspaceRoot, destination W
 				return err
 			}
 			hash := sha256.New()
-			written, copyErr := copyMaterializedStream(ctx, output, input, hash, nil, &total, policy.Artifact.SnapshotBytes)
+			written, copyErr := copyMaterializedStream(ctx, output, input, hash, nil, nil, &total, policy.Artifact.SnapshotBytes)
 			mode := os.FileMode(entry.Mode & 0o700)
 			if mode == 0 {
 				mode = 0o600
@@ -388,7 +398,7 @@ func verifyMaterializedManifest(root string, expected app.WorkspaceManifest, pol
 	}
 	for index, entry := range expected.Entries {
 		observed := actual.Entries[index]
-		if !bytes.Equal(entry.Path, observed.Path) || entry.Kind != observed.Kind || entry.Bytes != observed.Bytes || entry.SHA256 != observed.SHA256 || entry.ContentClass != observed.ContentClass || !bytes.Equal(entry.LinkTarget, observed.LinkTarget) {
+		if !bytes.Equal(entry.Path, observed.Path) || entry.Kind != observed.Kind || entry.Bytes != observed.Bytes || entry.SHA256 != observed.SHA256 || entry.ContentClass != observed.ContentClass || !sameTextSemantics(entry.TextSemantics, observed.TextSemantics) || !bytes.Equal(entry.LinkTarget, observed.LinkTarget) {
 			return ErrWorkspaceContentMismatch
 		}
 		if entry.Kind == repository.FileKindRegular && entry.Mode&0o700 != observed.Mode&0o700 {
@@ -396,6 +406,13 @@ func verifyMaterializedManifest(root string, expected app.WorkspaceManifest, pol
 		}
 	}
 	return nil
+}
+
+func sameTextSemantics(left, right *repository.TextByteSemantics) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
 }
 
 func materializedManifest(root string, policy app.ResourcePolicy) (app.WorkspaceManifest, error) {
@@ -448,6 +465,7 @@ func materializedManifest(root string, policy app.ResourcePolicy) (app.Workspace
 			}
 			hash := sha256.New()
 			classifier := repository.NewContentClassifierV1(false)
+			textSemanticsWriter := repository.NewTextByteSemanticsWriter()
 			var size uint64
 			buffer := make([]byte, materializeCopyBufferBytes)
 			for {
@@ -461,6 +479,7 @@ func materializedManifest(root string, policy app.ResourcePolicy) (app.Workspace
 					total += app.ByteSize(read)
 					_, _ = hash.Write(buffer[:read])
 					_, _ = classifier.Write(buffer[:read])
+					_, _ = textSemanticsWriter.Write(buffer[:read])
 				}
 				if errors.Is(readErr, io.EOF) {
 					break
@@ -476,6 +495,13 @@ func materializedManifest(root string, policy app.ResourcePolicy) (app.Workspace
 			entry.Bytes = size
 			entry.SHA256 = hex.EncodeToString(hash.Sum(nil))
 			entry.ContentClass = classifier.Classify()
+			if entry.ContentClass == repository.ContentClassRegularTextUTF8 {
+				semantics, semanticsErr := textSemanticsWriter.Semantics(size)
+				if semanticsErr != nil {
+					return semanticsErr
+				}
+				entry.TextSemantics = &semantics
+			}
 		}
 		entries = append(entries, entry)
 		if app.Count(len(entries)) > policy.Artifact.SnapshotEntries {
@@ -489,7 +515,7 @@ func materializedManifest(root string, policy app.ResourcePolicy) (app.Workspace
 	return app.NewWorkspaceManifest(entries)
 }
 
-func copyMaterializedStream(ctx context.Context, destination io.Writer, source io.Reader, hash io.Writer, classifier *repository.ContentClassifierV1, total *app.ByteSize, limit app.ByteSize) (uint64, error) {
+func copyMaterializedStream(ctx context.Context, destination io.Writer, source io.Reader, hash io.Writer, classifier *repository.ContentClassifierV1, textSemantics io.Writer, total *app.ByteSize, limit app.ByteSize) (uint64, error) {
 	buffer := make([]byte, materializeCopyBufferBytes)
 	var written uint64
 	for {
@@ -507,6 +533,11 @@ func copyMaterializedStream(ctx context.Context, destination io.Writer, source i
 			_, _ = hash.Write(buffer[:read])
 			if classifier != nil {
 				_, _ = classifier.Write(buffer[:read])
+			}
+			if textSemantics != nil {
+				if _, err := textSemantics.Write(buffer[:read]); err != nil {
+					return written, err
+				}
 			}
 			*total += app.ByteSize(read)
 			written += uint64(read)

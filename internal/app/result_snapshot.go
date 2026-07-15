@@ -80,6 +80,7 @@ type ResultSnapshotEntry struct {
 	Bytes              uint64                          `json:"bytes"`
 	SHA256             string                          `json:"sha256"`
 	ContentClass       repository.ContentClassV1       `json:"content_class,omitempty"`
+	TextSemantics      *repository.TextByteSemantics   `json:"text_semantics,omitempty"`
 	LinkTarget         []byte                          `json:"link_target,omitempty"`
 	NativeIdentityHash string                          `json:"native_identity_hash,omitempty"`
 	NativeAlias        *repository.NativeAliasEvidence `json:"native_alias,omitempty"`
@@ -97,18 +98,18 @@ func (e ResultSnapshotEntry) Validate() error {
 			return ErrInvalidResultSnapshot
 		}
 	case repository.FileKindRegular:
-		if e.Mode == 0 || !validResultHash(e.SHA256) || len(e.LinkTarget) != 0 || e.ContentClass != "" && e.ContentClass.Validate() != nil || !e.Complete || !validResultHash(e.NativeIdentityHash) {
+		if e.Mode == 0 || !validResultHash(e.SHA256) || len(e.LinkTarget) != 0 || e.ContentClass != "" && e.ContentClass.Validate() != nil || e.TextSemantics != nil && (e.ContentClass != repository.ContentClassRegularTextUTF8 || e.TextSemantics.Validate() != nil || e.TextSemantics.ByteLength != e.Bytes || e.TextSemantics.SHA256 != e.SHA256) || !e.Complete || !validResultHash(e.NativeIdentityHash) {
 			return ErrInvalidResultSnapshot
 		}
 		if e.NativeAlias != nil && e.NativeAlias.Validate() != nil {
 			return ErrInvalidResultSnapshot
 		}
 	case repository.FileKindSymlink:
-		if e.Mode == 0 || len(e.LinkTarget) == 0 || e.Bytes != uint64(len(e.LinkTarget)) || !validResultHash(e.SHA256) || e.ContentClass != "" || e.NativeIdentityHash != "" || e.NativeAlias != nil || !e.Complete {
+		if e.Mode == 0 || len(e.LinkTarget) == 0 || e.Bytes != uint64(len(e.LinkTarget)) || !validResultHash(e.SHA256) || e.ContentClass != "" || e.TextSemantics != nil || e.NativeIdentityHash != "" || e.NativeAlias != nil || !e.Complete {
 			return ErrInvalidResultSnapshot
 		}
 	case repository.FileKindUnknown:
-		if e.Mode != 0 || e.Bytes != 0 || e.SHA256 != "" || e.ContentClass != "" || len(e.LinkTarget) != 0 || e.NativeIdentityHash != "" || e.NativeAlias != nil || e.Complete || e.Reason == ResultReasonNone {
+		if e.Mode != 0 || e.Bytes != 0 || e.SHA256 != "" || e.ContentClass != "" || e.TextSemantics != nil || len(e.LinkTarget) != 0 || e.NativeIdentityHash != "" || e.NativeAlias != nil || e.Complete || e.Reason == ResultReasonNone {
 			return ErrInvalidResultSnapshot
 		}
 	default:
@@ -464,7 +465,7 @@ func compareResultEntry(base WorkspaceManifestEntry, result ResultSnapshotEntry)
 	if base.Mode != result.Mode {
 		kinds = append(kinds, ResultDeltaMode)
 	}
-	if base.Bytes != result.Bytes || base.SHA256 != result.SHA256 || base.ContentClass != "" && result.ContentClass != "" && base.ContentClass != result.ContentClass {
+	if base.Bytes != result.Bytes || base.SHA256 != result.SHA256 || base.ContentClass != "" && result.ContentClass != "" && base.ContentClass != result.ContentClass || base.TextSemantics != nil && result.TextSemantics != nil && *base.TextSemantics != *result.TextSemantics {
 		kinds = append(kinds, ResultDeltaContent)
 	}
 	if !bytes.Equal(base.LinkTarget, result.LinkTarget) {
@@ -598,6 +599,10 @@ func cloneResultEntries(entries []ResultSnapshotEntry) []ResultSnapshotEntry {
 		copyEntries[index] = entry
 		copyEntries[index].Path = append([]byte(nil), entry.Path...)
 		copyEntries[index].LinkTarget = append([]byte(nil), entry.LinkTarget...)
+		if entry.TextSemantics != nil {
+			semantics := *entry.TextSemantics
+			copyEntries[index].TextSemantics = &semantics
+		}
 		if entry.NativeAlias != nil {
 			alias := *entry.NativeAlias
 			copyEntries[index].NativeAlias = &alias
@@ -614,6 +619,10 @@ func cloneDeltaEntries(entries []ResultDeltaEntry) []ResultDeltaEntry {
 		if entry.Baseline != nil {
 			base := *entry.Baseline
 			base.Path = append([]byte(nil), base.Path...)
+			if base.TextSemantics != nil {
+				semantics := *base.TextSemantics
+				base.TextSemantics = &semantics
+			}
 			copyEntries[index].Baseline = &base
 		}
 		if entry.Result != nil {
@@ -625,6 +634,10 @@ func cloneDeltaEntries(entries []ResultDeltaEntry) []ResultDeltaEntry {
 				result.NativeAlias = &alias
 			}
 			copyEntries[index].Result = &result
+			if result.TextSemantics != nil {
+				semantics := *result.TextSemantics
+				copyEntries[index].Result.TextSemantics = &semantics
+			}
 		}
 		copyEntries[index].Kinds = append([]ResultDeltaKind(nil), entry.Kinds...)
 		copyEntries[index].Candidates = append([]ResultRenameCandidate(nil), entry.Candidates...)
@@ -661,6 +674,7 @@ func resultDeltaHash(delta ResultDelta) string {
 			writeResultHashUint(h, entry.Baseline.Bytes)
 			writeResultHashString(h, entry.Baseline.SHA256)
 			writeResultHashString(h, string(entry.Baseline.ContentClass))
+			writeResultTextSemanticsHash(h, entry.Baseline.TextSemantics)
 			writeResultHashBytes(h, entry.Baseline.LinkTarget)
 		}
 		if entry.Result == nil {
@@ -690,6 +704,7 @@ func writeResultEntryHash(h interface{ Write([]byte) (int, error) }, entry Resul
 	writeResultHashUint(h, entry.Bytes)
 	writeResultHashString(h, entry.SHA256)
 	writeResultHashString(h, string(entry.ContentClass))
+	writeResultTextSemanticsHash(h, entry.TextSemantics)
 	writeResultHashBytes(h, entry.LinkTarget)
 	writeResultHashString(h, entry.NativeIdentityHash)
 	if entry.NativeAlias == nil {
@@ -703,6 +718,24 @@ func writeResultEntryHash(h interface{ Write([]byte) (int, error) }, entry Resul
 	}
 	writeResultHashBool(h, entry.Complete)
 	writeResultHashString(h, string(entry.Reason))
+}
+
+func writeResultTextSemanticsHash(h interface{ Write([]byte) (int, error) }, value *repository.TextByteSemantics) {
+	if value == nil {
+		writeResultHashBool(h, false)
+		return
+	}
+	writeResultHashBool(h, true)
+	writeResultHashString(h, string(value.Encoding))
+	writeResultHashUint(h, value.ByteLength)
+	writeResultHashString(h, value.SHA256)
+	writeResultHashBool(h, value.HasBOM)
+	writeResultHashUint(h, value.Endings.LFCount)
+	writeResultHashUint(h, value.Endings.CRLFCount)
+	writeResultHashUint(h, value.Endings.CRCount)
+	writeResultHashBool(h, value.Endings.FinalLF)
+	writeResultHashBool(h, value.Endings.Mixed)
+	writeResultHashBool(h, value.Empty)
 }
 
 func writeResultHashBytes(h interface{ Write([]byte) (int, error) }, value []byte) {

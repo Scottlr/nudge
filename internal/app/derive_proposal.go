@@ -483,6 +483,7 @@ func baselinePrecondition(entry ResultDeltaEntry) repository.PathPrecondition {
 		if entry.Baseline.ContentClass != "" {
 			value.ContentBytes = entry.Baseline.Bytes
 			value.ContentClass = entry.Baseline.ContentClass
+			value.TextSemantics = cloneTextSemantics(entry.Baseline.TextSemantics)
 		}
 	case repository.FileKindSymlink:
 		value.SymlinkTargetHash = hashBytes(entry.Baseline.LinkTarget)
@@ -495,7 +496,7 @@ func preconditionMatchesExpected(actual, expected repository.PathPrecondition) b
 		return false
 	}
 	if expected.ContentClass != "" {
-		return actual.ContentBytes == expected.ContentBytes && actual.ContentClass == expected.ContentClass
+		return actual.ContentBytes == expected.ContentBytes && actual.ContentClass == expected.ContentClass && sameTextSemantics(actual.TextSemantics, expected.TextSemantics)
 	}
 	return true
 }
@@ -521,6 +522,7 @@ func deriveProposedFiles(files []ProposalReviewFile, snapshot ResultSnapshot) ([
 				value.ContentBytes = entry.Result.Bytes
 				value.ContentHash = entry.Result.SHA256
 				value.ContentClass = entry.Result.ContentClass
+				value.TextSemantics = cloneTextSemantics(entry.Result.TextSemantics)
 			}
 		case file.OldPath != nil:
 			value.Path = repository.RepoPath(file.OldPath.Bytes())
@@ -536,16 +538,19 @@ func deriveProposedFiles(files []ProposalReviewFile, snapshot ResultSnapshot) ([
 			if oldEntry, ok := byPath[file.OldPath.Key()]; ok && oldEntry.Baseline != nil {
 				value.OldContentBytes = oldEntry.Baseline.Bytes
 				value.OldContentClass = oldEntry.Baseline.ContentClass
+				value.OldTextSemantics = cloneTextSemantics(oldEntry.Baseline.TextSemantics)
 			}
 			if file.Kind == repository.ChangeCopied {
 				if oldEntry, ok := byPath[file.OldPath.Key()]; ok && oldEntry.Result != nil {
 					value.OldContentBytes = oldEntry.Result.Bytes
 					value.OldContentHash = oldEntry.Result.SHA256
 					value.OldContentClass = oldEntry.Result.ContentClass
+					value.OldTextSemantics = cloneTextSemantics(oldEntry.Result.TextSemantics)
 				} else if oldEntry, ok := byPath[file.OldPath.Key()]; ok && oldEntry.Baseline != nil {
 					value.OldContentBytes = oldEntry.Baseline.Bytes
 					value.OldContentHash = oldEntry.Baseline.SHA256
 					value.OldContentClass = oldEntry.Baseline.ContentClass
+					value.OldTextSemantics = cloneTextSemantics(oldEntry.Baseline.TextSemantics)
 				}
 			}
 		}
@@ -568,6 +573,7 @@ func deriveProposedFiles(files []ProposalReviewFile, snapshot ResultSnapshot) ([
 			value.OldContentBytes = 0
 			value.OldContentHash = ""
 			value.OldContentClass = ""
+			value.OldTextSemantics = nil
 		}
 		if value.Validate() != nil {
 			return nil, ErrProposalPublicationInvalid
@@ -588,6 +594,21 @@ func broaderProposalScope(delta ResultDelta, expected []repository.RepoPath) boo
 		}
 	}
 	return false
+}
+
+func sameTextSemantics(left, right *repository.TextByteSemantics) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
+}
+
+func cloneTextSemantics(value *repository.TextByteSemantics) *repository.TextByteSemantics {
+	if value == nil {
+		return nil
+	}
+	copyValue := *value
+	return &copyValue
 }
 
 func proposalAttempt(aggregate review.ProposalAggregate, id domain.OperationID) (review.ProposalAttempt, bool) {

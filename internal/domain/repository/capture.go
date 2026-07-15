@@ -88,10 +88,11 @@ const (
 // CaptureBlobRef links a changed-file side to one content-addressed spool
 // member. Git object IDs remain separate from the artifact hash.
 type CaptureBlobRef struct {
-	Side         CaptureBlobSide
-	Path         RepoPath
-	Artifact     CaptureArtifact
-	ContentClass ContentClassV1
+	Side          CaptureBlobSide
+	Path          RepoPath
+	Artifact      CaptureArtifact
+	ContentClass  ContentClassV1
+	TextSemantics *TextByteSemantics
 }
 
 // Validate checks the path/side binding without opening the artifact.
@@ -103,6 +104,9 @@ func (b CaptureBlobRef) Validate() error {
 		return ErrInvalidLocalCaptureCandidate
 	}
 	if b.ContentClass != "" && b.ContentClass.Validate() != nil {
+		return ErrInvalidLocalCaptureCandidate
+	}
+	if b.TextSemantics != nil && (b.ContentClass != ContentClassRegularTextUTF8 || b.TextSemantics.Validate() != nil || b.TextSemantics.ByteLength != b.Artifact.Bytes || b.TextSemantics.SHA256 != b.Artifact.ContentSHA256) {
 		return ErrInvalidLocalCaptureCandidate
 	}
 	return nil
@@ -427,6 +431,8 @@ func (c LocalCaptureCandidate) FingerprintValue() (string, error) {
 		writeCaptureUint64(h, boolUint(entry.Change.Unstaged))
 		writeCaptureUint64(h, boolUint(entry.Change.Binary))
 		writeCaptureString(h, string(entry.Change.ContentClass))
+		writeCaptureTextSemantics(h, entry.Change.OldTextSemantics)
+		writeCaptureTextSemantics(h, entry.Change.NewTextSemantics)
 		if entry.Change.Conflict != nil {
 			writeCaptureString(h, entry.Change.Conflict.Code)
 		}
@@ -440,9 +446,28 @@ func (c LocalCaptureCandidate) FingerprintValue() (string, error) {
 			writeCaptureString(h, string(blob.Side))
 			writeCaptureString(h, blob.Artifact.ContentSHA256)
 			writeCaptureString(h, string(blob.ContentClass))
+			writeCaptureTextSemantics(h, blob.TextSemantics)
 		}
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func writeCaptureTextSemantics(h interface{ Write([]byte) (int, error) }, value *TextByteSemantics) {
+	if value == nil {
+		writeCaptureUint64(h, 0)
+		return
+	}
+	writeCaptureUint64(h, 1)
+	writeCaptureString(h, string(value.Encoding))
+	writeCaptureUint64(h, value.ByteLength)
+	writeCaptureString(h, value.SHA256)
+	writeCaptureUint64(h, boolUint(value.HasBOM))
+	writeCaptureUint64(h, value.Endings.LFCount)
+	writeCaptureUint64(h, value.Endings.CRLFCount)
+	writeCaptureUint64(h, value.Endings.CRCount)
+	writeCaptureUint64(h, boolUint(value.Endings.FinalLF))
+	writeCaptureUint64(h, boolUint(value.Endings.Mixed))
+	writeCaptureUint64(h, boolUint(value.Empty))
 }
 
 func (c LocalCaptureCandidate) validateForFingerprint() error {

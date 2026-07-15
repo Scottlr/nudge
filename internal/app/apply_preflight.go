@@ -580,6 +580,10 @@ func cloneApplyPreconditions(values []repository.PathPrecondition) []repository.
 	for index, value := range values {
 		result[index] = value
 		result[index].Path = repository.RepoPath(value.Path.Bytes())
+		if value.TextSemantics != nil {
+			semantics := *value.TextSemantics
+			result[index].TextSemantics = &semantics
+		}
 		if value.NativeAlias != nil {
 			alias := *value.NativeAlias
 			result[index].NativeAlias = &alias
