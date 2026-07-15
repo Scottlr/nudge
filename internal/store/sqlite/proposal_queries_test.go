@@ -82,6 +82,47 @@ func TestProposalWorkspaceAndVersionRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("record attempt: %v", err)
 	}
+	baselineManifest, err := app.NewWorkspaceManifest(nil)
+	if err != nil {
+		t.Fatalf("empty baseline manifest: %v", err)
+	}
+	resultManifest, err := app.NewResultManifest(nil, app.DefaultResourcePolicy().Version, true, app.ResultReasonNone)
+	if err != nil {
+		t.Fatalf("empty result manifest: %v", err)
+	}
+	delta, err := app.CompareResultManifest(baselineManifest, resultManifest)
+	if err != nil {
+		t.Fatalf("empty result delta: %v", err)
+	}
+	snapshot, err := app.NewResultSnapshot(app.ResultSnapshot{
+		SessionID: session.ID, ProposalID: intent.ID, WorkspaceID: workspace.ID, WorktreeID: worktree.ID,
+		AttemptID: attempt.ID, ThreadID: thread.ID, ProviderTurnID: "turn-1", ProviderTurnRef: "opaque-turn",
+		Baseline: review.SnapshotIdentity{ID: "baseline-result-1", Ref: repository.SnapshotRef{Kind: repository.SnapshotEmpty}, ManifestHash: baselineManifest.Hash},
+		Result:   review.SnapshotIdentity{ID: domain.ReviewSnapshotID("result-" + resultManifest.Hash), Ref: repository.SnapshotRef{Kind: repository.SnapshotWorkingTree, WorktreeID: worktree.ID, Fingerprint: resultManifest.Hash}, ManifestHash: resultManifest.Hash},
+		Manifest: resultManifest, Delta: delta, PolicyVersion: app.DefaultResourcePolicy().Version, IsolationVersion: 1,
+		LeaseNonce: strings.Repeat("a", 64), State: app.ResultSnapshotReady, Reason: app.ResultReasonNone, CreatedAt: now,
+	})
+	if err != nil {
+		t.Fatalf("new result snapshot: %v", err)
+	}
+	guard, err = withProposalTx(ctx, store, guard, func(tx app.ProposalWorkspaceStoreTx) error {
+		snapshotTx, ok := tx.(app.ResultSnapshotStoreTx)
+		if !ok {
+			return errors.New("result snapshot transaction extension unavailable")
+		}
+		return snapshotTx.AdoptResultSnapshot(ctx, snapshot)
+	})
+	if err != nil {
+		t.Fatalf("adopt result snapshot: %v", err)
+	}
+	loadedSnapshot, err := store.LoadResultSnapshot(ctx, snapshot.ID)
+	if err != nil || loadedSnapshot.ID != snapshot.ID || loadedSnapshot.Manifest.Hash != resultManifest.Hash {
+		t.Fatalf("loaded result snapshot = %#v err=%v", loadedSnapshot, err)
+	}
+	loadedByAttempt, err := store.LoadResultSnapshotForAttempt(ctx, attempt.ID)
+	if err != nil || loadedByAttempt.ID != snapshot.ID {
+		t.Fatalf("loaded result snapshot by attempt = %#v err=%v", loadedByAttempt, err)
+	}
 
 	data := []byte{0x00, 0xff, 0x01}
 	digest := sha256.Sum256(data)
