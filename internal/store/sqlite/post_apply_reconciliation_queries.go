@@ -204,7 +204,7 @@ func (t *transaction) StagePostApplyValidity(ctx context.Context, result app.Pro
 		ON CONFLICT(apply_operation_id, proposal_id, version) DO UPDATE SET
 		generation = excluded.generation, source_status = excluded.source_status, outcome = excluded.outcome,
 		reason = excluded.reason, conflict_path = excluded.conflict_path, evidence_bytes = excluded.evidence_bytes, result_json = excluded.result_json`,
-		result.ApplyOperationID, result.Generation, result.ProposalID, result.Version, string(result.ExpectedStatus), string(result.Outcome), result.Reason, nullableRepoPath(result.ConflictPath), result.EvidenceBytes, data)
+		result.ApplyOperationID, result.Generation, result.ProposalID, result.Version, string(result.ExpectedStatus), string(result.Outcome), string(result.Reason), nullableRepoPath(result.ConflictPath), result.EvidenceBytes, data)
 	return err
 }
 
@@ -239,7 +239,7 @@ func (t *transaction) CompletePostApplyValidity(ctx context.Context, record app.
 			}
 			return app.ErrPostApplyReconciliationConflict
 		}
-		if err := t.TransitionProposal(ctx, review.ProposalTransition{ProposalID: result.ProposalID, Version: result.Version, Status: review.ProposalVersionStale, FailurePhase: review.ProposalFailureDestination, Reason: result.Reason, ChangedAt: completedAt}); err != nil {
+		if err := t.TransitionProposal(ctx, review.ProposalTransition{ProposalID: result.ProposalID, Version: result.Version, Status: review.ProposalVersionStale, FailurePhase: review.ProposalFailureDestination, Reason: string(result.Reason), ChangedAt: completedAt}); err != nil {
 			return err
 		}
 	}

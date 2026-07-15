@@ -15,6 +15,37 @@ import (
 var _ app.ProposalWorkspaceStore = (*Store)(nil)
 var _ app.ProposalWorkspaceStoreTx = (*transaction)(nil)
 
+// UpdateProposalIntent rebinds one existing lineage to a newly accepted
+// source generation for an explicit proposal refresh. The proposal identity,
+// summary, and expected paths remain stable; only the serialized confirmed
+// provenance supplied by the application may advance.
+func (t *transaction) UpdateProposalIntent(ctx context.Context, intent review.ProposalIntent) error {
+	if intent.Validate() != nil || intent.ID == "" || intent.ThreadID == "" || intent.ConfirmedAgainst.SessionID != t.sessionID {
+		return app.ErrReviewStoreInput
+	}
+	var storedThread, storedSession string
+	if err := t.tx.QueryRowContext(ctx, `SELECT p.thread_id, w.session_id
+		FROM proposals p JOIN proposal_workspaces w ON w.id = p.workspace_id WHERE p.id = ?`, intent.ID).Scan(&storedThread, &storedSession); err != nil {
+		return mapNotFound(err)
+	}
+	if storedThread != string(intent.ThreadID) || storedSession != string(t.sessionID) {
+		return app.ErrReviewStoreInput
+	}
+	data, err := json.Marshal(intent)
+	if err != nil {
+		return err
+	}
+	result, err := t.tx.ExecContext(ctx, `UPDATE proposal_intents SET thread_id = ?, intent_json = ?, confirmed_at = ? WHERE proposal_id = ? AND thread_id = ?`, intent.ThreadID, data, formatTime(intent.ConfirmedAt), intent.ID, intent.ThreadID)
+	if err != nil {
+		return err
+	}
+	count, _ := result.RowsAffected()
+	if count != 1 {
+		return app.ErrReviewStoreNotFound
+	}
+	return nil
+}
+
 func (t *transaction) CreateWorkspace(ctx context.Context, workspace review.ProposalWorkspace, intent review.ProposalIntent, proposal review.Proposal) error {
 	if workspace.Validate() != nil || intent.Validate() != nil || proposal.Validate() != nil || intent.ID != proposal.ID || workspace.ID != proposal.WorkspaceID || workspace.SourceThreadID != intent.ThreadID || workspace.SourceThreadID != proposal.ThreadID {
 		return app.ErrReviewStoreInput
@@ -269,8 +300,10 @@ func (t *transaction) PublishProposal(ctx context.Context, patch review.Proposed
 			_ = readyRows.Close()
 			return app.ErrReviewStoreCorrupt
 		}
-		readyPatch.Status = review.ProposalVersionStale
-		readyPatch.StatusReason = "superseded by a newer proposal version"
+		if err := app.MarkProposalStale(&readyPatch, app.StaleReasonProposalSuperseded, patch.CreatedAt); err != nil {
+			_ = readyRows.Close()
+			return err
+		}
 		updatedReadyJSON, err := json.Marshal(readyPatch)
 		if err != nil {
 			_ = readyRows.Close()

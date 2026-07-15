@@ -69,11 +69,12 @@ const (
 	WorkspacePurposeInstallBaseline ProposalWorkspaceLifecyclePurpose = "install_baseline"
 	WorkspacePurposeResetResult     ProposalWorkspaceLifecyclePurpose = "reset_result"
 	WorkspacePurposeAdvanceBaseline ProposalWorkspaceLifecyclePurpose = "advance_baseline"
+	WorkspacePurposeRefreshBaseline ProposalWorkspaceLifecyclePurpose = "refresh_baseline"
 )
 
 func (p ProposalWorkspaceLifecyclePurpose) Validate() error {
 	switch p {
-	case WorkspacePurposeInstallBaseline, WorkspacePurposeResetResult, WorkspacePurposeAdvanceBaseline:
+	case WorkspacePurposeInstallBaseline, WorkspacePurposeResetResult, WorkspacePurposeAdvanceBaseline, WorkspacePurposeRefreshBaseline:
 		return nil
 	default:
 		return ErrInvalidProposalWorkspaceLifecycle

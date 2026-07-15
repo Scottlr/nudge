@@ -165,6 +165,11 @@ func (r *Reducer) handleCommand(command Command) (ReducerResponse, error) {
 			return ReducerResponse{}, ErrInvalidReducerInput
 		}
 		return r.startOperation(OperationRequestProposal, value.CorrelationID, value.Intent.ConfirmedAgainst.Generation, true)
+	case RefreshProposal:
+		if value.Guard.Validate() != nil || value.ThreadID == "" || value.ProposalID == "" || value.Version == 0 || value.ConversationID == "" || value.OperationID == "" || value.CorrelationID == "" || value.Intent.Validate() != nil || value.Intent.ID != value.ProposalID || value.Intent.ThreadID != value.ThreadID || value.Provenance.Validate() != nil || value.Provenance != value.Intent.ConfirmedAgainst || value.Context.Validate() != nil {
+			return ReducerResponse{}, ErrInvalidReducerInput
+		}
+		return r.startOperation(OperationRefreshProposal, value.CorrelationID, value.Provenance.Generation, true)
 	case CancelProposal:
 		if value.Guard.Validate() != nil || value.AttemptID == "" || value.CorrelationID == "" {
 			return ReducerResponse{}, ErrInvalidReducerInput

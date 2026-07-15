@@ -101,6 +101,24 @@ type RequestProposal struct {
 	CorrelationID CorrelationID
 }
 
+// RefreshProposal explicitly rebinds an eligible stale/rejected proposal to
+// a newly accepted generation. The provider conversation identity is kept
+// stable; the workspace owner supplies the verified source tree separately.
+type RefreshProposal struct {
+	Guard           SessionWriteGuard
+	ThreadID        domain.ReviewThreadID
+	ProposalID      domain.ProposalID
+	Version         review.ProposalVersionNumber
+	ConversationID  domain.ProviderConversationID
+	Intent          review.ProposalIntent
+	Context         ProposalTurnContext
+	Provenance      review.GenerationProvenance
+	AnchorConfirmed bool
+	Eligibility     *ProposalEligibility
+	OperationID     domain.OperationID
+	CorrelationID   CorrelationID
+}
+
 // CancelProposal requests cancellation of one active proposal turn. It is
 // deliberately separate from runtime approval and proposed-patch approval.
 type CancelProposal struct {
@@ -166,6 +184,7 @@ func (CloseSession) isReducerInput()             {}
 func (CancelOperation) isReducerInput()          {}
 func (RespondToRuntimeApproval) isReducerInput() {}
 func (RequestProposal) isReducerInput()          {}
+func (RefreshProposal) isReducerInput()          {}
 func (CancelProposal) isReducerInput()           {}
 func (RejectProposal) isReducerInput()           {}
 func (ApproveProposal) isReducerInput()          {}
@@ -181,6 +200,7 @@ func (CloseSession) isCommand()             {}
 func (CancelOperation) isCommand()          {}
 func (RespondToRuntimeApproval) isCommand() {}
 func (RequestProposal) isCommand()          {}
+func (RefreshProposal) isCommand()          {}
 func (CancelProposal) isCommand()           {}
 func (RejectProposal) isCommand()           {}
 func (ApproveProposal) isCommand()          {}

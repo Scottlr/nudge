@@ -256,13 +256,13 @@ type ProposalValidityResult struct {
 	Version          review.ProposalVersionNumber
 	ExpectedStatus   review.ProposalStatus
 	Outcome          ProposalValidityOutcome
-	Reason           string
+	Reason           StaleReason
 	ConflictPath     *repository.RepoPath
 	EvidenceBytes    ByteSize
 }
 
 func (r ProposalValidityResult) Validate() error {
-	if r.ApplyOperationID == "" || r.Generation == 0 || r.ProposalID == "" || r.Version == 0 || r.ExpectedStatus.Validate() != nil || r.Outcome.Validate() != nil || r.Reason == "" || len(r.Reason) > 128 || r.EvidenceBytes == 0 {
+	if r.ApplyOperationID == "" || r.Generation == 0 || r.ProposalID == "" || r.Version == 0 || r.ExpectedStatus.Validate() != nil || r.Outcome.Validate() != nil || r.Reason.Validate() != nil || r.EvidenceBytes == 0 {
 		return ErrPostApplyReconciliationInvalid
 	}
 	if r.ConflictPath != nil {
@@ -656,36 +656,6 @@ func (s *PostApplyReconciliationService) runValiditySweep(ctx context.Context, g
 	record.Phase = PostApplyPhaseBaselinePending
 	guard, err := s.journal.CompleteValidity(ctx, guard, *record, s.clock.Now().UTC())
 	return guard, events, err
-}
-
-func evaluateProposalValidity(candidate ProposalValidityCandidate, destination PostApplyDestinationState, operationID domain.OperationID, generation repository.TargetGeneration) ProposalValidityResult {
-	result := ProposalValidityResult{ApplyOperationID: operationID, Generation: generation, ProposalID: candidate.ProposalID, Version: candidate.Version, ExpectedStatus: candidate.Status, Outcome: ProposalValidityValid, Reason: "valid", EvidenceBytes: 1}
-	if candidate.Destination.WorktreeID != destination.WorktreeID || candidate.Destination.TargetKind != destination.TargetKind {
-		result.Outcome = ProposalValidityStale
-		result.Reason = "destination_kind_mismatch"
-		return result
-	}
-	if destination.TargetKind != repository.TargetLocal && candidate.Destination.ExpectedHead != destination.Head {
-		result.Outcome = ProposalValidityStale
-		result.Reason = "target_head_changed"
-		return result
-	}
-	current := make(map[repository.RepoPathKey]repository.PathPrecondition, len(destination.Paths))
-	for _, value := range destination.Paths {
-		current[value.Path.Key()] = value
-	}
-	for _, expected := range candidate.Preconditions {
-		actual, ok := current[expected.Path.Key()]
-		if !ok || !preconditionMatchesExpected(actual, expected) {
-			path := repository.RepoPath(expected.Path.Bytes())
-			result.Outcome = ProposalValidityStale
-			result.Reason = "path_precondition_changed"
-			result.ConflictPath = &path
-			result.EvidenceBytes += ByteSize(len(path.Bytes()))
-			return result
-		}
-	}
-	return result
 }
 
 func validatePostApplyPreconditions(values []repository.PathPrecondition) error {

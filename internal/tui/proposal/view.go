@@ -60,6 +60,9 @@ func (m *Model) View() string {
 	if m.projection.StatusReason != "" {
 		lines = append(lines, m.styled(theme.RoleMuted, "reason: "+safeText(m.projection.StatusReason)))
 	}
+	if m.CanRefresh() && m.confirmation == confirmationNone {
+		lines = append(lines, m.styled(theme.RoleProposalStale, "Refresh proposal is available: rebuild the isolated baseline and reuse the same Codex conversation"))
+	}
 
 	entries := m.residentEntries()
 	if len(entries) == 0 {
@@ -195,6 +198,14 @@ func (m *Model) confirmationLines() []string {
 			m.styled(theme.RoleOverlayTitle, "attempt "+safeText(string(m.projection.FailedAttemptID))),
 			m.styled(theme.RoleOverlay, "reset only the isolated result to the trusted baseline; source, destination, history, and conversation remain"),
 			m.styled(theme.RoleHelp, "confirm to dispatch Discard failed result; cancel to return"),
+		}
+	}
+	if m.confirmation == confirmationRefresh {
+		return []string{
+			m.styled(theme.RoleWarning, "CONFIRM REFRESH PROPOSAL"),
+			m.styled(theme.RoleOverlayTitle, fmt.Sprintf("version %d / %s", identity.Version, shortHash(identity.PatchSHA256))),
+			m.styled(theme.RoleOverlay, "the old immutable version remains stale; the isolated workspace will be rebuilt and the same Codex conversation will receive a new turn"),
+			m.styled(theme.RoleHelp, "confirm to dispatch Refresh proposal; cancel to return"),
 		}
 	}
 	return []string{

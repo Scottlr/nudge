@@ -110,6 +110,42 @@ func (s ProposalStatus) CanTransitionTo(next ProposalStatus) bool {
 	}
 }
 
+// StaleReason identifies why an immutable proposal version can no longer be
+// applied to the current destination. The reason is durable workflow
+// evidence, not provider prose.
+type StaleReason string
+
+const (
+	StaleReasonValid                     StaleReason = "valid"
+	StaleReasonPathPreconditionChanged   StaleReason = "path_precondition_changed"
+	StaleReasonDestinationKindChanged    StaleReason = "destination_kind_mismatch"
+	StaleReasonDestinationChanged        StaleReason = "destination_changed"
+	StaleReasonTargetHeadChanged         StaleReason = "target_head_changed"
+	StaleReasonTargetGenerationChanged   StaleReason = "target_generation_changed"
+	StaleReasonProposalSuperseded        StaleReason = "proposal_superseded"
+	StaleReasonProposalApplied           StaleReason = "proposal_applied"
+	StaleReasonWorkspaceBaselineMismatch StaleReason = "workspace_baseline_mismatch"
+	StaleReasonIsolationLost             StaleReason = "isolation_lost"
+	StaleReasonUnsupportedCapability     StaleReason = "unsupported_capability"
+	StaleReasonAnchorNeedsConfirmation   StaleReason = "anchor_needs_confirmation"
+)
+
+// Validate checks that a stale reason is one of the bounded product codes.
+func (r StaleReason) Validate() error {
+	switch r {
+	case StaleReasonValid, StaleReasonPathPreconditionChanged, StaleReasonDestinationKindChanged,
+		StaleReasonDestinationChanged, StaleReasonTargetHeadChanged, StaleReasonTargetGenerationChanged,
+		StaleReasonProposalSuperseded, StaleReasonProposalApplied, StaleReasonWorkspaceBaselineMismatch,
+		StaleReasonIsolationLost, StaleReasonUnsupportedCapability, StaleReasonAnchorNeedsConfirmation:
+		return nil
+	default:
+		return errors.New("invalid stale reason")
+	}
+}
+
+// IsStale reports whether the reason requires an explicit refresh or reject.
+func (r StaleReason) IsStale() bool { return r != StaleReasonValid }
+
 // ProposalFailurePhase records which owner stopped a failed proposal action.
 type ProposalFailurePhase string
 

@@ -50,6 +50,8 @@ type BeginApproveMsg struct{}
 type ConfirmApproveMsg struct{}
 type BeginRejectMsg struct{}
 type ConfirmRejectMsg struct{}
+type BeginRefreshMsg struct{}
+type ConfirmRefreshMsg struct{}
 type BeginDiscardMsg struct{}
 type ConfirmDiscardMsg struct{}
 type CancelConfirmationMsg struct{}
@@ -276,6 +278,23 @@ func (m *Model) handleReject(confirm bool) []Intent {
 	return []Intent{{Reject: &RejectProposalIntent{Identity: m.actionIdentity()}}}
 }
 
+func (m *Model) handleRefresh(confirm bool) []Intent {
+	if m == nil || !m.CanRefresh() {
+		return nil
+	}
+	if !confirm {
+		m.confirmation = confirmationRefresh
+		return nil
+	}
+	if m.confirmation != confirmationRefresh || !m.CanRefresh() {
+		m.confirmation = confirmationNone
+		m.lastError = "proposal refresh is unavailable"
+		return nil
+	}
+	m.confirmation = confirmationNone
+	return []Intent{{Refresh: &RefreshProposalIntent{Identity: m.actionIdentity()}}}
+}
+
 func (m *Model) handleDiscard(confirm bool) []Intent {
 	if m == nil || !m.CanDiscardResult() {
 		return nil
@@ -460,6 +479,10 @@ func (m *Model) Update(message any) []Intent {
 		return m.handleReject(false)
 	case ConfirmRejectMsg:
 		return m.handleReject(true)
+	case BeginRefreshMsg:
+		return m.handleRefresh(false)
+	case ConfirmRefreshMsg:
+		return m.handleRefresh(true)
 	case BeginDiscardMsg:
 		return m.handleDiscard(false)
 	case ConfirmDiscardMsg:
