@@ -84,12 +84,14 @@ type ResultSnapshotEntry struct {
 	LinkTarget         []byte                          `json:"link_target,omitempty"`
 	NativeIdentityHash string                          `json:"native_identity_hash,omitempty"`
 	NativeAlias        *repository.NativeAliasEvidence `json:"native_alias,omitempty"`
+	NativePath         *repository.NativePathEvidence  `json:"native_path,omitempty"`
 	Complete           bool                            `json:"complete"`
 	Reason             ResultSnapshotReason            `json:"reason"`
 }
 
 func (e ResultSnapshotEntry) Validate() error {
-	if _, err := repository.NewRepoPath(e.Path); err != nil || e.Reason.Validate() != nil {
+	path, pathErr := repository.NewRepoPath(e.Path)
+	if pathErr != nil || e.Reason.Validate() != nil || e.NativePath != nil && (e.NativePath.Validate() != nil || e.NativePath.RepoPathKey != path.Key()) {
 		return ErrInvalidResultSnapshot
 	}
 	switch e.Kind {
@@ -109,7 +111,7 @@ func (e ResultSnapshotEntry) Validate() error {
 			return ErrInvalidResultSnapshot
 		}
 	case repository.FileKindUnknown:
-		if e.Mode != 0 || e.Bytes != 0 || e.SHA256 != "" || e.ContentClass != "" || e.TextSemantics != nil || len(e.LinkTarget) != 0 || e.NativeIdentityHash != "" || e.NativeAlias != nil || e.Complete || e.Reason == ResultReasonNone {
+		if e.Mode != 0 || e.Bytes != 0 || e.SHA256 != "" || e.ContentClass != "" || e.TextSemantics != nil || len(e.LinkTarget) != 0 || e.NativeIdentityHash != "" || e.NativeAlias != nil || e.NativePath != nil || e.Complete || e.Reason == ResultReasonNone {
 			return ErrInvalidResultSnapshot
 		}
 	default:
@@ -607,6 +609,10 @@ func cloneResultEntries(entries []ResultSnapshotEntry) []ResultSnapshotEntry {
 			alias := *entry.NativeAlias
 			copyEntries[index].NativeAlias = &alias
 		}
+		if entry.NativePath != nil {
+			nativePath := *entry.NativePath
+			copyEntries[index].NativePath = &nativePath
+		}
 	}
 	return copyEntries
 }
@@ -623,6 +629,10 @@ func cloneDeltaEntries(entries []ResultDeltaEntry) []ResultDeltaEntry {
 				semantics := *base.TextSemantics
 				base.TextSemantics = &semantics
 			}
+			if base.NativePath != nil {
+				nativePath := *base.NativePath
+				base.NativePath = &nativePath
+			}
 			copyEntries[index].Baseline = &base
 		}
 		if entry.Result != nil {
@@ -632,6 +642,10 @@ func cloneDeltaEntries(entries []ResultDeltaEntry) []ResultDeltaEntry {
 			if result.NativeAlias != nil {
 				alias := *result.NativeAlias
 				result.NativeAlias = &alias
+			}
+			if result.NativePath != nil {
+				nativePath := *result.NativePath
+				result.NativePath = &nativePath
 			}
 			copyEntries[index].Result = &result
 			if result.TextSemantics != nil {
@@ -676,6 +690,7 @@ func resultDeltaHash(delta ResultDelta) string {
 			writeResultHashString(h, string(entry.Baseline.ContentClass))
 			writeResultTextSemanticsHash(h, entry.Baseline.TextSemantics)
 			writeResultHashBytes(h, entry.Baseline.LinkTarget)
+			writeResultNativePathHash(h, entry.Baseline.NativePath)
 		}
 		if entry.Result == nil {
 			writeResultHashBool(h, false)
@@ -716,8 +731,26 @@ func writeResultEntryHash(h interface{ Write([]byte) (int, error) }, entry Resul
 		writeResultHashString(h, entry.NativeAlias.FileIdentityHash)
 		writeResultHashUint(h, entry.NativeAlias.LinkCount)
 	}
+	writeResultNativePathHash(h, entry.NativePath)
 	writeResultHashBool(h, entry.Complete)
 	writeResultHashString(h, string(entry.Reason))
+}
+
+func writeResultNativePathHash(h interface{ Write([]byte) (int, error) }, value *repository.NativePathEvidence) {
+	if value == nil {
+		writeResultHashBool(h, false)
+		return
+	}
+	writeResultHashBool(h, true)
+	writeResultHashBytes(h, []byte(string(value.RepoPathKey)))
+	writeResultHashString(h, value.RootIdentity)
+	writeResultHashString(h, value.Platform)
+	writeResultHashString(h, value.FilesystemClass)
+	writeResultHashString(h, value.ComparisonKeyHash)
+	writeResultHashString(h, value.ParentChainHash)
+	writeResultHashString(h, string(value.Disposition))
+	writeResultHashString(h, value.ReasonCode)
+	writeResultHashString(h, value.EvidenceVersion)
 }
 
 func writeResultTextSemanticsHash(h interface{ Write([]byte) (int, error) }, value *repository.TextByteSemantics) {
