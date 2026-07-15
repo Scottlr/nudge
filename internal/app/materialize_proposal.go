@@ -32,6 +32,7 @@ type ProposalBaselineRequest struct {
 // that can be persisted with a proposal workspace lifecycle claim.
 type ProposalBaseline struct {
 	Generation CaptureGeneration
+	Target     *repository.ResolvedTarget
 	Manifest   WorkspaceManifest
 }
 
@@ -69,7 +70,16 @@ func (r ProposalBaselineRequest) Validate() error {
 
 // Validate checks that a materialized baseline contains complete evidence.
 func (b ProposalBaseline) Validate() error {
-	if b.Generation.Validate() != nil || b.Manifest.Validate() != nil {
+	if b.Manifest.Validate() != nil {
+		return ErrInvalidProposalBaseline
+	}
+	if b.Target != nil {
+		if b.Generation != (CaptureGeneration{}) || b.Target.Validate() != nil || b.Target.Spec.Kind != repository.TargetCommit && b.Target.Spec.Kind != repository.TargetBranch {
+			return ErrInvalidProposalBaseline
+		}
+		return nil
+	}
+	if b.Generation.Validate() != nil {
 		return ErrInvalidProposalBaseline
 	}
 	return nil

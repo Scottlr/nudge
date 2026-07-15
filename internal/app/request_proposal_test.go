@@ -112,6 +112,25 @@ func TestProposalTurnServiceStartsOnceAndPublishesOnlyAfterQuiescence(t *testing
 	}
 }
 
+func TestProposalTurnRequiresCurrentHeadEligibilityForPinnedTargets(t *testing.T) {
+	fixture := newProposalTurnFixture(t)
+	commitGeneration := review.GenerationProvenance{
+		SessionID: fixture.store.aggregate.Intent.ConfirmedAgainst.SessionID, Generation: 2,
+		Base: repository.SnapshotRef{Kind: repository.SnapshotEmpty}, Head: repository.SnapshotRef{Kind: repository.SnapshotCommit, ObjectID: "head-pinned"},
+	}
+	fixture.store.aggregate.Intent.ConfirmedAgainst = commitGeneration
+	fixture.store.aggregate.Workspace.SourceGeneration = commitGeneration
+	command := fixture.request()
+	command.Intent = fixture.store.aggregate.Intent
+	if err := validateProposalAggregateForRequest(fixture.store.aggregate, command); !errors.Is(err, ErrProposalTurnUnavailable) {
+		t.Fatalf("missing target eligibility error = %v", err)
+	}
+	command.Eligibility = &ProposalEligibility{Eligible: true, Reason: ProposalEligible, TargetKind: repository.TargetCommit, WorktreeID: fixture.store.aggregate.Workspace.WorktreeID, ExpectedHead: "head-pinned", ObservedHead: "head-pinned"}
+	if err := validateProposalAggregateForRequest(fixture.store.aggregate, command); err != nil {
+		t.Fatalf("eligible target validation error = %v", err)
+	}
+}
+
 type proposalTurnFixture struct {
 	store        *proposalTurnStore
 	provider     *proposalProviderFake
