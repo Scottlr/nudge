@@ -664,9 +664,43 @@ func (t *transaction) CreateReconciliation(ctx context.Context, operation app.Re
 	if !validReconciliationState(operation.State) || operation.ID == "" || operation.SessionID != t.sessionID || operation.FromGeneration == 0 || operation.ToGeneration == 0 || operation.StartedAt.IsZero() || operation.CompletedAt != nil {
 		return app.ErrReviewStoreInput
 	}
-	_, err := t.tx.ExecContext(ctx, `INSERT INTO reconciliation_operations(id, session_id, from_generation, to_generation, state, started_at, active)
-		VALUES(?, ?, ?, ?, ?, ?, 0)`, operation.ID, operation.SessionID, operation.FromGeneration, operation.ToGeneration, string(operation.State), formatTime(operation.StartedAt))
+	if operation.Progress.Phase == "" {
+		operation.Progress = app.ReconciliationProgress{Phase: app.ReconciliationPhaseStaging}
+	}
+	if operation.Validate() != nil || operation.CaptureID == "" && operation.ManifestHash != "" {
+		return app.ErrReviewStoreInput
+	}
+	_, err := t.tx.ExecContext(ctx, `INSERT INTO reconciliation_operations(
+		id, session_id, from_generation, to_generation, capture_id, manifest_hash, state, phase, cursor,
+		processed_anchors, total_anchors, processed_paths, source_bytes, evidence_bytes, started_at, active
+	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+		operation.ID, operation.SessionID, operation.FromGeneration, operation.ToGeneration,
+		string(operation.CaptureID), operation.ManifestHash, string(operation.State), string(operation.Progress.Phase), operation.Progress.Cursor,
+		operation.Progress.ProcessedAnchors, operation.Progress.TotalAnchors, operation.Progress.ProcessedPaths, operation.Progress.SourceBytes, operation.Progress.EvidenceBytes,
+		formatTime(operation.StartedAt))
 	return err
+}
+
+func (t *transaction) UpdateReconciliation(ctx context.Context, operation app.ReconciliationOperation) error {
+	if operation.Validate() != nil || operation.SessionID != t.sessionID || operation.CompletedAt != nil {
+		return app.ErrReviewStoreInput
+	}
+	result, err := t.tx.ExecContext(ctx, `UPDATE reconciliation_operations SET
+		phase = ?, cursor = ?, processed_anchors = ?, total_anchors = ?, processed_paths = ?, source_bytes = ?, evidence_bytes = ?
+		WHERE id = ? AND session_id = ? AND from_generation = ? AND to_generation = ?
+		AND capture_id = ? AND manifest_hash = ? AND state IN (?, ?)`,
+		string(operation.Progress.Phase), operation.Progress.Cursor, operation.Progress.ProcessedAnchors, operation.Progress.TotalAnchors,
+		operation.Progress.ProcessedPaths, operation.Progress.SourceBytes, operation.Progress.EvidenceBytes,
+		operation.ID, operation.SessionID, operation.FromGeneration, operation.ToGeneration, string(operation.CaptureID), operation.ManifestHash,
+		string(app.ReconciliationStaged), string(app.ReconciliationRunning))
+	if err != nil {
+		return err
+	}
+	count, _ := result.RowsAffected()
+	if count != 1 {
+		return app.ErrReviewStoreNotFound
+	}
+	return nil
 }
 
 func (t *transaction) StageReconciliationResult(ctx context.Context, result app.ReconciliationAnchorResult) error {
@@ -700,8 +734,8 @@ func (t *transaction) CompleteReconciliation(ctx context.Context, operationID do
 	if operationID == "" || completedAt.IsZero() {
 		return app.ErrReviewStoreInput
 	}
-	result, err := t.tx.ExecContext(ctx, `UPDATE reconciliation_operations SET state = ?, completed_at = ?
-		WHERE id = ? AND session_id = ? AND state IN (?, ?)`, app.ReconciliationCompleted, formatTime(completedAt), operationID, t.sessionID, app.ReconciliationStaged, app.ReconciliationRunning)
+	result, err := t.tx.ExecContext(ctx, `UPDATE reconciliation_operations SET state = ?, phase = ?, completed_at = ?
+		WHERE id = ? AND session_id = ? AND state IN (?, ?)`, app.ReconciliationCompleted, app.ReconciliationPhaseCompleted, formatTime(completedAt), operationID, t.sessionID, app.ReconciliationStaged, app.ReconciliationRunning)
 	if err != nil {
 		return err
 	}

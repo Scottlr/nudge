@@ -1,0 +1,9 @@
+ALTER TABLE reconciliation_operations ADD COLUMN capture_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE reconciliation_operations ADD COLUMN manifest_hash TEXT NOT NULL DEFAULT '';
+ALTER TABLE reconciliation_operations ADD COLUMN phase TEXT NOT NULL DEFAULT 'staging';
+ALTER TABLE reconciliation_operations ADD COLUMN cursor TEXT NOT NULL DEFAULT '';
+ALTER TABLE reconciliation_operations ADD COLUMN processed_anchors INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE reconciliation_operations ADD COLUMN total_anchors INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE reconciliation_operations ADD COLUMN processed_paths INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE reconciliation_operations ADD COLUMN source_bytes INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE reconciliation_operations ADD COLUMN evidence_bytes INTEGER NOT NULL DEFAULT 0;

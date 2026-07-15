@@ -50,6 +50,8 @@ func migrationCatalog() ([]migration, error) {
 			owner = "owned_storage"
 		} else if strings.Contains(name, "repository_preferences") {
 			owner = "persist_nudge_state"
+		} else if strings.Contains(name, "reconciliation") {
+			owner = "git_proposals"
 		}
 		catalog = append(catalog, migration{
 			Version:  uint64(index + 1),
