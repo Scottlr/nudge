@@ -43,4 +43,31 @@ func TestPublishedRangeIsIdentityBoundAndNewArtifactCanBeRemoved(t *testing.T) {
 	if err := manager.RemovePublished(context.Background(), published); err != nil {
 		t.Fatal(err)
 	}
+	proposalHandle, err := manager.Create(context.Background(), app.SpoolSpec{OperationID: plan.OperationID, OwnerKind: app.OwnerProposal, Reservation: reservation, Limits: testSpoolLimits()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := proposalHandle.WriteFrom(context.Background(), "patch", strings.NewReader("hello")); err != nil {
+		t.Fatal(err)
+	}
+	proposalIdentity, err := proposalHandle.CloseAndVerify(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	proposalPublished, err := proposalHandle.Publish(context.Background(), proposalIdentity, app.PublishTarget{OwnerKind: app.OwnerProposal, RelativePath: "proposal-patch-1", SourceRelativePath: "patch"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest = sha256.Sum256([]byte("hello"))
+	rangeRequest := app.ProposalPatchRangeRequest{ArtifactID: "proposal-patch-1", Published: proposalPublished, PatchSHA256: hex.EncodeToString(digest[:]), PatchBytes: proposalIdentity.Bytes, Offset: 1, MaxBytes: 3}
+	patchRange, err := manager.ReadProposalPatchRange(context.Background(), rangeRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := patchRange.Validate(rangeRequest); err != nil || string(patchRange.Bytes) != "ell" {
+		t.Fatalf("proposal patch range = %#v err=%v", patchRange, err)
+	}
+	if err := manager.RemovePublished(context.Background(), proposalPublished); err != nil {
+		t.Fatal(err)
+	}
 }

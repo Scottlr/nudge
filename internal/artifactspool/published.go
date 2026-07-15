@@ -15,6 +15,28 @@ import (
 
 const maxPublishedRangeBytes app.ByteSize = 256 * app.KiB
 
+// ReadProposalPatchRange verifies and returns one bounded range from an
+// adopted proposal patch. The caller supplies the persisted target and full
+// stream identity; this adapter never resolves an arbitrary path.
+func (m *Manager) ReadProposalPatchRange(ctx context.Context, request app.ProposalPatchRangeRequest) (app.ProposalPatchRange, error) {
+	if request.Validate() != nil {
+		return app.ProposalPatchRange{}, app.ErrProposalPatchRangeInvalid
+	}
+	if request.MaxBytes > maxPublishedRangeBytes {
+		return app.ProposalPatchRange{}, app.ErrProposalPatchRangeInvalid
+	}
+	data, err := m.ReadPublishedRange(ctx, request.Published.Target, "", app.StreamIdentity{Bytes: request.PatchBytes, SHA256: request.PatchSHA256}, request.Offset, request.MaxBytes)
+	if err != nil {
+		return app.ProposalPatchRange{}, err
+	}
+	digest := sha256.Sum256(data)
+	result := app.ProposalPatchRange{ArtifactID: request.ArtifactID, PatchSHA256: request.PatchSHA256, Offset: request.Offset, Length: app.ByteSize(len(data)), SHA256: hex.EncodeToString(digest[:]), Bytes: append([]byte(nil), data...), Complete: true}
+	if result.Validate(request) != nil {
+		return app.ProposalPatchRange{}, app.ErrCaptureCorrupt
+	}
+	return result, nil
+}
+
 // ReadPublishedRange verifies one accepted file against its immutable stream
 // identity and returns only the requested bounded range. Callers never receive
 // the protected absolute path.
@@ -142,3 +164,4 @@ func (m *Manager) RemovePublished(ctx context.Context, published app.PublishedAr
 
 var _ app.PublishedArtifactReader = (*Manager)(nil)
 var _ app.PublishedArtifactReleaser = (*Manager)(nil)
+var _ app.ProposalPatchReader = (*Manager)(nil)
