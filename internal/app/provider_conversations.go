@@ -232,6 +232,18 @@ type InterruptProviderTurn struct {
 	CorrelationID CorrelationID
 }
 
+// CompleteProviderTurn records normalized terminal provider truth after the
+// caller has applied any owner-specific quiescence policy.
+type CompleteProviderTurn struct {
+	Guard         SessionWriteGuard
+	ThreadID      domain.ReviewThreadID
+	TurnID        domain.ProviderTurnID
+	OperationID   domain.OperationID
+	CorrelationID CorrelationID
+	State         ProviderTurnState
+	ErrorCode     review.ErrorCode
+}
+
 // ResumeProviderConversation reconnects an existing durable local mapping to
 // the same opaque provider conversation after a process restart.
 type ResumeProviderConversation struct {
@@ -676,6 +688,34 @@ func (s *ProviderConversationService) InterruptTurn(ctx context.Context, command
 		return ProviderConversationCommit{}, err
 	}
 	return ProviderConversationCommit{Guard: guard, Turn: &turn, Events: []Event{ProviderTurnStateChanged{TurnID: turn.ID, ConversationID: turn.ConversationID, ThreadID: turn.ThreadID, State: turn.State, OperationID: command.OperationID, CorrelationID: command.CorrelationID}}}, nil
+}
+
+// CompleteTurn closes one active local turn journal. It never derives or
+// publishes proposal state; proposal orchestration decides when this boundary
+// is safe to commit.
+func (s *ProviderConversationService) CompleteTurn(ctx context.Context, command CompleteProviderTurn) (ProviderConversationCommit, error) {
+	if err := s.validateCommand(ctx, command.Guard, command.ThreadID, command.OperationID, command.CorrelationID); err != nil {
+		return ProviderConversationCommit{}, err
+	}
+	if command.State != ProviderTurnCompleted && command.State != ProviderTurnFailed && command.State != ProviderTurnInterrupted {
+		return ProviderConversationCommit{}, ErrProviderTurnActive
+	}
+	turn, err := s.loadTurn(ctx, command.Guard, command.ThreadID, command.TurnID)
+	if err != nil {
+		return ProviderConversationCommit{}, err
+	}
+	if !turn.active() || turn.ProviderTurnRef == "" {
+		return ProviderConversationCommit{}, ErrProviderTurnActive
+	}
+	now := s.clock.Now().UTC()
+	turn.State = command.State
+	turn.ErrorCode = command.ErrorCode
+	turn.CompletedAt = &now
+	guard, err := s.saveTurn(ctx, command.Guard, turn)
+	if err != nil {
+		return ProviderConversationCommit{}, err
+	}
+	return ProviderConversationCommit{Guard: guard, Turn: &turn, Events: []Event{ProviderTurnStateChanged{TurnID: turn.ID, ConversationID: turn.ConversationID, ThreadID: turn.ThreadID, State: turn.State, ErrorCode: turn.ErrorCode, OperationID: command.OperationID, CorrelationID: command.CorrelationID}}}, nil
 }
 
 // Restore marks nonterminal durable turns interrupted after process restart.

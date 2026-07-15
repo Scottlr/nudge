@@ -269,6 +269,9 @@ type DiscussionTurnProvenance struct {
 	ResourcePolicyVersion   ResourcePolicyVersion
 	EvidenceVersion         EvidenceVersion
 	PermissionVersion       string
+	ProposalID              domain.ProposalID
+	WorkspaceID             domain.WorkspaceID
+	IntentID                domain.ProposalID
 }
 
 func (p DiscussionTurnProvenance) IsZero() bool {
@@ -295,6 +298,13 @@ func (p DiscussionTurnProvenance) Validate() error {
 		}
 	case DiscussionModePromptOnly:
 		if p.ReviewSnapshotID != "" || p.ManifestHash != "" || p.SourceSnapshotRef != "" && p.SourceCaptureID != "" {
+			return ErrInvalidDiscussionContext
+		}
+	case DiscussionModeProposal:
+		if p.ProposalID == "" || p.WorkspaceID == "" || p.IntentID == "" || p.SourceSnapshotRef == "" || p.ManifestHash == "" || len(p.ManifestHash) != sha256.Size*2 || p.ReviewSnapshotID != "" {
+			return ErrInvalidDiscussionContext
+		}
+		if _, err := hex.DecodeString(p.ManifestHash); err != nil {
 			return ErrInvalidDiscussionContext
 		}
 	case DiscussionModeDisabled:
