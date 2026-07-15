@@ -32,7 +32,7 @@ func TestStoreMigrationAndReviewRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("migration status: %v", err)
 	}
-	if status.Version != 10 || !validSHA256(status.Checksum) {
+	if status.Version != 11 || !validSHA256(status.Checksum) {
 		t.Fatalf("migration status = %#v", status)
 	}
 	var foreignKeys int
