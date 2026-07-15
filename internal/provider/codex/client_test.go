@@ -207,6 +207,51 @@ func runFakeAppServer(mode string) {
 	}
 
 	switch mode {
+	case "lifecycle":
+		initialize := readRequest()
+		if initialize.Method != "initialize" || strings.Contains(string(initialize.Params), `"capabilities"`) {
+			os.Exit(6)
+		}
+		write(responseLine(initialize.ID, `{"codexHome":"C:\\codex","platformFamily":"windows","platformOs":"windows","userAgent":"codex-cli 0.144.0-alpha.4"}`))
+		initialized := readRequest()
+		if initialized.Kind != protocol.FrameNotification || initialized.Method != "initialized" {
+			os.Exit(7)
+		}
+		account := readRequest()
+		if account.Method != "account/read" {
+			os.Exit(8)
+		}
+		write(responseLine(account.ID, `{"account":{"type":"chatgpt","planType":"plus","email":"secret@example.com"},"requiresOpenaiAuth":false}`))
+		for input.Scan() {
+		}
+	case "unsupported_lifecycle":
+		initialize := readRequest()
+		if initialize.Method != "initialize" {
+			os.Exit(9)
+		}
+		write(responseLine(initialize.ID, `{"codexHome":"C:\\codex","platformFamily":"windows","platformOs":"windows","userAgent":"codex-cli 0.143.0-alpha.4"}`))
+	case "login":
+		initialize := readRequest()
+		if initialize.Method != "initialize" {
+			os.Exit(10)
+		}
+		write(responseLine(initialize.ID, `{"codexHome":"C:\\codex","platformFamily":"windows","platformOs":"windows","userAgent":"codex-cli 0.144.0-alpha.4"}`))
+		initialized := readRequest()
+		if initialized.Kind != protocol.FrameNotification || initialized.Method != "initialized" {
+			os.Exit(11)
+		}
+		account := readRequest()
+		if account.Method != "account/read" {
+			os.Exit(12)
+		}
+		write(responseLine(account.ID, `{"account":null,"requiresOpenaiAuth":true}`))
+		login := readRequest()
+		if login.Method != "account/login/start" || !strings.Contains(string(login.Params), `"type":"chatgpt"`) {
+			os.Exit(13)
+		}
+		write(responseLine(login.ID, `{"type":"chatgpt","loginId":"login-1","authUrl":"https://auth.example.test/login"}`))
+		for input.Scan() {
+		}
 	case "out_of_order":
 		first := readRequest()
 		second := readRequest()
