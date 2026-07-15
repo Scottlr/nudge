@@ -160,3 +160,84 @@ func TestNativePathExecutorKeepsUnsafePathReviewable(t *testing.T) {
 		t.Fatalf("unsafe evidence invalid: %+v", evidence)
 	}
 }
+
+func TestNativePathExecutorSymlinkLeavesAreNoFollowAndEvidenceBound(t *testing.T) {
+	rootPath := t.TempDir()
+	if err := os.WriteFile(filepath.Join(rootPath, "target-one"), []byte("one"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rootPath, "target-two"), []byte("two"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root, err := NewVerifiedRoot(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver := NewNativePathResolver()
+	path := repository.RepoPath("link")
+	firstTarget := []byte("target-one")
+	firstEvidence, err := resolver.QualifySymlinkTarget(root, path, firstTarget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	createToken, createPathEvidence, err := resolver.Resolve(context.Background(), root, path, repository.NativeCreateParent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolver.ExecuteLeaf(context.Background(), createToken, createPathEvidence, NativeLeafOperation{Kind: NativeLeafSymlink, Target: string(firstTarget), SymlinkEvidence: &firstEvidence}); err != nil {
+		if runtime.GOOS == "windows" {
+			t.Skipf("native symlink creation unavailable: %v", err)
+		}
+		t.Fatal(err)
+	}
+
+	readToken, readPathEvidence, err := resolver.Resolve(context.Background(), root, path, repository.NativeReadExisting)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var read NativeLeafResult
+	if _, err := resolver.ExecuteLeaf(context.Background(), readToken, readPathEvidence, NativeLeafOperation{Kind: NativeLeafReadlink, MaxBytes: repository.SymlinkNativeActionMax, Result: &read}); err != nil {
+		t.Fatal(err)
+	}
+	if read.Target != string(firstTarget) || read.SymlinkEvidence == nil || *read.SymlinkEvidence != firstEvidence {
+		t.Fatalf("readlink result = %+v, evidence=%+v", read, read.SymlinkEvidence)
+	}
+
+	secondTarget := []byte("target-two")
+	secondEvidence, err := resolver.QualifySymlinkTarget(root, path, secondTarget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replaceToken, replacePathEvidence, err := resolver.Resolve(context.Background(), root, path, repository.NativeReplaceLeaf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolver.ExecuteLeaf(context.Background(), replaceToken, replacePathEvidence, NativeLeafOperation{Kind: NativeLeafReplaceSymlink, Target: string(secondTarget), SymlinkEvidence: &secondEvidence}); err != nil {
+		t.Fatal(err)
+	}
+
+	unsafePath := repository.RepoPath("unsafe-link")
+	unsafeTarget := []byte("../outside")
+	unsafeEvidence, err := resolver.QualifySymlinkTarget(root, unsafePath, unsafeTarget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unsafeToken, unsafePathEvidence, err := resolver.Resolve(context.Background(), root, unsafePath, repository.NativeCreateParent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolver.ExecuteLeaf(context.Background(), unsafeToken, unsafePathEvidence, NativeLeafOperation{Kind: NativeLeafSymlink, Target: string(unsafeTarget), SymlinkEvidence: &unsafeEvidence}); !errors.Is(err, ErrNativePathReviewOnly) {
+		t.Fatalf("unsafe symlink error = %v", err)
+	}
+
+	deleteToken, deletePathEvidence, err := resolver.Resolve(context.Background(), root, path, repository.NativeDeleteLeaf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolver.ExecuteLeaf(context.Background(), deleteToken, deletePathEvidence, NativeLeafOperation{Kind: NativeLeafDelete, ExpectedKind: repository.FileKindSymlink}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(filepath.Join(rootPath, "link")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("symlink remains, err=%v", err)
+	}
+}

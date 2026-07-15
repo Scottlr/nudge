@@ -297,6 +297,7 @@ type ProposedFile struct {
 	OldMode          uint32
 	Mode             uint32
 	ModeTransition   *repository.ModeTransition
+	SymlinkEvidence  *repository.SymlinkEvidence
 	ContentBytes     uint64
 	ContentHash      string
 	OldContentBytes  uint64
@@ -313,7 +314,7 @@ type ProposedFile struct {
 }
 
 func (f ProposedFile) Validate() error {
-	if f.Path.Validate() != nil || f.Added && f.Deleted || f.Deleted && (f.Mode != 0 || f.Kind != repository.FileKindUnknown || f.ContentBytes != 0 || f.ContentClass != "" || f.TextSemantics != nil || f.ModeTransition != nil) || !f.Deleted && (!validFileKind(f.Kind) || f.Kind == repository.FileKindUnknown || repository.ValidateGitMode(f.Mode) != nil) || (f.OldPath != nil && f.OldPath.Validate() != nil) || (f.OldPath == nil && (f.OldKind != "" || f.OldMode != 0 || f.OldContentBytes != 0 || f.OldContentHash != "" || f.OldContentClass != "" || f.OldTextSemantics != nil || f.ModeTransition != nil)) || (f.OldPath != nil && (!validFileKind(f.OldKind) || f.OldKind == repository.FileKindUnknown || repository.ValidateGitMode(f.OldMode) != nil)) || (f.ContentHash != "" && !validSHA256(f.ContentHash)) || (f.OldContentHash != "" && !validSHA256(f.OldContentHash)) || f.ContentClass != "" && f.ContentClass.Validate() != nil || f.OldContentClass != "" && f.OldContentClass.Validate() != nil {
+	if f.Path.Validate() != nil || f.Added && f.Deleted || f.Deleted && (f.Mode != 0 || f.Kind != repository.FileKindUnknown || f.ContentBytes != 0 || f.ContentClass != "" || f.TextSemantics != nil || f.ModeTransition != nil || f.SymlinkEvidence != nil) || !f.Deleted && (!validFileKind(f.Kind) || f.Kind == repository.FileKindUnknown || repository.ValidateGitMode(f.Mode) != nil) || (f.OldPath != nil && f.OldPath.Validate() != nil) || (f.OldPath == nil && (f.OldKind != "" || f.OldMode != 0 || f.OldContentBytes != 0 || f.OldContentHash != "" || f.OldContentClass != "" || f.OldTextSemantics != nil || f.ModeTransition != nil)) || (f.OldPath != nil && (!validFileKind(f.OldKind) || f.OldKind == repository.FileKindUnknown || repository.ValidateGitMode(f.OldMode) != nil)) || (f.ContentHash != "" && !validSHA256(f.ContentHash)) || (f.OldContentHash != "" && !validSHA256(f.OldContentHash)) || f.ContentClass != "" && f.ContentClass.Validate() != nil || f.OldContentClass != "" && f.OldContentClass.Validate() != nil {
 		return ErrInvalidProposal
 	}
 	if f.Added && f.OldPath != nil || f.Deleted && f.OldPath != nil {
@@ -330,6 +331,9 @@ func (f ProposedFile) Validate() error {
 		return ErrInvalidProposal
 	}
 	if f.OldPath != nil && !modeMatchesFileKind(f.OldMode, f.OldKind) || !f.Deleted && !modeMatchesFileKind(f.Mode, f.Kind) {
+		return ErrInvalidProposal
+	}
+	if f.SymlinkEvidence != nil && (f.Kind != repository.FileKindSymlink || f.SymlinkEvidence.Validate() != nil || f.SymlinkEvidence.PathKey != f.Path.Key() || f.SymlinkEvidence.TargetHash != f.ContentHash || f.SymlinkEvidence.TargetLength != f.ContentBytes) {
 		return ErrInvalidProposal
 	}
 	if f.Copied && (f.OldPath == nil || f.Added || f.Deleted || f.TypeChanged || f.OldContentHash == "") {
@@ -405,6 +409,10 @@ func NewProposedPatch(patch ProposedPatch) (ProposedPatch, error) {
 		if patch.Files[index].ModeTransition != nil {
 			transition := *patch.Files[index].ModeTransition
 			patch.Files[index].ModeTransition = &transition
+		}
+		if patch.Files[index].SymlinkEvidence != nil {
+			evidence := *patch.Files[index].SymlinkEvidence
+			patch.Files[index].SymlinkEvidence = &evidence
 		}
 		if patch.Files[index].TextSemantics != nil {
 			semantics := *patch.Files[index].TextSemantics

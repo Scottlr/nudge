@@ -1600,7 +1600,7 @@ func (a *LocalCaptureAdapter) writeWorkingBlob(ctx context.Context, root string,
 		if readErr != nil {
 			return app.StreamIdentity{}, "", nil, "", "", &GitError{Code: ErrorPermission, Cause: readErr}
 		}
-		if uint64(len(target)) > uint64(a.policy.Input.RepoPathBytes) {
+		if uint64(len(target)) > uint64(a.policy.Symlink.TrackedBlobBytes) {
 			return app.StreamIdentity{}, "", nil, "", "", &GitError{Code: ErrorLocalCaptureLimit}
 		}
 		beforeTarget = target

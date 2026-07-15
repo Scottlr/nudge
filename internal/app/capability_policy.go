@@ -129,6 +129,8 @@ const (
 	ReasonPermissionUnavailable         CapabilityReasonCode = "permission_unavailable"
 	ReasonExecutableModeUnrepresentable CapabilityReasonCode = "executable_mode_unrepresentable"
 	ReasonTypeTransitionUnsupported     CapabilityReasonCode = "type_transition_unsupported"
+	ReasonSymlinkPlatformUnavailable    CapabilityReasonCode = "symlink_platform_unavailable"
+	ReasonSymlinkContainmentUnproven    CapabilityReasonCode = "symlink_containment_unproven"
 )
 
 // CapabilityReason is intentionally payload-free. Raw paths, prompts, and
@@ -304,6 +306,7 @@ type CurrentCapabilityEvidence struct {
 	Platform              PlatformEvidence
 	Session               SessionEvidence
 	Mode                  *ModeCapabilityEvidence
+	Symlink               *SymlinkCapabilityEvidence
 }
 
 // ModeCapabilityEvidence is the T089 conformance intersection. It proves
@@ -341,6 +344,46 @@ func (e ModeCapabilityEvidence) Supported() bool {
 		return e.CoreFilemode && e.ModeRepresentable && e.ModeReadbackVerified && e.ContentUnchanged
 	}
 	return true
+}
+
+// SymlinkCapabilityEvidence is the T090 conformance intersection for one
+// exact link target and its no-follow native operations.
+type SymlinkCapabilityEvidence struct {
+	Version            uint32
+	Evidence           repository.SymlinkEvidence
+	CreateSupported    bool
+	ReadlinkSupported  bool
+	ReplaceSupported   bool
+	DeleteSupported    bool
+	NoFollow           bool
+	PlatformSupported  bool
+	ReferentFollowHops uint32
+	Reason             CapabilityReasonCode
+}
+
+const SymlinkCapabilityEvidenceVersion uint32 = 1
+
+func (e SymlinkCapabilityEvidence) Validate() error {
+	if e.Version != SymlinkCapabilityEvidenceVersion || e.Evidence.Validate() != nil || e.Reason != "" && !validReasonCode(e.Reason) {
+		return ErrInvalidCapabilityEvidence
+	}
+	return nil
+}
+
+func (e SymlinkCapabilityEvidence) Supported(change repository.ChangeKind) bool {
+	if e.Validate() != nil || e.Reason != "" || !e.Evidence.IsActionable() || !e.NoFollow || !e.PlatformSupported || e.ReferentFollowHops != 0 {
+		return false
+	}
+	switch change {
+	case repository.ChangeAdded:
+		return e.CreateSupported && e.ReadlinkSupported
+	case repository.ChangeModified:
+		return e.ReplaceSupported && e.ReadlinkSupported
+	case repository.ChangeDeleted:
+		return e.DeleteSupported
+	default:
+		return false
+	}
 }
 
 // CapabilityRequest is an exact entry evaluation input.
@@ -483,11 +526,26 @@ func resolveAxis(axis CapabilityAxis, desired DesiredCell, request CapabilityReq
 		if reason, ok := modeCapabilityReason(request); !ok {
 			return false, []CapabilityReason{{Code: reason}}
 		}
+		if request.FileKind == repository.FileKindSymlink {
+			if reason, ok := symlinkCapabilityReason(request); !ok {
+				return false, []CapabilityReason{{Code: reason}}
+			}
+		}
 	}
 	if !sessionAllows(axis, request.Current.Session) {
 		return false, []CapabilityReason{{Code: ReasonSessionUnavailable}}
 	}
 	return true, nil
+}
+
+func symlinkCapabilityReason(request CapabilityRequest) (CapabilityReasonCode, bool) {
+	if request.Current.Symlink == nil || request.Current.Symlink.Validate() != nil || !request.Current.Symlink.Supported(request.ChangeKind) {
+		if request.Current.Symlink != nil && request.Current.Symlink.Reason == ReasonSymlinkPlatformUnavailable {
+			return ReasonSymlinkPlatformUnavailable, false
+		}
+		return ReasonSymlinkContainmentUnproven, false
+	}
+	return "", true
 }
 
 func modeCapabilityReason(request CapabilityRequest) (CapabilityReasonCode, bool) {
@@ -743,7 +801,7 @@ func validIndexState(state IndexState) bool {
 
 func validReasonCode(code CapabilityReasonCode) bool {
 	switch code {
-	case ReasonCapabilityNotImplemented, ReasonEvidenceStale, ReasonEvidenceWrongCell, ReasonPolicyDisabled, ReasonPermanentFalse, ReasonPolicyMismatch, ReasonResourceLimit, ReasonPlatformUnqualified, ReasonSessionUnavailable, ReasonIndexUnsafe, ReasonProviderUnavailable, ReasonAccountUnavailable, ReasonDisclosureUnavailable, ReasonPermissionUnavailable, ReasonExecutableModeUnrepresentable, ReasonTypeTransitionUnsupported:
+	case ReasonCapabilityNotImplemented, ReasonEvidenceStale, ReasonEvidenceWrongCell, ReasonPolicyDisabled, ReasonPermanentFalse, ReasonPolicyMismatch, ReasonResourceLimit, ReasonPlatformUnqualified, ReasonSessionUnavailable, ReasonIndexUnsafe, ReasonProviderUnavailable, ReasonAccountUnavailable, ReasonDisclosureUnavailable, ReasonPermissionUnavailable, ReasonExecutableModeUnrepresentable, ReasonTypeTransitionUnsupported, ReasonSymlinkPlatformUnavailable, ReasonSymlinkContainmentUnproven:
 		return true
 	default:
 		return false

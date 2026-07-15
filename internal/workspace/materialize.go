@@ -51,6 +51,11 @@ func MaterializeTree(ctx context.Context, source TrustedTreeSource, root Workspa
 	if err != nil {
 		return app.WorkspaceManifest{}, err
 	}
+	verifiedRoot, err := paths.NewVerifiedRoot(root.Path())
+	if err != nil {
+		return app.WorkspaceManifest{}, ErrWorkspaceRootMismatch
+	}
+	nativeResolver := paths.NewNativePathResolver()
 	if app.Count(len(entries)) > policy.Artifact.SnapshotEntries {
 		return app.WorkspaceManifest{}, app.ErrReviewSnapshotLimit
 	}
@@ -111,10 +116,14 @@ func MaterializeTree(ctx context.Context, source TrustedTreeSource, root Workspa
 				return app.WorkspaceManifest{}, app.ErrReviewSnapshotLimit
 			}
 			total += app.ByteSize(len(linkTarget))
+			evidence, evidenceErr := nativeResolver.QualifySymlinkTarget(verifiedRoot, entry.Path, linkTarget)
+			if evidenceErr != nil || !evidence.IsActionable() {
+				return app.WorkspaceManifest{}, app.ErrReviewSnapshotUnsafe
+			}
 			if err := os.Symlink(string(linkTarget), filepath.Join(root.Path(), nativePath)); err != nil {
 				return app.WorkspaceManifest{}, app.ErrReviewSnapshotUnsafe
 			}
-			manifestEntries = append(manifestEntries, app.WorkspaceManifestEntry{Path: entry.Path.Bytes(), Kind: entry.Kind, Mode: entry.Mode, Bytes: uint64(len(linkTarget)), SHA256: hashMaterializedBytes(linkTarget), LinkTarget: linkTarget})
+			manifestEntries = append(manifestEntries, app.WorkspaceManifestEntry{Path: entry.Path.Bytes(), Kind: entry.Kind, Mode: entry.Mode, Bytes: uint64(len(linkTarget)), SHA256: hashMaterializedBytes(linkTarget), LinkTarget: linkTarget, SymlinkEvidence: &evidence})
 			continue
 		}
 		file, createErr := paths.OpenProtectedFile(root.Path(), nativePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
@@ -175,6 +184,11 @@ func CopyManifestToRoot(ctx context.Context, source WorkspaceRoot, destination W
 	if err := ensureMaterializeRootEmpty(destination.Path()); err != nil {
 		return err
 	}
+	verifiedDestination, err := paths.NewVerifiedRoot(destination.Path())
+	if err != nil {
+		return ErrWorkspaceRootMismatch
+	}
+	nativeResolver := paths.NewNativePathResolver()
 	var total app.ByteSize
 	for _, entry := range manifest.Entries {
 		if err := checkMaterializeContext(ctx); err != nil {
@@ -203,6 +217,10 @@ func CopyManifestToRoot(ctx context.Context, source WorkspaceRoot, destination W
 			}
 			if total > policy.Artifact.SnapshotBytes || app.ByteSize(len(entry.LinkTarget)) > policy.Artifact.SnapshotBytes-total {
 				return app.ErrReviewSnapshotLimit
+			}
+			evidence, evidenceErr := nativeResolver.QualifySymlinkTarget(verifiedDestination, repository.RepoPath(entry.Path), entry.LinkTarget)
+			if evidenceErr != nil || !evidence.IsActionable() {
+				return app.ErrReviewSnapshotUnsafe
 			}
 			if err := os.Symlink(linkTarget, destinationPath); err != nil {
 				return err
@@ -418,7 +436,12 @@ func sameTextSemantics(left, right *repository.TextByteSemantics) bool {
 func materializedManifest(root string, policy app.ResourcePolicy) (app.WorkspaceManifest, error) {
 	entries := make([]app.WorkspaceManifestEntry, 0)
 	var total app.ByteSize
-	err := filepath.WalkDir(root, func(path string, dirEntry os.DirEntry, walkErr error) error {
+	verifiedRoot, err := paths.NewVerifiedRoot(root)
+	if err != nil {
+		return app.WorkspaceManifest{}, ErrWorkspaceRootMismatch
+	}
+	nativeResolver := paths.NewNativePathResolver()
+	err = filepath.WalkDir(root, func(path string, dirEntry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -449,6 +472,11 @@ func materializedManifest(root string, policy app.ResourcePolicy) (app.Workspace
 			entry.Bytes = uint64(len([]byte(target)))
 			entry.LinkTarget = []byte(target)
 			entry.SHA256 = hashMaterializedBytes(entry.LinkTarget)
+			evidence, evidenceErr := nativeResolver.QualifySymlinkTarget(verifiedRoot, rawPath, entry.LinkTarget)
+			if evidenceErr != nil {
+				return app.ErrReviewSnapshotUnsafe
+			}
+			entry.SymlinkEvidence = &evidence
 			if total > policy.Artifact.SnapshotBytes || app.ByteSize(entry.Bytes) > policy.Artifact.SnapshotBytes-total {
 				return app.ErrReviewSnapshotLimit
 			}

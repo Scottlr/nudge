@@ -146,6 +146,39 @@ func TestResolveCapabilityGatesModeTransitionsByCurrentEvidence(t *testing.T) {
 	}
 }
 
+func TestResolveCapabilityGatesSymlinkActionsByNoFollowEvidence(t *testing.T) {
+	t.Parallel()
+
+	policy := NewCapabilityPolicyV1()
+	request := qualifiedRequest(policy, repository.FileKindSymlink, repository.ChangeAdded, PathClassNormal, IndexClean)
+	path, _ := repository.NewRepoPath([]byte("src/main.go"))
+	safe, err := repository.NewSymlinkEvidence(path, []byte("target"), "root", "parents", "linux", repository.SymlinkPrimitiveVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Current.Symlink = &SymlinkCapabilityEvidence{Version: SymlinkCapabilityEvidenceVersion, Evidence: safe, CreateSupported: true, ReadlinkSupported: true, PlatformSupported: true, NoFollow: true}
+	qualified, err := ResolveCapability(policy, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !qualified.Propose || !qualified.Apply {
+		t.Fatalf("qualified symlink = %+v", qualified)
+	}
+
+	unsafe, err := repository.NewSymlinkEvidence(path, []byte("../../outside"), "root", "parents", "linux", repository.SymlinkPrimitiveVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Current.Symlink.Evidence = unsafe
+	blocked, err := ResolveCapability(policy, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if blocked.Propose || blocked.Apply || blocked.ReasonsByAxis[CapabilityApply][0].Code != ReasonSymlinkContainmentUnproven {
+		t.Fatalf("unsafe symlink = %+v", blocked)
+	}
+}
+
 func TestCaptureEvaluationAndDiscussionAvailability(t *testing.T) {
 	t.Parallel()
 
