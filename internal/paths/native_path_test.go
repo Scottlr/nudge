@@ -25,20 +25,27 @@ func TestNativePathQualificationPreservesRawIdentity(t *testing.T) {
 		{name: "traversal", path: []byte("../outside.txt"), reason: string(repository.NativeReasonPathTraversal)},
 		{name: "git admin", path: []byte(".Git/config"), reason: string(repository.NativeReasonGitAdminAlias)},
 	}
-	if runtime.GOOS != "windows" {
+	if runtime.GOOS == "linux" {
 		tests = append(tests, struct {
 			name   string
 			path   []byte
 			safe   bool
 			reason string
 		}{name: "invalid utf8 on unix", path: []byte("bad\xff.txt"), safe: true})
-	} else {
+	} else if runtime.GOOS == "windows" {
 		tests = append(tests, struct {
 			name   string
 			path   []byte
 			safe   bool
 			reason string
 		}{name: "reserved device", path: []byte("CON.txt"), reason: string(repository.NativeReasonReservedName)})
+	} else {
+		tests = append(tests, struct {
+			name   string
+			path   []byte
+			safe   bool
+			reason string
+		}{name: "invalid utf8 on normalization-sensitive unix", path: []byte("bad\xff.txt"), reason: string(repository.NativeReasonPathUnrepresentable)})
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
