@@ -132,15 +132,17 @@ func DeriveProposal(input ProposalDerivationInput) (review.ProposedPatch, error)
 // ProposalBaselineResetRequest identifies the exact T035 reset operation that
 // must be verified before a zero-delta attempt can become no_changes.
 type ProposalBaselineResetRequest struct {
-	SessionID   domain.ReviewSessionID
-	ProposalID  domain.ProposalID
-	WorkspaceID domain.WorkspaceID
-	AttemptID   domain.OperationID
-	Baseline    review.SnapshotIdentity
+	SessionID        domain.ReviewSessionID
+	ProposalID       domain.ProposalID
+	WorkspaceID      domain.WorkspaceID
+	AttemptID        domain.OperationID
+	OperationID      domain.OperationID
+	Baseline         review.SnapshotIdentity
+	BaselineManifest WorkspaceManifest
 }
 
 func (r ProposalBaselineResetRequest) Validate() error {
-	if r.SessionID == "" || r.ProposalID == "" || r.WorkspaceID == "" || r.AttemptID == "" || r.Baseline.Validate() != nil {
+	if r.SessionID == "" || r.ProposalID == "" || r.WorkspaceID == "" || r.AttemptID == "" || r.Baseline.Validate() != nil && r.BaselineManifest.Validate() != nil {
 		return ErrProposalPublicationInvalid
 	}
 	return nil

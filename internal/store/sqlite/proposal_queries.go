@@ -93,6 +93,42 @@ func (t *transaction) RecordNoChanges(ctx context.Context, attempt review.Propos
 	return t.saveProposalAttempt(ctx, attempt, true)
 }
 
+// TransitionProposalResultDisposition persists one phase of the explicit
+// failed-result discard workflow. It updates only the attempt disposition and
+// keeps all provider/source/result identities immutable.
+func (t *transaction) TransitionProposalResultDisposition(ctx context.Context, attempt review.ProposalAttempt) error {
+	if attempt.Validate() != nil || attempt.Outcome != review.ProposalAttemptFailed || attempt.ResultDisposition != review.ProposalResultDiscarding && attempt.ResultDisposition != review.ProposalResultDiscarded {
+		return app.ErrReviewStoreInput
+	}
+	if err := t.checkProposalOwnership(ctx, attempt.ProposalID, attempt.WorkspaceID, attempt.ThreadID); err != nil {
+		return err
+	}
+	var existingJSON []byte
+	if err := t.tx.QueryRowContext(ctx, "SELECT attempt_json FROM proposal_attempts WHERE id = ? AND proposal_id = ?", attempt.ID, attempt.ProposalID).Scan(&existingJSON); err != nil {
+		return mapNotFound(err)
+	}
+	var existing review.ProposalAttempt
+	if err := json.Unmarshal(existingJSON, &existing); err != nil || !sameProposalAttemptIdentity(existing, attempt) || !existing.ResultDisposition.CanTransitionTo(attempt.ResultDisposition) {
+		return review.ErrProposalConflict
+	}
+	if attempt.ResultDispositionChangedAt == nil {
+		return app.ErrReviewStoreInput
+	}
+	data, err := json.Marshal(attempt)
+	if err != nil {
+		return err
+	}
+	result, err := t.tx.ExecContext(ctx, `UPDATE proposal_attempts SET result_disposition = ?, attempt_json = ? WHERE id = ? AND proposal_id = ?`, string(attempt.ResultDisposition), data, attempt.ID, attempt.ProposalID)
+	if err != nil {
+		return err
+	}
+	count, _ := result.RowsAffected()
+	if count != 1 {
+		return app.ErrReviewStoreNotFound
+	}
+	return nil
+}
+
 func (t *transaction) saveProposalAttempt(ctx context.Context, attempt review.ProposalAttempt, existingOnly bool) error {
 	data, err := json.Marshal(attempt)
 	if err != nil {
@@ -314,6 +350,8 @@ func (t *transaction) TransitionProposal(ctx context.Context, transition review.
 	}
 	patch.Status = transition.Status
 	patch.StatusReason = transition.Reason
+	changedAt := transition.ChangedAt
+	patch.StatusChangedAt = &changedAt
 	updatedJSON, err := json.Marshal(patch)
 	if err != nil {
 		return err

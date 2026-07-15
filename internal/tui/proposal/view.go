@@ -25,7 +25,21 @@ func (m *Model) View() string {
 		return m.renderLines(work, []string{"no proposal selected"})
 	}
 	if m.projection.NoChanges {
-		return m.renderLines(work, []string{"No proposed changes", "return to discussion or request a new change"})
+		lines := []string{"No proposed changes", "return to discussion or request a new change"}
+		if m.projection.FailedAttemptID != "" {
+			lines = []string{
+				m.styled(theme.RoleError, "proposal result is not ready"),
+				m.styled(theme.RoleMuted, "attempt: "+safeText(string(m.projection.FailedAttemptID))),
+				m.styled(theme.RoleWarning, "reason: "+safeText(m.projection.FailedAttemptReason)),
+				"the isolated result can be discarded after exact confirmation; source, destination, history, and conversation remain",
+			}
+			if m.confirmation == confirmationDiscard {
+				lines = append(lines, m.styled(theme.RoleWarning, "CONFIRM DISCARD FAILED RESULT"), m.styled(theme.RoleHelp, "confirm to reset the isolated result to the trusted baseline; cancel to return"))
+			} else if m.CanDiscardResult() {
+				lines = append(lines, m.styled(theme.RoleProposalFailed, "Discard failed result is available after exact confirmation"))
+			}
+		}
+		return m.renderLines(work, lines)
 	}
 
 	lines := []string{
@@ -154,6 +168,14 @@ func (m *Model) confirmationLines() []string {
 			m.styled(theme.RoleOverlayTitle, fmt.Sprintf("version %d / sha256 %s / %d complete files", identity.Version, identity.PatchSHA256, m.projection.FileCount)),
 			m.styled(theme.RoleOverlay, "the complete displayed patch will be applied to "+safeText(m.projection.Destination)),
 			m.styled(theme.RoleHelp, "confirm to dispatch Approve proposal; cancel to return"),
+		}
+	}
+	if m.confirmation == confirmationDiscard {
+		return []string{
+			m.styled(theme.RoleWarning, "CONFIRM DISCARD FAILED RESULT"),
+			m.styled(theme.RoleOverlayTitle, "attempt "+safeText(string(m.projection.FailedAttemptID))),
+			m.styled(theme.RoleOverlay, "reset only the isolated result to the trusted baseline; source, destination, history, and conversation remain"),
+			m.styled(theme.RoleHelp, "confirm to dispatch Discard failed result; cancel to return"),
 		}
 	}
 	return []string{

@@ -106,6 +106,29 @@ type CancelProposal struct {
 	CorrelationID CorrelationID
 }
 
+// RejectProposal rejects one exact immutable ready version. The workspace
+// reset is a separate durable phase and never touches the edit destination.
+type RejectProposal struct {
+	Guard         SessionWriteGuard
+	ThreadID      domain.ReviewThreadID
+	ProposalID    domain.ProposalID
+	Version       review.ProposalVersionNumber
+	Reason        string
+	OperationID   domain.OperationID
+	CorrelationID CorrelationID
+}
+
+// DiscardProposalResult discards one exact terminal failed/non-ready result
+// attempt after confirming the isolated result reset effect.
+type DiscardProposalResult struct {
+	Guard         SessionWriteGuard
+	ProposalID    domain.ProposalID
+	AttemptID     domain.OperationID
+	Reason        string
+	OperationID   domain.OperationID
+	CorrelationID CorrelationID
+}
+
 // Shutdown stops the application runtime after committing cancellation of
 // active operations.
 type Shutdown struct {
@@ -122,6 +145,8 @@ func (CancelOperation) isReducerInput()          {}
 func (RespondToRuntimeApproval) isReducerInput() {}
 func (RequestProposal) isReducerInput()          {}
 func (CancelProposal) isReducerInput()           {}
+func (RejectProposal) isReducerInput()           {}
+func (DiscardProposalResult) isReducerInput()    {}
 func (Shutdown) isReducerInput()                 {}
 
 func (OpenRepository) isCommand()           {}
@@ -134,4 +159,6 @@ func (CancelOperation) isCommand()          {}
 func (RespondToRuntimeApproval) isCommand() {}
 func (RequestProposal) isCommand()          {}
 func (CancelProposal) isCommand()           {}
+func (RejectProposal) isCommand()           {}
+func (DiscardProposalResult) isCommand()    {}
 func (Shutdown) isCommand()                 {}

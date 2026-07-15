@@ -2,6 +2,7 @@ package app
 
 import (
 	"github.com/Scottlr/nudge/internal/domain"
+	"github.com/Scottlr/nudge/internal/domain/review"
 )
 
 // ProposalTurnPrepared reports that the exact intent and isolated workspace
@@ -72,6 +73,54 @@ func (e ProposalTurnFailed) eventMetadata() EventMetadata {
 }
 
 func (e ProposalTurnFailed) withRevision(revision uint64) Event {
+	e.Revision = revision
+	return e
+}
+
+// ProposalRejected reports a durable exact-version rejection after the
+// rejection decision has been recorded. Reset completion is reported by the
+// disposition service result and does not alter thread resolution.
+type ProposalRejected struct {
+	Revision      uint64
+	ProposalID    domain.ProposalID
+	WorkspaceID   domain.WorkspaceID
+	ThreadID      domain.ReviewThreadID
+	Version       review.ProposalVersionNumber
+	OperationID   domain.OperationID
+	CorrelationID CorrelationID
+	Reason        string
+}
+
+// ProposalResultDiscarded reports a distinct failed-result discard decision;
+// it is never a rejected proposal-version event.
+type ProposalResultDiscarded struct {
+	Revision      uint64
+	ProposalID    domain.ProposalID
+	WorkspaceID   domain.WorkspaceID
+	ThreadID      domain.ReviewThreadID
+	AttemptID     domain.OperationID
+	OperationID   domain.OperationID
+	CorrelationID CorrelationID
+	Reason        string
+}
+
+func (ProposalRejected) isEvent()        {}
+func (ProposalResultDiscarded) isEvent() {}
+
+func (e ProposalRejected) eventMetadata() EventMetadata {
+	return EventMetadata{Revision: e.Revision, OperationID: e.OperationID, CorrelationID: e.CorrelationID}
+}
+
+func (e ProposalRejected) withRevision(revision uint64) Event {
+	e.Revision = revision
+	return e
+}
+
+func (e ProposalResultDiscarded) eventMetadata() EventMetadata {
+	return EventMetadata{Revision: e.Revision, OperationID: e.OperationID, CorrelationID: e.CorrelationID}
+}
+
+func (e ProposalResultDiscarded) withRevision(revision uint64) Event {
 	e.Revision = revision
 	return e
 }

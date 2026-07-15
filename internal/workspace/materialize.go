@@ -247,6 +247,13 @@ func ResetResultToBaseline(ctx context.Context, baseline WorkspaceRoot, result W
 	return CopyManifestToRoot(ctx, baseline, result, manifest, policy)
 }
 
+// ResetToBaseline is the lifecycle-facing name for the verified result-root
+// reset. It retains the same typed-root and manifest checks as the original
+// helper so callers cannot turn rejection into arbitrary path cleanup.
+func ResetToBaseline(ctx context.Context, baseline WorkspaceRoot, result WorkspaceRoot, manifest app.WorkspaceManifest, policy app.ResourcePolicy) error {
+	return ResetResultToBaseline(ctx, baseline, result, manifest, policy)
+}
+
 func ensureMaterializeRootEmpty(root string) error {
 	info, err := os.Lstat(root)
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
