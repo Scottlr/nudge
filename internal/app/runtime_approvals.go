@@ -95,10 +95,11 @@ type pendingRuntimeApproval struct {
 // session. It is single-owner in normal composition; the mutex also prevents
 // an expired response racing a disconnect during teardown.
 type RuntimeApprovalService struct {
-	provider ReviewProvider
-	clock    Clock
-	recorder RuntimeApprovalRecorder
-	limit    int
+	provider  ReviewProvider
+	clock     Clock
+	recorder  RuntimeApprovalRecorder
+	authorize func(RuntimeApproval) error
+	limit     int
 
 	mu      sync.Mutex
 	pending map[provider.ProviderRequestID]*pendingRuntimeApproval
@@ -111,6 +112,10 @@ type RuntimeApprovalServiceConfig struct {
 	Clock    Clock
 	Recorder RuntimeApprovalRecorder
 	Limit    int
+	// Authorize is an optional turn-specific containment check. It receives
+	// only the ephemeral approval projection and cannot broaden the provider
+	// policy or persist sensitive scope text.
+	Authorize func(RuntimeApproval) error
 }
 
 // NewRuntimeApprovalService constructs a bounded approval coordinator.
@@ -124,7 +129,7 @@ func NewRuntimeApprovalService(config RuntimeApprovalServiceConfig) (*RuntimeApp
 	if config.Limit <= 0 {
 		config.Limit = defaultRuntimeApprovalLimit
 	}
-	return &RuntimeApprovalService{provider: config.Provider, clock: config.Clock, recorder: config.Recorder, limit: config.Limit, pending: make(map[provider.ProviderRequestID]*pendingRuntimeApproval)}, nil
+	return &RuntimeApprovalService{provider: config.Provider, clock: config.Clock, recorder: config.Recorder, authorize: config.Authorize, limit: config.Limit, pending: make(map[provider.ProviderRequestID]*pendingRuntimeApproval)}, nil
 }
 
 // HandleProviderEvent admits one normalized provider approval or recovery
@@ -139,6 +144,23 @@ func (s *RuntimeApprovalService) HandleProviderEvent(event provider.ProviderEven
 			return RuntimeApprovalOutcome{}, ErrRuntimeApprovalUnavailable
 		}
 		s.mu.Lock()
+		if len(s.pending) >= s.limit {
+			s.mu.Unlock()
+			return RuntimeApprovalOutcome{PolicyError: ErrRuntimeApprovalPolicy}, nil
+		}
+		if _, exists := s.pending[event.RequestID]; exists {
+			s.mu.Unlock()
+			return RuntimeApprovalOutcome{PolicyError: ErrRuntimeApprovalDuplicate}, nil
+		}
+		s.mu.Unlock()
+		view := runtimeApprovalView(event)
+		if s.authorize != nil {
+			if err := s.authorize(view); err != nil {
+				return RuntimeApprovalOutcome{PolicyError: err}, nil
+			}
+		}
+		copyApproval := *event.Approval
+		s.mu.Lock()
 		defer s.mu.Unlock()
 		if len(s.pending) >= s.limit {
 			return RuntimeApprovalOutcome{PolicyError: ErrRuntimeApprovalPolicy}, nil
@@ -146,8 +168,6 @@ func (s *RuntimeApprovalService) HandleProviderEvent(event provider.ProviderEven
 		if _, exists := s.pending[event.RequestID]; exists {
 			return RuntimeApprovalOutcome{PolicyError: ErrRuntimeApprovalDuplicate}, nil
 		}
-		view := runtimeApprovalView(event)
-		copyApproval := *event.Approval
 		s.pending[event.RequestID] = &pendingRuntimeApproval{providerApproval: copyApproval, view: view}
 		return RuntimeApprovalOutcome{Approval: cloneRuntimeApproval(&view)}, nil
 	case provider.EventRuntimeApprovalResolved:

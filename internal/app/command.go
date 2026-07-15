@@ -5,6 +5,7 @@ import (
 
 	"github.com/Scottlr/nudge/internal/domain"
 	"github.com/Scottlr/nudge/internal/domain/repository"
+	"github.com/Scottlr/nudge/internal/domain/review"
 	"github.com/Scottlr/nudge/internal/provider"
 )
 
@@ -83,6 +84,28 @@ type RespondToRuntimeApproval struct {
 	CorrelationID CorrelationID
 }
 
+// RequestProposal is the explicit user action that authorizes one proposal
+// turn. The confirmed intent is copied at this boundary and validated again
+// against the durable proposal lineage before any workspace or provider work.
+type RequestProposal struct {
+	Guard          SessionWriteGuard
+	ThreadID       domain.ReviewThreadID
+	ProposalID     domain.ProposalID
+	ConversationID domain.ProviderConversationID
+	Intent         review.ProposalIntent
+	Context        ProposalTurnContext
+	OperationID    domain.OperationID
+	CorrelationID  CorrelationID
+}
+
+// CancelProposal requests cancellation of one active proposal turn. It is
+// deliberately separate from runtime approval and proposed-patch approval.
+type CancelProposal struct {
+	Guard         SessionWriteGuard
+	AttemptID     domain.OperationID
+	CorrelationID CorrelationID
+}
+
 // Shutdown stops the application runtime after committing cancellation of
 // active operations.
 type Shutdown struct {
@@ -97,6 +120,8 @@ func (OpenSession) isReducerInput()              {}
 func (CloseSession) isReducerInput()             {}
 func (CancelOperation) isReducerInput()          {}
 func (RespondToRuntimeApproval) isReducerInput() {}
+func (RequestProposal) isReducerInput()          {}
+func (CancelProposal) isReducerInput()           {}
 func (Shutdown) isReducerInput()                 {}
 
 func (OpenRepository) isCommand()           {}
@@ -107,4 +132,6 @@ func (OpenSession) isCommand()              {}
 func (CloseSession) isCommand()             {}
 func (CancelOperation) isCommand()          {}
 func (RespondToRuntimeApproval) isCommand() {}
+func (RequestProposal) isCommand()          {}
+func (CancelProposal) isCommand()           {}
 func (Shutdown) isCommand()                 {}

@@ -83,8 +83,13 @@ func MapTurnPermissions(mode provider.TurnMode, policy provider.TurnPermissionPo
 	if mode == provider.TurnDiscuss {
 		return MapDiscussionPermissions(policy, workingDir)
 	}
-	if mode != provider.TurnPropose || policy.Validate(provider.DefaultValidationLimits()) != nil || policy.Filesystem != provider.FilesystemProposalResult || policy.Network != provider.NetworkDisabled || len(policy.WritableRoots) == 0 || workingDir == "" || !filepath.IsAbs(workingDir) || !filepath.IsAbs(policy.ProposalResultRoot.Path) || !pathWithin(policy.ProposalResultRoot.Path, workingDir) {
+	if mode != provider.TurnPropose || policy.Validate(provider.DefaultValidationLimits()) != nil || policy.Filesystem != provider.FilesystemProposalResult || policy.Network != provider.NetworkDisabled || len(policy.ReadableRoots) != 1 || len(policy.WritableRoots) != 1 || policy.ReadableRoots[0].Path != policy.ProposalResultRoot.Path || policy.WritableRoots[0].Path != policy.ProposalResultRoot.Path || workingDir == "" || !filepath.IsAbs(workingDir) || !filepath.IsAbs(policy.ProposalResultRoot.Path) || workingDir != filepath.Clean(policy.ProposalResultRoot.Path) {
 		return protocol.SandboxPolicy{}, ErrPermissionUnsupported
+	}
+	for _, root := range policy.RuntimeRoots {
+		if !pathWithin(policy.ProposalResultRoot.Path, root.Path) {
+			return protocol.SandboxPolicy{}, ErrPermissionUnsupported
+		}
 	}
 	networkDisabled := false
 	roots := make([]string, 0, len(policy.WritableRoots))
