@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"reflect"
 
 	"github.com/Scottlr/nudge/internal/app"
 	"github.com/Scottlr/nudge/internal/domain"
@@ -14,6 +15,17 @@ import (
 
 var _ app.ApplyOperationStore = (*Store)(nil)
 var _ app.ApplyOperationStoreTx = (*transaction)(nil)
+
+// LoadApplyOperation returns one durable operation by its stable identity.
+func (s *Store) LoadApplyOperation(ctx context.Context, operationID domain.OperationID) (app.ApplyOperation, error) {
+	if err := s.ensureOpen(); err != nil {
+		return app.ApplyOperation{}, err
+	}
+	if operationID == "" {
+		return app.ApplyOperation{}, app.ErrInvalidApplyPreflight
+	}
+	return s.loadApplyOperation(ctx, "SELECT operation_json FROM apply_operations WHERE id = ?", operationID)
+}
 
 // LoadApplyOperationByKey returns the immutable prepared operation for one
 // session-scoped idempotency key.
@@ -91,6 +103,62 @@ func (t *transaction) PrepareApplyOperation(ctx context.Context, operation app.A
 		return compareApplyOperation(existing, data)
 	}
 	return err
+}
+
+// TransitionApplyOperation updates only the mutable phase, classification,
+// verification, and completion fields of one prepared operation.
+func (t *transaction) TransitionApplyOperation(ctx context.Context, operation app.ApplyOperation) error {
+	if operation.Validate() != nil || operation.SessionID != t.sessionID {
+		return app.ErrInvalidApplyPreflight
+	}
+	existing, found, err := t.loadApplyOperation(ctx, "SELECT operation_json FROM apply_operations WHERE id = ?", operation.ID)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return app.ErrApplyOperationNotFound
+	}
+	if reflect.DeepEqual(existing, operation) {
+		return nil
+	}
+	if !sameApplyOperationLineage(existing, operation) || !validApplyOperationTransition(existing.Phase, operation.Phase) {
+		return app.ErrApplyOperationConflict
+	}
+	data, err := json.Marshal(operation)
+	if err != nil {
+		return err
+	}
+	result, err := t.tx.ExecContext(ctx, `UPDATE apply_operations SET phase = ?, operation_json = ? WHERE id = ? AND phase = ?`, string(operation.Phase), data, operation.ID, string(existing.Phase))
+	if err != nil {
+		return err
+	}
+	if count, _ := result.RowsAffected(); count != 1 {
+		return app.ErrApplyOperationConflict
+	}
+	return nil
+}
+
+func sameApplyOperationLineage(left, right app.ApplyOperation) bool {
+	left.Phase, right.Phase = app.ApplyOperationPrepared, app.ApplyOperationPrepared
+	left.FailureCode, right.FailureCode = app.ApplyFailureNone, app.ApplyFailureNone
+	left.Verification, right.Verification = app.ApplyVerificationEvidence{}, app.ApplyVerificationEvidence{}
+	left.CompletedAt, right.CompletedAt = nil, nil
+	return reflect.DeepEqual(left, right)
+}
+
+func validApplyOperationTransition(from, to app.ApplyOperationPhase) bool {
+	switch from {
+	case app.ApplyOperationPrepared:
+		return to == app.ApplyOperationMutating
+	case app.ApplyOperationMutating:
+		return to == app.ApplyOperationVerifying || to == app.ApplyOperationRetrySafe || to == app.ApplyOperationApplied || to == app.ApplyOperationFailedClean || to == app.ApplyOperationRepairRequired
+	case app.ApplyOperationVerifying:
+		return to == app.ApplyOperationRetrySafe || to == app.ApplyOperationApplied || to == app.ApplyOperationFailedClean || to == app.ApplyOperationRepairRequired
+	case app.ApplyOperationRetrySafe:
+		return to == app.ApplyOperationMutating
+	default:
+		return false
+	}
 }
 
 func (t *transaction) loadApplyOperation(ctx context.Context, query string, args ...any) (app.ApplyOperation, bool, error) {

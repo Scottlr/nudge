@@ -38,6 +38,31 @@ func TestApplyPatchCheckerUsesExactV1PolicyAndPatchStream(t *testing.T) {
 	}
 }
 
+func TestApplyPatchMutatorUsesSamePolicyWithoutCheck(t *testing.T) {
+	root := t.TempDir()
+	now := time.Now().UTC()
+	repo := repository.Repository{ID: "repo-1", CommonGitDir: filepath.Join(root, ".git"), Binding: repository.RepositoryBindingEvidence{Version: 1, ObjectFormat: "sha1", CommonGitDir: filepath.Join(root, ".git"), CommonGitDirIdentity: "repo"}, DisplayName: "repo", CreatedAt: now, UpdatedAt: now}
+	worktree := repository.WorktreeRef{ID: "worktree-1", RepositoryID: repo.ID, RootPath: root, GitDir: filepath.Join(root, ".git"), Binding: repository.WorktreeBindingEvidence{Version: 1, ObjectFormat: "sha1", RootPath: root, GitDir: filepath.Join(root, ".git"), RootIdentity: "root", GitDirIdentity: "git"}}
+	patch := []byte("patch")
+	digest := sha256.Sum256(patch)
+	runner := &applyCheckRunner{}
+	config := ApplyPatchCheckerConfig{Executable: process.ExecutableIdentity{Kind: process.ExecutableGit, Source: process.ExecutableConfigured, CanonicalPath: filepath.Join(root, "git.exe"), NativeID: []byte("native"), Size: 1, ModTime: now, SHA256: [32]byte{1}}, Runner: runner, Machine: DefaultMachineGitReadPolicyV1(), Apply: DefaultApplyPolicyV1()}
+	mutator, err := NewApplyPatchMutator(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := mutator.Mutate(context.Background(), app.ApplyPatchMutationRequest{Repository: repo, Worktree: worktree, PatchSHA256: hexDigest(digest), PatchBytes: app.ByteSize(len(patch)), ApplyPolicyVersion: 1, Patch: bytesReader(patch)}); err != nil {
+		t.Fatal(err)
+	}
+	want, err := DefaultApplyPolicyV1().Args(ApplyMutationPhase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(runner.args[len(runner.args)-len(want):], want) || string(runner.input) != string(patch) {
+		t.Fatalf("git apply mutation args=%v input=%q", runner.args, runner.input)
+	}
+}
+
 type applyCheckRunner struct {
 	args  []string
 	input []byte
