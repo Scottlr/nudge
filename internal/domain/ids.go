@@ -36,6 +36,9 @@ type CaptureID string
 // ReviewSnapshotID identifies one immutable review snapshot.
 type ReviewSnapshotID string
 
+// ReviewSnapshotLeaseID identifies one active read lease on a review snapshot.
+type ReviewSnapshotLeaseID string
+
 // ProviderConversationID identifies Nudge's local provider-conversation record.
 type ProviderConversationID string
 
@@ -123,6 +126,14 @@ func NewReviewSnapshotID(value string) (ReviewSnapshotID, error) {
 		return "", err
 	}
 	return ReviewSnapshotID(value), nil
+}
+
+// NewReviewSnapshotLeaseID constructs a review-snapshot lease identity.
+func NewReviewSnapshotLeaseID(value string) (ReviewSnapshotLeaseID, error) {
+	if err := validateID(value); err != nil {
+		return "", err
+	}
+	return ReviewSnapshotLeaseID(value), nil
 }
 
 // NewProviderConversationID constructs a local provider-conversation identity.
