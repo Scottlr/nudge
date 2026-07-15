@@ -86,6 +86,7 @@ type ResolvedTarget struct {
 	Head             SnapshotRef
 	ResolvedCommit   ObjectID
 	ResolvedParent   ObjectID
+	ParentLabel      string
 	ResolvedBaseRef  ObjectID
 	MergeBase        ObjectID
 	BaseBranchSource string
@@ -137,6 +138,9 @@ func (t ResolvedTarget) Validate() error {
 			return fmt.Errorf("%w: resolved parent", ErrInvalidTargetSpec)
 		}
 	}
+	if t.ParentLabel != "" && !validText(t.ParentLabel) {
+		return ErrInvalidTargetSpec
+	}
 	if t.MergeBase != "" {
 		if _, err := NewObjectID(string(t.MergeBase)); err != nil {
 			return fmt.Errorf("%w: merge base", ErrInvalidTargetSpec)
@@ -159,18 +163,21 @@ func (t ResolvedTarget) Validate() error {
 
 	switch t.Spec.Kind {
 	case TargetLocal:
-		if t.Base.Kind == SnapshotWorkingTree || t.Head.Kind != SnapshotWorkingTree || t.ResolvedParent != "" || t.ResolvedBaseRef != "" || t.MergeBase != "" || t.BaseBranchSource != "" || t.BranchRef != "" || t.BaseBranchRef != "" || t.NoFetchWarning {
+		if t.Base.Kind == SnapshotWorkingTree || t.Head.Kind != SnapshotWorkingTree || t.ResolvedParent != "" || t.ParentLabel != "" || t.ResolvedBaseRef != "" || t.MergeBase != "" || t.BaseBranchSource != "" || t.BranchRef != "" || t.BaseBranchRef != "" || t.NoFetchWarning {
 			return ErrInvalidTargetSpec
 		}
 	case TargetCommit:
-		if t.Base.Kind == SnapshotWorkingTree || t.Head.Kind != SnapshotCommit || t.ResolvedCommit == "" || t.ResolvedBaseRef != "" || t.MergeBase != "" || t.BaseBranchSource != "" || t.BranchRef != "" || t.BaseBranchRef != "" || t.NoFetchWarning {
+		if (t.Base.Kind != SnapshotCommit && t.Base.Kind != SnapshotEmpty) || t.Base.ObjectID == "" || t.Head.Kind != SnapshotCommit || t.ResolvedCommit == "" || t.ParentLabel == "" || t.ResolvedBaseRef != "" || t.MergeBase != "" || t.BaseBranchSource != "" || t.BranchRef != "" || t.BaseBranchRef != "" || t.NoFetchWarning {
+			return ErrInvalidTargetSpec
+		}
+		if t.Base.Kind == SnapshotCommit && t.ResolvedParent == "" || t.Base.Kind == SnapshotEmpty && t.ResolvedParent != "" {
 			return ErrInvalidTargetSpec
 		}
 		if t.Head.ObjectID != t.ResolvedCommit {
 			return ErrInvalidTargetSpec
 		}
 	case TargetBranch:
-		if t.Base.Kind == SnapshotWorkingTree || t.Head.Kind != SnapshotCommit || t.ResolvedCommit == "" || t.ResolvedBaseRef == "" || t.MergeBase == "" || !validBaseBranchSource(t.BaseBranchSource) || t.BranchRef == "" || t.Head.ObjectID != t.ResolvedCommit {
+		if t.Base.Kind == SnapshotWorkingTree || t.Head.Kind != SnapshotCommit || t.ResolvedCommit == "" || t.ResolvedParent != "" || t.ParentLabel != "" || t.ResolvedBaseRef == "" || t.MergeBase == "" || !validBaseBranchSource(t.BaseBranchSource) || t.BranchRef == "" || t.Head.ObjectID != t.ResolvedCommit {
 			return ErrInvalidTargetSpec
 		}
 		if t.BaseBranchSource != "discovery" && t.BaseBranchRef != "" {

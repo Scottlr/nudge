@@ -184,6 +184,17 @@ func (m *Model) statusBar(rect Rect) string {
 }
 
 func targetStatusLabel(target repository.ResolvedTarget) string {
+	if target.Spec.Kind == repository.TargetCommit {
+		value := "commit " + safeText(target.Spec.CommitExpression)
+		if target.ParentLabel != "" {
+			value += " [" + safeText(target.ParentLabel) + "]"
+		}
+		value += " " + shortObjectID(target.Base.ObjectID) + "/" + shortObjectID(target.ResolvedCommit)
+		if !target.Editable {
+			value += " read-only"
+		}
+		return value
+	}
 	if target.Spec.Kind != repository.TargetBranch {
 		return "HEAD -> working tree"
 	}
@@ -205,6 +216,17 @@ func targetStatusLabel(target repository.ResolvedTarget) string {
 }
 
 func targetSummaryStatusLabel(target app.TargetSummary) string {
+	if target.Spec.Kind == repository.TargetCommit {
+		value := "commit " + safeText(target.Spec.CommitExpression)
+		if target.ParentLabel != "" {
+			value += " [" + safeText(target.ParentLabel) + "]"
+		}
+		value += " " + shortObjectID(target.BaseObjectID) + "/" + shortObjectID(target.HeadObjectID)
+		if !target.Editable {
+			value += " read-only"
+		}
+		return value
+	}
 	if target.Spec.Kind != repository.TargetBranch {
 		return "HEAD -> working tree"
 	}

@@ -180,9 +180,9 @@ func commitTreeTarget(t *testing.T, head repository.ObjectID) repository.Resolve
 	}
 	target := repository.ResolvedTarget{
 		Spec: spec, Generation: 1,
-		Base:           repository.SnapshotRef{Kind: repository.SnapshotTree, ObjectID: head},
+		Base:           repository.SnapshotRef{Kind: repository.SnapshotCommit, ObjectID: head},
 		Head:           repository.SnapshotRef{Kind: repository.SnapshotCommit, ObjectID: head},
-		ResolvedCommit: head, ResolvedAt: time.Now().UTC(),
+		ResolvedCommit: head, ResolvedParent: head, ParentLabel: "parent 1", ResolvedAt: time.Now().UTC(),
 	}
 	if err := target.Validate(); err != nil {
 		t.Fatal(err)

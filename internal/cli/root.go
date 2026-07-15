@@ -35,8 +35,8 @@ func NewRootCommand(info BuildInfo) *cobra.Command {
 			if branchExpression != "" && app.ValidateBaseBranchExpression(branchExpression) != nil {
 				return errors.New("invalid --branch base expression")
 			}
-			if commitExpression != "" {
-				return errors.New("--commit target is not implemented")
+			if commitExpression != "" && app.ValidateCommitExpression(commitExpression) != nil {
+				return errors.New("invalid --commit revision expression")
 			}
 			path := ""
 			var err error
@@ -54,7 +54,7 @@ func NewRootCommand(info BuildInfo) *cobra.Command {
 				themeOverride = &themeName
 			}
 			_ = local
-			return runLocalReview(cmd.Context(), path, noPersist, themeOverride, branchExpression)
+			return runLocalReview(cmd.Context(), path, noPersist, themeOverride, branchExpression, commitExpression)
 		},
 	}
 	command.Flags().BoolVar(&noPersist, "no-persist", false, "Run without saving review state.")

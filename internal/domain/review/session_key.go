@@ -59,12 +59,23 @@ func SessionKeyFor(session ReviewSession) (SessionKey, error) {
 		return SessionKey{}, err
 	}
 	worktreeID := domain.WorktreeID("")
-	if session.Target.EditDestination != nil {
+	if session.TargetSpec.Kind != repository.TargetCommit && session.Target.EditDestination != nil {
 		worktreeID = *session.Target.EditDestination
 	} else if session.Target.Head.Kind == repository.SnapshotWorkingTree {
 		worktreeID = session.Target.Head.WorktreeID
 	}
 	baseValue := any(session.Target.Base)
+	if session.TargetSpec.Kind == repository.TargetCommit {
+		baseValue = struct {
+			Base           repository.SnapshotRef
+			ResolvedParent repository.ObjectID
+			ParentLabel    string
+		}{
+			Base:           session.Target.Base,
+			ResolvedParent: session.Target.ResolvedParent,
+			ParentLabel:    session.Target.ParentLabel,
+		}
+	}
 	if session.TargetSpec.Kind == repository.TargetBranch {
 		baseValue = struct {
 			Base            repository.SnapshotRef

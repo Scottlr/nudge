@@ -73,6 +73,10 @@ const (
 	ErrorMergeBaseAmbiguous        ErrorCode = "git_merge_base_ambiguous"
 	ErrorMergeBaseLimit            ErrorCode = "git_merge_base_limit"
 	ErrorMergeBaseSelectionInvalid ErrorCode = "git_merge_base_selection_invalid"
+	ErrorCommitUnavailable         ErrorCode = "git_commit_unavailable"
+	ErrorCommitParentUnavailable   ErrorCode = "git_commit_parent_unavailable"
+	ErrorCommitParentSelection     ErrorCode = "git_commit_parent_selection_invalid"
+	ErrorEmptyTreeUnavailable      ErrorCode = "git_empty_tree_unavailable"
 )
 
 // GitError exposes only a stable safe code. Stderr and the process cause stay

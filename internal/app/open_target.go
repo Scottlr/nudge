@@ -13,7 +13,18 @@ var (
 	ErrInvalidBranchTargetRequest = errors.New("invalid branch target request")
 	// ErrBranchTargetResolverUnavailable reports a missing Git adapter port.
 	ErrBranchTargetResolverUnavailable = errors.New("branch target resolver unavailable")
+	// ErrInvalidCommitTargetRequest reports incomplete commit-target input.
+	ErrInvalidCommitTargetRequest = errors.New("invalid commit target request")
+	// ErrCommitTargetResolverUnavailable reports a missing Git adapter port.
+	ErrCommitTargetResolverUnavailable = errors.New("commit target resolver unavailable")
 )
+
+// ValidateCommitExpression validates one raw revision before it reaches Git.
+// The original expression is retained only for display; adapters must use the
+// verified object ID after resolution.
+func ValidateCommitExpression(expression string) error {
+	return ValidateBaseBranchExpression(expression)
+}
 
 // BaseBranchDiscovery is the bounded explanation returned by deterministic
 // local-ref discovery. The expression is still re-resolved for each target
@@ -158,6 +169,60 @@ func BranchTargetSessionExpression(target repository.ResolvedTarget) string {
 		return ""
 	}
 	return target.Spec.BaseBranch
+}
+
+// CommitTargetRequest is the adapter-facing input for one frozen commit
+// generation. Parent selection is intentionally absent from the CLI in v1;
+// merge commits use first parent.
+type CommitTargetRequest struct {
+	Repository repository.Repository
+	Worktree   repository.WorktreeRef
+	Expression string
+	Generation repository.TargetGeneration
+}
+
+// Validate checks the repository binding and raw revision before Git I/O.
+func (r CommitTargetRequest) Validate() error {
+	if r.Repository.Validate() != nil || r.Worktree.Validate() != nil || r.Worktree.RepositoryID != r.Repository.ID || ValidateCommitExpression(r.Expression) != nil || r.Generation == 0 {
+		return ErrInvalidCommitTargetRequest
+	}
+	return nil
+}
+
+// CommitTargetResolver resolves one immutable commit target generation.
+type CommitTargetResolver interface {
+	ResolveCommitTarget(context.Context, CommitTargetRequest) (repository.ResolvedTarget, error)
+}
+
+// OpenCommitTargetRequest composes one explicit commit expression with the
+// resolver that freezes it to a Git object identity.
+type OpenCommitTargetRequest struct {
+	Repository repository.Repository
+	Worktree   repository.WorktreeRef
+	Expression string
+	Resolver   CommitTargetResolver
+	Generation repository.TargetGeneration
+}
+
+// OpenCommitTarget resolves one commit expression exactly once for a target
+// generation. It never follows a moved ref after the adapter returns.
+func OpenCommitTarget(ctx context.Context, request OpenCommitTargetRequest) (repository.ResolvedTarget, error) {
+	if ctx == nil || request.Repository.Validate() != nil || request.Worktree.Validate() != nil || request.Worktree.RepositoryID != request.Repository.ID || ValidateCommitExpression(request.Expression) != nil {
+		return repository.ResolvedTarget{}, ErrInvalidCommitTargetRequest
+	}
+	if request.Resolver == nil {
+		return repository.ResolvedTarget{}, ErrCommitTargetResolverUnavailable
+	}
+	generation := request.Generation
+	if generation == 0 {
+		generation = 1
+	}
+	return request.Resolver.ResolveCommitTarget(ctx, CommitTargetRequest{
+		Repository: request.Repository,
+		Worktree:   request.Worktree,
+		Expression: request.Expression,
+		Generation: generation,
+	})
 }
 
 // BranchTargetRepositoryBinding is a compact identity used by target
