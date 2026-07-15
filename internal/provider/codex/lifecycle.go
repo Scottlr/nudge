@@ -6,6 +6,7 @@ import (
 	"errors"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/Scottlr/nudge/internal/domain"
 	"github.com/Scottlr/nudge/internal/process"
@@ -289,11 +290,20 @@ type Connection struct {
 	eventMu              sync.RWMutex
 	conversationBindings map[provider.ProviderConversationRef]conversationEventBinding
 	turnBindings         map[provider.ProviderTurnRef]turnEventBinding
+	pendingApprovals     map[provider.ProviderRequestID]*pendingRuntimeApproval
 	eventSequence        atomic.Uint64
 	events               *providerEventStream
 	closeOnce            sync.Once
 	monitorOnce          sync.Once
 	monitorDone          chan struct{}
+}
+
+const maxPendingRuntimeApprovals = 64
+
+type pendingRuntimeApproval struct {
+	remote   protocol.RequestID
+	method   string
+	approval provider.RuntimeApproval
 }
 
 func (c *Connection) registerHandlers() error {
@@ -306,6 +316,14 @@ func (c *Connection) registerHandlers() error {
 	if err := c.client.RegisterNotificationHandler("account/rateLimits/updated", func(_ context.Context, n protocol.Notification) error { return c.handleRateLimitsUpdated(n) }); err != nil {
 		return err
 	}
+	for _, method := range []string{serverRequestCommandApproval, serverRequestFileApproval, serverRequestPermissionsApproval, serverRequestToolCall, serverRequestToolInput, serverRequestLegacyExec, serverRequestLegacyPatch} {
+		method := method
+		if err := c.client.RegisterServerRequestHandler(method, func(_ context.Context, request protocol.ServerRequest) (json.RawMessage, error) {
+			return c.handleRuntimeApprovalRequest(request)
+		}); err != nil {
+			return err
+		}
+	}
 	for _, method := range []string{"thread/started", "turn/started", "turn/completed", "item/started", "item/completed", "item/agentMessage/delta", "error", "thread/status/changed"} {
 		method := method
 		if err := c.client.RegisterNotificationHandler(method, func(_ context.Context, n protocol.Notification) error { return c.handleProviderNotification(n) }); err != nil {
@@ -313,6 +331,168 @@ func (c *Connection) registerHandlers() error {
 		}
 	}
 	return nil
+}
+
+func (c *Connection) handleRuntimeApprovalRequest(request protocol.ServerRequest) (json.RawMessage, error) {
+	if c == nil || c.client == nil {
+		return nil, ErrClientClosed
+	}
+	c.eventMu.RLock()
+	context := c.notificationContext(protocol.Notification{Method: request.Method, Params: request.Params})
+	c.eventMu.RUnlock()
+	mapped, err := MapRuntimeApprovalRequest(request, context, time.Now().UTC())
+	if err != nil {
+		return runtimeApprovalDenyResult(request.Method), nil
+	}
+	c.eventMu.Lock()
+	if len(c.pendingApprovals) >= maxPendingRuntimeApprovals {
+		c.eventMu.Unlock()
+		return runtimeApprovalDenyResult(request.Method), nil
+	}
+	if _, exists := c.pendingApprovals[mapped.Approval.Request.RequestID]; exists {
+		c.eventMu.Unlock()
+		return runtimeApprovalDenyResult(request.Method), nil
+	}
+	if c.pendingApprovals == nil {
+		c.pendingApprovals = make(map[provider.ProviderRequestID]*pendingRuntimeApproval)
+	}
+	c.pendingApprovals[mapped.Approval.Request.RequestID] = &pendingRuntimeApproval{remote: request.ID, method: mapped.Method, approval: mapped.Approval}
+	c.eventMu.Unlock()
+	event := provider.ProviderEvent{
+		Kind:            provider.EventRuntimeApprovalRequested,
+		ThreadID:        mapped.Approval.Request.ThreadID,
+		OperationID:     mapped.Approval.Request.OperationID,
+		CorrelationID:   mapped.Approval.Request.CorrelationID,
+		ConversationID:  context.ConversationID,
+		ConversationRef: context.ConversationRef,
+		TurnID:          "",
+		TurnRef:         mapped.Approval.Request.TurnRef,
+		RequestID:       mapped.Approval.Request.RequestID,
+		ExpiresAt:       mapped.Approval.Request.ExpiresAt,
+		Scope:           mapped.Approval.Request.Scope,
+		Approval:        &mapped.Approval,
+	}
+	// The local turn identity is supplied by the binding, not the opaque ref.
+	if binding, ok := c.turnBinding(mapped.Approval.Request.TurnRef); ok {
+		event.TurnID = binding.TurnID
+	}
+	if err := c.publishProviderEvent(event); err != nil {
+		c.eventMu.Lock()
+		delete(c.pendingApprovals, mapped.Approval.Request.RequestID)
+		c.eventMu.Unlock()
+		return runtimeApprovalDenyResult(request.Method), nil
+	}
+	return nil, ErrServerRequestDeferred
+}
+
+func (c *Connection) turnBinding(ref provider.ProviderTurnRef) (turnEventBinding, bool) {
+	c.eventMu.RLock()
+	defer c.eventMu.RUnlock()
+	binding, ok := c.turnBindings[ref]
+	return binding, ok
+}
+
+func runtimeApprovalDenyResult(method string) json.RawMessage {
+	switch method {
+	case serverRequestPermissionsApproval:
+		return json.RawMessage(`{"permissions":{"fileSystem":null,"network":null},"scope":"turn","strictAutoReview":true}`)
+	case serverRequestToolCall:
+		return json.RawMessage(`{"contentItems":[],"success":false}`)
+	case serverRequestToolInput:
+		return json.RawMessage(`{"answers":{}}`)
+	case serverRequestLegacyExec:
+		return json.RawMessage(`{"decision":"denied"}`)
+	default:
+		return json.RawMessage(`{"decision":"decline"}`)
+	}
+}
+
+// RespondToRuntimeApproval resolves one pending provider request. Only a
+// contained command can be allowed once; file/root, tool, and network scopes
+// are denied regardless of the UI response.
+func (c *Connection) RespondToRuntimeApproval(ctx context.Context, response provider.RuntimeApprovalResponse) error {
+	if c == nil || c.client == nil {
+		return ErrClientClosed
+	}
+	now := time.Now().UTC()
+	c.eventMu.Lock()
+	pending := c.pendingApprovals[response.RequestID]
+	c.eventMu.Unlock()
+	if pending == nil {
+		return provider.ErrApprovalStale
+	}
+	decision := response.Decision
+	if decision == provider.ApprovalAllowOnce && (pending.approval.Request.Scope.Kind != provider.RuntimeApprovalCommand || pending.approval.Details.NetworkTarget != "") {
+		decision = provider.ApprovalDeny
+	}
+	response.Decision = decision
+	if err := pending.approval.ResponseValidation(response, now); err != nil {
+		if errors.Is(err, provider.ErrApprovalExpired) {
+			_ = c.client.RespondServerRequest(ctx, pending.remote, runtimeApprovalDenyResult(pending.method), nil)
+			c.eventMu.Lock()
+			delete(c.pendingApprovals, response.RequestID)
+			c.eventMu.Unlock()
+		}
+		return err
+	}
+	result := runtimeApprovalDenyResult(pending.method)
+	if decision == provider.ApprovalAllowOnce {
+		result = runtimeApprovalAllowResult(pending.method)
+	}
+	if err := c.client.RespondServerRequest(ctx, pending.remote, result, nil); err != nil {
+		return err
+	}
+	if err := pending.approval.Respond(response, now); err != nil {
+		return err
+	}
+	c.eventMu.Lock()
+	delete(c.pendingApprovals, response.RequestID)
+	c.eventMu.Unlock()
+	return c.publishProviderEvent(provider.ProviderEvent{
+		Kind:            provider.EventRuntimeApprovalResolved,
+		ThreadID:        pending.approval.Request.ThreadID,
+		OperationID:     pending.approval.Request.OperationID,
+		CorrelationID:   pending.approval.Request.CorrelationID,
+		ConversationID:  contextConversationID(c, pending.approval.Request.TurnRef),
+		ConversationRef: contextConversationRef(c, pending.approval.Request.TurnRef),
+		TurnID:          contextTurnID(c, pending.approval.Request.TurnRef),
+		TurnRef:         pending.approval.Request.TurnRef,
+		RequestID:       response.RequestID,
+		Scope:           response.Scope,
+		Decision:        decision,
+	})
+}
+
+func runtimeApprovalAllowResult(method string) json.RawMessage {
+	switch method {
+	case serverRequestLegacyExec:
+		return json.RawMessage(`{"decision":"approved"}`)
+	case serverRequestToolCall:
+		return json.RawMessage(`{"contentItems":[],"success":false}`)
+	default:
+		return json.RawMessage(`{"decision":"accept"}`)
+	}
+}
+
+func contextTurnID(c *Connection, ref provider.ProviderTurnRef) domain.ProviderTurnID {
+	if binding, ok := c.turnBinding(ref); ok {
+		return binding.TurnID
+	}
+	return ""
+}
+
+func contextConversationID(c *Connection, ref provider.ProviderTurnRef) domain.ProviderConversationID {
+	if binding, ok := c.turnBinding(ref); ok {
+		return binding.ConversationID
+	}
+	return ""
+}
+
+func contextConversationRef(c *Connection, ref provider.ProviderTurnRef) provider.ProviderConversationRef {
+	if binding, ok := c.turnBinding(ref); ok {
+		return binding.ConversationRef
+	}
+	return ""
 }
 
 // Events returns the bounded normalized event stream for this connection.
@@ -496,6 +676,9 @@ func (c *Connection) startMonitor() {
 
 func (c *Connection) monitor() {
 	<-c.client.done
+	c.eventMu.Lock()
+	c.pendingApprovals = make(map[provider.ProviderRequestID]*pendingRuntimeApproval)
+	c.eventMu.Unlock()
 	c.statusMu.Lock()
 	c.status.State = ConnectionDisconnected
 	c.status.Message = "disconnected"

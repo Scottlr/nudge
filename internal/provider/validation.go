@@ -355,6 +355,17 @@ type RuntimeApproval struct {
 	Request  RuntimeApprovalRequest
 	State    ApprovalState
 	Decision ApprovalDecision
+	// Details is an ephemeral display projection and is never persisted.
+	Details RuntimeApprovalDetails
+}
+
+// RuntimeApprovalDetails carries exact scope text only while a request is
+// pending. Durable approval metadata uses RuntimeApprovalScope instead.
+type RuntimeApprovalDetails struct {
+	ExactCommandArgs string
+	NetworkTarget    string
+	ToolName         string
+	RequestedScope   string
 }
 
 // NewRuntimeApproval admits a new, future-expiring runtime request.

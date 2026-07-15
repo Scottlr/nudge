@@ -85,6 +85,45 @@ func TestClientHandlesServerRequest(t *testing.T) {
 	}
 }
 
+func TestClientDefersServerRequestUntilExplicitResponse(t *testing.T) {
+	client := newTestClient(t, "deferred_server_request", Config{})
+	defer client.Close()
+	requestIDs := make(chan protocol.RequestID, 1)
+	if err := client.RegisterServerRequestHandler("server/request", func(_ context.Context, request protocol.ServerRequest) (json.RawMessage, error) {
+		requestIDs <- request.ID
+		return nil, ErrServerRequestDeferred
+	}); err != nil {
+		t.Fatalf("RegisterServerRequestHandler() error = %v", err)
+	}
+	result := make(chan error, 1)
+	go func() {
+		var response struct {
+			Completed bool `json:"completed"`
+		}
+		if err := client.Call(context.Background(), "test/request", nil, &response); err != nil {
+			result <- err
+			return
+		}
+		if !response.Completed {
+			result <- errors.New("deferred request did not complete")
+			return
+		}
+		result <- nil
+	}()
+	requestID := <-requestIDs
+	if err := client.RespondServerRequest(context.Background(), requestID, json.RawMessage(`{"accepted":true}`), nil); err != nil {
+		t.Fatalf("RespondServerRequest() error = %v", err)
+	}
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("deferred server request did not complete")
+	}
+}
+
 func TestClientRejectsOversizedFrame(t *testing.T) {
 	config := Config{MaxFrameBytes: 64, QueueEvents: 4, QueueResidentBytes: 256, MaxPendingCalls: 4, MaxStderrBytes: 1024}
 	client := newTestClient(t, "oversized", config)
@@ -283,7 +322,7 @@ func runFakeAppServer(mode string) {
 		second := readRequest()
 		write(responseLine(second.ID, `{"value":"second"}`))
 		write(responseLine(first.ID, `{"value":"first"}`))
-	case "server_request":
+	case "server_request", "deferred_server_request":
 		request := readRequest()
 		write(`{"id":99,"method":"server/request","params":{"request":true}}`)
 		response := readRequest()

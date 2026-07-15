@@ -25,6 +25,9 @@ var (
 	ErrProcessExited       = errors.New("codex app-server process exited")
 	ErrPendingLimit        = errors.New("codex app-server pending request limit reached")
 	ErrInvalidClientConfig = errors.New("invalid codex app-server client configuration")
+	// ErrServerRequestDeferred tells the dispatcher that the provider request
+	// is waiting for an explicit user decision and must not be answered yet.
+	ErrServerRequestDeferred = errors.New("codex server request deferred")
 )
 
 // Config bounds all resident protocol state owned by Client. The process
@@ -225,6 +228,26 @@ func (c *Client) RegisterServerRequestHandler(method string, handler ServerReque
 	c.serverHandlers[method] = handler
 	c.handlerMu.Unlock()
 	return nil
+}
+
+// RespondServerRequest sends the delayed response for one provider-initiated
+// request. The caller must retain only the opaque request identity and keep
+// any exact display scope outside durable state.
+func (c *Client) RespondServerRequest(ctx context.Context, id protocol.RequestID, result json.RawMessage, rpcErr *protocol.RPCError) error {
+	if c == nil {
+		return ErrClientClosed
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	payload, err := protocol.MarshalResponse(id, result, rpcErr)
+	if err != nil {
+		return err
+	}
+	return c.writePayload(payload)
 }
 
 // Call sends one request and decodes its response into result. Calls may be

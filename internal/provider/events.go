@@ -68,6 +68,7 @@ type ProviderEvent struct {
 	Error         string
 	ExpiresAt     time.Time
 	Scope         RuntimeApprovalScope
+	Approval      *RuntimeApproval
 	Decision      ApprovalDecision
 	CoalescingKey string
 	Coalescible   bool
@@ -167,7 +168,10 @@ func (e ProviderEvent) Validate(limits ValidationLimits) error {
 			return ErrInvalidEvent
 		}
 	case EventRuntimeApprovalRequested:
-		if e.RequestID == "" || e.ExpiresAt.IsZero() || e.Scope.Validate(limits) != nil {
+		if e.RequestID == "" || e.ExpiresAt.IsZero() || e.Scope.Validate(limits) != nil || e.Approval == nil || e.Approval.Request.RequestID != e.RequestID || e.Approval.Request.Scope != e.Scope || !e.Approval.Request.ExpiresAt.Equal(e.ExpiresAt) {
+			return ErrInvalidEvent
+		}
+		if uint64(len([]byte(e.Approval.Details.ExactCommandArgs))) > limits.TurnContentBytes || uint64(len([]byte(e.Approval.Details.NetworkTarget))) > limits.PathBytes || uint64(len([]byte(e.Approval.Details.ToolName))) > limits.MethodBytes {
 			return ErrInvalidEvent
 		}
 	case EventRuntimeApprovalResolved:

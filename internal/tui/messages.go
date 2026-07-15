@@ -86,6 +86,16 @@ type ShowOverlayMsg struct {
 
 type DismissOverlayMsg struct{}
 
+// RuntimeApprovalMsg presents one ephemeral provider approval request. The
+// message is never persisted and the exact scope is discarded on resolution.
+type RuntimeApprovalMsg struct {
+	Approval app.RuntimeApproval
+}
+
+// ClearRuntimeApprovalMsg removes the current runtime approval overlay after
+// provider resolution or reconnect.
+type ClearRuntimeApprovalMsg struct{}
+
 // QuitIntentMsg is emitted by the input owner after its explicit quit policy
 // has been satisfied.
 type QuitIntentMsg struct{}
