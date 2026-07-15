@@ -342,13 +342,17 @@ type sectionBuilder struct {
 }
 
 type hunkBuilder struct {
-	index    PatchHunkIndex
-	header   string
-	baseSeen int
-	headSeen int
-	rows     int
-	lines    []repository.DiffLine
-	collect  bool
+	index             PatchHunkIndex
+	header            string
+	baseSeen          int
+	headSeen          int
+	rows              int
+	lines             []repository.DiffLine
+	collect           bool
+	lastContentIndex  int
+	lastContentKind   repository.DiffLineKind
+	baseNoNewlineSeen bool
+	headNoNewlineSeen bool
 }
 
 func newSection(line patchLine, limits PatchParseLimits, collect bool) (*sectionBuilder, error) {
@@ -387,10 +391,7 @@ func (b *sectionBuilder) consume(line patchLine, limits PatchParseLimits) error 
 			return b.consumeDiffLine(text, limits)
 		}
 		if bytes.Equal(text, []byte("\\ No newline at end of file")) {
-			if b.collect {
-				b.hunk.lines = append(b.hunk.lines, repository.DiffLine{Kind: repository.DiffLineNoNewline, Text: string(text)})
-			}
-			return nil
+			return b.consumeNoNewlineMarker()
 		}
 		if isSectionRecord(text) {
 			if err := b.finishHunk(line.Offset, limits); err != nil {
@@ -546,7 +547,13 @@ func (b *sectionBuilder) consumeDiffLine(text []byte, limits PatchParseLimits) e
 	}
 	b.totalRows++
 	b.hunk.rows++
-	line := repository.DiffLine{Kind: kind, Text: string(text[1:])}
+	lineText := text[1:]
+	terminator := repository.TerminatorLF
+	if len(lineText) > 0 && lineText[len(lineText)-1] == '\r' {
+		lineText = lineText[:len(lineText)-1]
+		terminator = repository.TerminatorCRLF
+	}
+	line := repository.DiffLine{Kind: kind, Text: string(lineText), Terminator: terminator}
 	switch kind {
 	case repository.DiffLineContext:
 		base, head := b.hunk.baseSeen+b.hunk.index.BaseStart, b.hunk.headSeen+b.hunk.index.HeadStart
@@ -565,11 +572,48 @@ func (b *sectionBuilder) consumeDiffLine(text []byte, limits PatchParseLimits) e
 	if b.hunk.baseSeen > b.hunk.index.BaseCount || b.hunk.headSeen > b.hunk.index.HeadCount {
 		return malformed("hunk line count exceeds header")
 	}
+	b.hunk.lastContentKind = kind
 	if b.collect {
+		b.hunk.lastContentIndex = len(b.hunk.lines)
 		b.hunk.lines = append(b.hunk.lines, line)
 	}
 	if b.totalRows > limits.MaxRows {
 		return limited("logical row count exceeds %d", limits.MaxRows)
+	}
+	return nil
+}
+
+func (b *sectionBuilder) consumeNoNewlineMarker() error {
+	if b.hunk == nil || b.hunk.lastContentKind == "" {
+		return malformed("no-newline marker without a preceding content line")
+	}
+	base, head := false, false
+	switch b.hunk.lastContentKind {
+	case repository.DiffLineDeleted:
+		base = true
+	case repository.DiffLineAdded:
+		head = true
+	case repository.DiffLineContext:
+		base, head = true, true
+	default:
+		return malformed("no-newline marker after non-content line")
+	}
+	if base && b.hunk.baseNoNewlineSeen || head && b.hunk.headNoNewlineSeen {
+		return malformed("contradictory no-newline marker")
+	}
+	if b.collect {
+		if b.hunk.lastContentIndex < 0 || b.hunk.lastContentIndex >= len(b.hunk.lines) {
+			return malformed("no-newline marker content index missing")
+		}
+		previous := &b.hunk.lines[b.hunk.lastContentIndex]
+		previous.Terminator = repository.TerminatorNone
+		previous.NoNewlineBase = base
+		previous.NoNewlineHead = head
+	}
+	b.hunk.baseNoNewlineSeen = b.hunk.baseNoNewlineSeen || base
+	b.hunk.headNoNewlineSeen = b.hunk.headNoNewlineSeen || head
+	if b.collect {
+		b.hunk.lines = append(b.hunk.lines, repository.DiffLine{Kind: repository.DiffLineNoNewline, Text: "\\ No newline at end of file", NoNewlineBase: base, NoNewlineHead: head})
 	}
 	return nil
 }
@@ -593,8 +637,9 @@ func (b *sectionBuilder) startHunk(line patchLine, limits PatchParseLimits) erro
 			HeadStart: headStart,
 			HeadCount: headCount,
 		},
-		header:  string(line.Text),
-		collect: b.collect,
+		header:           string(line.Text),
+		collect:          b.collect,
+		lastContentIndex: -1,
 	}
 	return nil
 }

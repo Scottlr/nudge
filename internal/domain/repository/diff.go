@@ -82,10 +82,13 @@ func (r PatchByteRange) ValidateAgainstArtifact(id PatchArtifactID, size int64, 
 // DiffLine is one semantically classified line. Text is kept opaque to the
 // domain; terminal projection happens elsewhere.
 type DiffLine struct {
-	Kind     DiffLineKind
-	BaseLine *int
-	HeadLine *int
-	Text     string
+	Kind          DiffLineKind
+	BaseLine      *int
+	HeadLine      *int
+	Text          string
+	Terminator    LineTerminator
+	NoNewlineBase bool
+	NoNewlineHead bool
 }
 
 // Validate checks that line numbers appear only on their owning diff sides.
@@ -110,6 +113,13 @@ func (l DiffLine) Validate() error {
 		if l.BaseLine != nil || l.HeadLine != nil {
 			return ErrInvalidDiffLine
 		}
+	default:
+		if l.Terminator != "" && l.Terminator.Validate() != nil {
+			return ErrInvalidDiffLine
+		}
+	}
+	if l.Kind != DiffLineNoNewline && l.Terminator != "" && l.Terminator.Validate() != nil {
+		return ErrInvalidDiffLine
 	}
 	return nil
 }

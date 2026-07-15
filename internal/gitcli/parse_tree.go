@@ -327,6 +327,14 @@ func cloneChangedFile(value *repository.ChangedFile) *repository.ChangedFile {
 		rename := *value.Rename
 		copyValue.Rename = &rename
 	}
+	if value.OldTextSemantics != nil {
+		semantics := *value.OldTextSemantics
+		copyValue.OldTextSemantics = &semantics
+	}
+	if value.NewTextSemantics != nil {
+		semantics := *value.NewTextSemantics
+		copyValue.NewTextSemantics = &semantics
+	}
 	return &copyValue
 }
 

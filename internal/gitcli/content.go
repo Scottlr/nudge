@@ -296,22 +296,31 @@ func boundedFileContentIdentity(snapshot repository.SnapshotRef, path repository
 		contentClass = repository.ClassifyContentV1(data, file.Binary)
 	}
 	metadataOnly := contentClass.IsByteOriented()
+	var textSemantics *repository.TextByteSemantics
+	if contentClass == repository.ContentClassRegularTextUTF8 && !truncated && uint64(len(data)) == byteLength {
+		semantics, semanticsErr := repository.ClassifyTextBytes(data)
+		if semanticsErr != nil || semantics.Encoding == repository.TextEncodingUnknown {
+			return repository.FileContent{}, fmt.Errorf("%w: text byte semantics", ErrContentCorrupt)
+		}
+		textSemantics = &semantics
+	}
 	if metadataOnly {
 		data = nil
 	}
 	content := repository.FileContent{
-		Snapshot:     snapshot,
-		Path:         repository.RepoPath(path.Bytes()),
-		Kind:         kind,
-		Mode:         mode,
-		Bytes:        append([]byte(nil), data...),
-		ByteLength:   byteLength,
-		ContentHash:  contentHash,
-		ContentClass: contentClass,
-		MetadataOnly: metadataOnly,
-		Binary:       contentClass != "" && contentClass.IsByteOriented() || contentClass == "" && (bytes.IndexByte(data, 0) >= 0 || !utf8.Valid(data)),
-		Truncated:    truncated,
-		LimitReason:  reason,
+		Snapshot:      snapshot,
+		Path:          repository.RepoPath(path.Bytes()),
+		Kind:          kind,
+		Mode:          mode,
+		Bytes:         append([]byte(nil), data...),
+		ByteLength:    byteLength,
+		ContentHash:   contentHash,
+		ContentClass:  contentClass,
+		TextSemantics: textSemantics,
+		MetadataOnly:  metadataOnly,
+		Binary:        contentClass != "" && contentClass.IsByteOriented() || contentClass == "" && (bytes.IndexByte(data, 0) >= 0 || !utf8.Valid(data)),
+		Truncated:     truncated,
+		LimitReason:   reason,
 	}
 	if err := content.Validate(); err != nil {
 		return repository.FileContent{}, err

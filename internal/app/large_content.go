@@ -53,14 +53,15 @@ const (
 // ContentIdentity is the complete identity of one immutable file side. Raw
 // path bytes are retained in RepoPathKey and are never replaced by a label.
 type ContentIdentity struct {
-	Generation  repository.TargetGeneration
-	Snapshot    repository.SnapshotRef
-	CaptureID   domain.CaptureID
-	RepoPathKey repository.RepoPathKey
-	Side        ContentSide
-	Mode        ContentMode
-	ByteLength  ByteSize
-	SHA256      string
+	Generation    repository.TargetGeneration
+	Snapshot      repository.SnapshotRef
+	CaptureID     domain.CaptureID
+	RepoPathKey   repository.RepoPathKey
+	Side          ContentSide
+	Mode          ContentMode
+	ByteLength    ByteSize
+	SHA256        string
+	TextSemantics *repository.TextByteSemantics
 }
 
 // Validate checks every field that can change the meaning of a range result.
@@ -87,6 +88,9 @@ func (i ContentIdentity) Validate() error {
 	if i.Snapshot.Kind == repository.SnapshotWorkingTree && i.Side == ContentSideBase || i.Snapshot.Kind != repository.SnapshotWorkingTree && i.Side == ContentSideWorkingTree {
 		return ErrInvalidContentIdentity
 	}
+	if i.TextSemantics != nil && (i.Mode != ContentModeText || i.TextSemantics.Validate() != nil || i.TextSemantics.ByteLength != uint64(i.ByteLength) || i.TextSemantics.SHA256 != i.SHA256) {
+		return ErrInvalidContentIdentity
+	}
 	return nil
 }
 
@@ -107,6 +111,14 @@ func (i ContentIdentity) Digest() (string, error) {
 	writeLargeContentPart(h, string(i.Mode))
 	writeLargeContentPart(h, fmt.Sprint(uint64(i.ByteLength)))
 	writeLargeContentPart(h, i.SHA256)
+	if i.TextSemantics == nil {
+		writeLargeContentPart(h, "")
+	} else {
+		writeLargeContentPart(h, string(i.TextSemantics.Encoding))
+		writeLargeContentPart(h, fmt.Sprint(i.TextSemantics.Endings.LFCount))
+		writeLargeContentPart(h, fmt.Sprint(i.TextSemantics.Endings.CRLFCount))
+		writeLargeContentPart(h, fmt.Sprint(i.TextSemantics.Endings.CRCount))
+	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
@@ -288,10 +300,11 @@ type ContentSegment struct {
 	ContinuationAfter  bool
 	InvalidEncoding    bool
 	ElidedBytes        ByteSize
+	Terminator         repository.LineTerminator
 }
 
 func (s ContentSegment) Validate() error {
-	if s.Identity.Validate() != nil || s.Range.End > s.Identity.ByteLength || s.Range.Start > s.Range.End || !utf8.ValidString(s.Text) || s.TerminalCells == 0 && s.Text != "" {
+	if s.Identity.Validate() != nil || s.Range.End > s.Identity.ByteLength || s.Range.Start > s.Range.End || !utf8.ValidString(s.Text) || s.TerminalCells == 0 && s.Text != "" || s.Terminator != "" && s.Terminator.Validate() != nil {
 		return ErrInvalidLargeContentRequest
 	}
 	if s.Range.Start == s.Range.End && s.Text != "" {

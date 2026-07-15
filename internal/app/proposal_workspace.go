@@ -103,13 +103,14 @@ func (s WorkspaceSourceIdentity) Validate() error {
 // one baseline/result entry. Path and LinkTarget use []byte so JSON preserves
 // raw repository bytes through SQLite without UTF-8 replacement.
 type WorkspaceManifestEntry struct {
-	Path         []byte                    `json:"path"`
-	Kind         repository.FileKind       `json:"kind"`
-	Mode         uint32                    `json:"mode"`
-	Bytes        uint64                    `json:"bytes"`
-	SHA256       string                    `json:"sha256"`
-	ContentClass repository.ContentClassV1 `json:"content_class,omitempty"`
-	LinkTarget   []byte                    `json:"link_target,omitempty"`
+	Path          []byte                        `json:"path"`
+	Kind          repository.FileKind           `json:"kind"`
+	Mode          uint32                        `json:"mode"`
+	Bytes         uint64                        `json:"bytes"`
+	SHA256        string                        `json:"sha256"`
+	ContentClass  repository.ContentClassV1     `json:"content_class,omitempty"`
+	TextSemantics *repository.TextByteSemantics `json:"text_semantics,omitempty"`
+	LinkTarget    []byte                        `json:"link_target,omitempty"`
 }
 
 func (e WorkspaceManifestEntry) Validate() error {
@@ -118,15 +119,15 @@ func (e WorkspaceManifestEntry) Validate() error {
 	}
 	switch e.Kind {
 	case repository.FileKindDirectory:
-		if e.Bytes != 0 || e.SHA256 != "" || e.ContentClass != "" || len(e.LinkTarget) != 0 {
+		if e.Bytes != 0 || e.SHA256 != "" || e.ContentClass != "" || e.TextSemantics != nil || len(e.LinkTarget) != 0 {
 			return ErrInvalidProposalWorkspaceLifecycle
 		}
 	case repository.FileKindRegular:
-		if !validWorkspaceHash(e.SHA256) || len(e.LinkTarget) != 0 || e.ContentClass != "" && e.ContentClass.Validate() != nil {
+		if !validWorkspaceHash(e.SHA256) || len(e.LinkTarget) != 0 || e.ContentClass != "" && e.ContentClass.Validate() != nil || e.TextSemantics != nil && (e.ContentClass != repository.ContentClassRegularTextUTF8 || e.TextSemantics.Validate() != nil || e.TextSemantics.ByteLength != e.Bytes || e.TextSemantics.SHA256 != e.SHA256) {
 			return ErrInvalidProposalWorkspaceLifecycle
 		}
 	case repository.FileKindSymlink:
-		if len(e.LinkTarget) == 0 || e.Bytes != uint64(len(e.LinkTarget)) || !validWorkspaceHash(e.SHA256) || len(e.LinkTarget) > 32<<20 || e.ContentClass != "" {
+		if len(e.LinkTarget) == 0 || e.Bytes != uint64(len(e.LinkTarget)) || !validWorkspaceHash(e.SHA256) || len(e.LinkTarget) > 32<<20 || e.ContentClass != "" || e.TextSemantics != nil {
 			return ErrInvalidProposalWorkspaceLifecycle
 		}
 	default:
@@ -245,6 +246,10 @@ func cloneWorkspaceManifestEntries(entries []WorkspaceManifestEntry) []Workspace
 		copyEntries[i] = entry
 		copyEntries[i].Path = append([]byte(nil), entry.Path...)
 		copyEntries[i].LinkTarget = append([]byte(nil), entry.LinkTarget...)
+		if entry.TextSemantics != nil {
+			semantics := *entry.TextSemantics
+			copyEntries[i].TextSemantics = &semantics
+		}
 	}
 	return copyEntries
 }
@@ -259,9 +264,36 @@ func workspaceManifestHash(version uint32, entries []WorkspaceManifestEntry) str
 		writeWorkspaceHashUint(h, entry.Bytes)
 		writeWorkspaceHashString(h, entry.SHA256)
 		writeWorkspaceHashString(h, string(entry.ContentClass))
+		writeWorkspaceTextSemanticsHash(h, entry.TextSemantics)
 		writeWorkspaceHashBytes(h, entry.LinkTarget)
 	}
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+func writeWorkspaceTextSemanticsHash(h interface{ Write([]byte) (int, error) }, value *repository.TextByteSemantics) {
+	if value == nil {
+		writeWorkspaceHashUint(h, 0)
+		return
+	}
+	writeWorkspaceHashUint(h, 1)
+	writeWorkspaceHashString(h, string(value.Encoding))
+	writeWorkspaceHashUint(h, value.ByteLength)
+	writeWorkspaceHashString(h, value.SHA256)
+	writeWorkspaceHashBool(h, value.HasBOM)
+	writeWorkspaceHashUint(h, value.Endings.LFCount)
+	writeWorkspaceHashUint(h, value.Endings.CRLFCount)
+	writeWorkspaceHashUint(h, value.Endings.CRCount)
+	writeWorkspaceHashBool(h, value.Endings.FinalLF)
+	writeWorkspaceHashBool(h, value.Endings.Mixed)
+	writeWorkspaceHashBool(h, value.Empty)
+}
+
+func writeWorkspaceHashBool(writer interface{ Write([]byte) (int, error) }, value bool) {
+	if value {
+		writeWorkspaceHashUint(writer, 1)
+		return
+	}
+	writeWorkspaceHashUint(writer, 0)
 }
 
 func writeWorkspaceHashBytes(writer interface{ Write([]byte) (int, error) }, value []byte) {

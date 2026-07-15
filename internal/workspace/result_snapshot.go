@@ -288,6 +288,7 @@ func scanResultFile(ctx context.Context, root, nativePath string, rawPath reposi
 	}
 	hash := sha256.New()
 	classifier := repository.NewContentClassifierV1(false)
+	textSemanticsWriter := repository.NewTextByteSemanticsWriter()
 	buffer := make([]byte, 64*1024)
 	var size uint64
 	for {
@@ -307,6 +308,7 @@ func scanResultFile(ctx context.Context, root, nativePath string, rawPath reposi
 				return app.ResultSnapshotEntry{}, err
 			}
 			_, _ = classifier.Write(buffer[:read])
+			_, _ = textSemanticsWriter.Write(buffer[:read])
 		}
 		if errors.Is(readErr, io.EOF) {
 			break
@@ -325,7 +327,16 @@ func scanResultFile(ctx context.Context, root, nativePath string, rawPath reposi
 	if identityErr != nil || afterIdentity != identity || initial.Size() != int64(size) || initial.Mode() != statAfter.Mode() {
 		return unsupportedResultEntry(rawPath, app.ResultReasonResultRace), nil
 	}
-	entry := app.ResultSnapshotEntry{Path: rawPath.Bytes(), Kind: repository.FileKindRegular, Mode: 0o100000 | uint32(initial.Mode().Perm()), Bytes: size, SHA256: hex.EncodeToString(hash.Sum(nil)), ContentClass: classifier.Classify(), NativeIdentityHash: identity.FileIdentityHash, NativeAlias: &identity, Complete: true}
+	contentClass := classifier.Classify()
+	var textSemantics *repository.TextByteSemantics
+	if contentClass == repository.ContentClassRegularTextUTF8 {
+		semantics, semanticsErr := textSemanticsWriter.Semantics(size)
+		if semanticsErr != nil {
+			return app.ResultSnapshotEntry{}, semanticsErr
+		}
+		textSemantics = &semantics
+	}
+	entry := app.ResultSnapshotEntry{Path: rawPath.Bytes(), Kind: repository.FileKindRegular, Mode: 0o100000 | uint32(initial.Mode().Perm()), Bytes: size, SHA256: hex.EncodeToString(hash.Sum(nil)), ContentClass: contentClass, TextSemantics: textSemantics, NativeIdentityHash: identity.FileIdentityHash, NativeAlias: &identity, Complete: true}
 	if identity.LinkCount > 1 {
 		entry.Reason = app.ResultReasonSharedIdentity
 	}

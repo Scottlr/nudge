@@ -67,6 +67,9 @@ func TestParsePatchGolden(t *testing.T) {
 	if files[0].Hunks[0].Lines[len(files[0].Hunks[0].Lines)-1].Kind != repository.DiffLineNoNewline {
 		t.Fatal("no-newline marker was not retained")
 	}
+	if !files[0].Hunks[0].Lines[len(files[0].Hunks[0].Lines)-2].NoNewlineHead || files[0].Hunks[0].Lines[len(files[0].Hunks[0].Lines)-2].Terminator != repository.TerminatorNone {
+		t.Fatalf("no-newline side evidence = %#v", files[0].Hunks[0].Lines[len(files[0].Hunks[0].Lines)-2])
+	}
 	if files[1].File.Kind != repository.ChangeAdded || files[1].File.OldPath != nil || files[1].File.NewPath == nil {
 		t.Fatalf("added diff = %#v", files[1].File)
 	}
@@ -87,6 +90,41 @@ func TestParsePatchGolden(t *testing.T) {
 	}
 	if !files[6].File.Binary || files[6].File.ContentClass != repository.ContentClassRegularBinary || !files[6].BinaryComplete || files[6].BinaryPatch == nil || files[6].BinaryPatch.Length == 0 {
 		t.Fatalf("binary diff = %#v", files[6])
+	}
+}
+
+func TestParsePatchPreservesCRLFDisplayEvidence(t *testing.T) {
+	files, err := ParsePatch([]byte(strings.Join([]string{
+		"diff --git a/file.txt b/file.txt",
+		"index 1111111111111111111111111111111111111111..2222222222222222222222222222222222222222",
+		"--- a/file.txt",
+		"+++ b/file.txt",
+		"@@ -1 +1 @@",
+		"-old\r",
+		"+new\r",
+	}, "\n")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := files[0].Hunks[0].Lines[0]
+	if line.Text != "old" || line.Terminator != repository.TerminatorCRLF {
+		t.Fatalf("CRLF line = %#v", line)
+	}
+}
+
+func TestParsePatchRejectsDetachedNoNewlineMarker(t *testing.T) {
+	_, err := ParsePatch([]byte(strings.Join([]string{
+		"diff --git a/file.txt b/file.txt",
+		"index 1111111111111111111111111111111111111111..2222222222222222222222222222222222222222",
+		"--- a/file.txt",
+		"+++ b/file.txt",
+		"@@ -1 +1 @@",
+		"\\ No newline at end of file",
+		"-old",
+		"+new",
+	}, "\n")))
+	if !errors.Is(err, ErrPatchMalformed) {
+		t.Fatalf("error = %v, want malformed patch", err)
 	}
 }
 

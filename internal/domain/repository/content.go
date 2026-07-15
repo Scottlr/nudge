@@ -10,18 +10,19 @@ var (
 // FileContent is snapshot-bound file data. Bytes remain bytes until a
 // presentation layer explicitly decodes them.
 type FileContent struct {
-	Snapshot     SnapshotRef
-	Path         RepoPath
-	Kind         FileKind
-	Mode         uint32
-	Bytes        []byte
-	ByteLength   uint64
-	ContentHash  string
-	ContentClass ContentClassV1
-	MetadataOnly bool
-	Binary       bool
-	Truncated    bool
-	LimitReason  string
+	Snapshot      SnapshotRef
+	Path          RepoPath
+	Kind          FileKind
+	Mode          uint32
+	Bytes         []byte
+	ByteLength    uint64
+	ContentHash   string
+	ContentClass  ContentClassV1
+	TextSemantics *TextByteSemantics
+	MetadataOnly  bool
+	Binary        bool
+	Truncated     bool
+	LimitReason   string
 }
 
 // Validate checks content identity and bounded-read metadata.
@@ -43,6 +44,14 @@ func (c FileContent) Validate() error {
 			return ErrInvalidFileContent
 		}
 	} else if c.ByteLength != 0 && c.ByteLength < uint64(len(c.Bytes)) {
+		return ErrInvalidFileContent
+	}
+	if c.TextSemantics != nil {
+		if c.ContentClass != ContentClassRegularTextUTF8 || c.TextSemantics.Validate() != nil || c.TextSemantics.ByteLength != c.ByteLength || c.TextSemantics.SHA256 != c.ContentHash || c.Binary || c.MetadataOnly {
+			return ErrInvalidFileContent
+		}
+	}
+	if c.ContentClass == ContentClassRegularTextUTF8 && !c.Truncated && c.TextSemantics != nil && c.ByteLength != uint64(len(c.Bytes)) {
 		return ErrInvalidFileContent
 	}
 	if !c.MetadataOnly && !c.Truncated && c.ByteLength != 0 && c.ByteLength != uint64(len(c.Bytes)) {

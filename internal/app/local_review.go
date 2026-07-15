@@ -698,7 +698,7 @@ func displayedDiffWithSides(target repository.ResolvedTarget, captureID domain.C
 	}
 	hash := sha256.Sum256(encoded)
 	diffIdentity := hex.EncodeToString(hash[:])
-	contentID, err := NewDisplayedContentID(DisplayedContentIdentity{TargetIdentity: target.Fingerprint, CaptureIdentity: string(captureID), Base: target.Base, Head: target.Head, DiffIdentity: diffIdentity, RowConstructionVersion: 1})
+	contentID, err := NewDisplayedContentID(DisplayedContentIdentity{TargetIdentity: target.Fingerprint, CaptureIdentity: string(captureID), Base: target.Base, Head: target.Head, DiffIdentity: diffIdentity, RowConstructionVersion: 2})
 	if err != nil {
 		return DisplayedContent{}, DisplayedContentPage{}, err
 	}
@@ -724,6 +724,13 @@ func displayedDiffWithSides(target repository.ResolvedTarget, captureID domain.C
 	displayed := DisplayedContent{ID: contentID, Mode: DisplayUnifiedDiff, Status: status, Reason: reason}
 	if binary {
 		displayed.Binary = binaryContentMetadata(file, diffValue, baseContent, headContent)
+	} else {
+		if baseContent != nil {
+			displayed.BaseTextSemantics = cloneTextSemantics(baseContent.TextSemantics)
+		}
+		if headContent != nil {
+			displayed.HeadTextSemantics = cloneTextSemantics(headContent.TextSemantics)
+		}
 	}
 	if file.OldPath != nil {
 		path := repository.RepoPath(file.OldPath.Bytes())
@@ -747,12 +754,15 @@ func displayedDiffWithSides(target repository.ResolvedTarget, captureID domain.C
 				row.Kind, row.Side, row.Selectable = DisplayedRowContext, SideBoth, true
 				row.BaseLine, row.HeadLine = cloneInt(line.BaseLine), cloneInt(line.HeadLine)
 				row.BaseText, row.HeadText = line.Text, line.Text
+				row.Terminator = line.Terminator
 			case repository.DiffLineAdded:
 				row.Kind, row.Side, row.Selectable = DisplayedRowAdded, SideHead, true
 				row.HeadLine, row.HeadText = cloneInt(line.HeadLine), line.Text
+				row.Terminator = line.Terminator
 			case repository.DiffLineDeleted:
 				row.Kind, row.Side, row.Selectable = DisplayedRowDeleted, SideBase, true
 				row.BaseLine, row.BaseText = cloneInt(line.BaseLine), line.Text
+				row.Terminator = line.Terminator
 			case repository.DiffLineNoNewline:
 				row.Kind, row.Side, row.Selectable = DisplayedRowNoNewline, SideNone, false
 			}
@@ -857,12 +867,24 @@ func cloneChangedFile(value repository.ChangedFile) repository.ChangedFile {
 		rename := *value.Rename
 		value.Rename = &rename
 	}
+	if value.OldTextSemantics != nil {
+		semantics := *value.OldTextSemantics
+		value.OldTextSemantics = &semantics
+	}
+	if value.NewTextSemantics != nil {
+		semantics := *value.NewTextSemantics
+		value.NewTextSemantics = &semantics
+	}
 	return value
 }
 
 func cloneFileContent(value repository.FileContent) repository.FileContent {
 	value.Bytes = append([]byte(nil), value.Bytes...)
 	value.Path = repository.RepoPath(value.Path.Bytes())
+	if value.TextSemantics != nil {
+		semantics := *value.TextSemantics
+		value.TextSemantics = &semantics
+	}
 	return value
 }
 

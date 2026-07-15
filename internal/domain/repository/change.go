@@ -79,21 +79,23 @@ func (e IndexConflictEvidence) Validate() error {
 // ChangedFile describes one repository entry change. A nil path or object ID
 // is meaningful absence, never a fabricated all-zero Git object.
 type ChangedFile struct {
-	OldPath      *RepoPath
-	NewPath      *RepoPath
-	Kind         ChangeKind
-	OldFileKind  FileKind
-	NewFileKind  FileKind
-	OldMode      uint32
-	NewMode      uint32
-	OldObjectID  *ObjectID
-	NewObjectID  *ObjectID
-	ContentClass ContentClassV1
-	Binary       bool
-	Staged       bool
-	Unstaged     bool
-	Conflict     *IndexConflictEvidence
-	Rename       *RenameEvidence
+	OldPath          *RepoPath
+	NewPath          *RepoPath
+	Kind             ChangeKind
+	OldFileKind      FileKind
+	NewFileKind      FileKind
+	OldMode          uint32
+	NewMode          uint32
+	OldObjectID      *ObjectID
+	NewObjectID      *ObjectID
+	ContentClass     ContentClassV1
+	OldTextSemantics *TextByteSemantics
+	NewTextSemantics *TextByteSemantics
+	Binary           bool
+	Staged           bool
+	Unstaged         bool
+	Conflict         *IndexConflictEvidence
+	Rename           *RenameEvidence
 }
 
 // Validate enforces path-side, object-side, and change-kind invariants.
@@ -143,6 +145,9 @@ func (f ChangedFile) Validate() error {
 		if f.ContentClass.Validate() != nil || f.NewFileKind != FileKindRegular && f.OldFileKind != FileKindRegular || f.ContentClass.IsByteOriented() != f.Binary {
 			return ErrInvalidChangedFile
 		}
+	}
+	if f.OldTextSemantics != nil && (f.OldFileKind != FileKindRegular || f.OldTextSemantics.Validate() != nil) || f.NewTextSemantics != nil && (f.NewFileKind != FileKindRegular || f.NewTextSemantics.Validate() != nil) {
+		return ErrInvalidChangedFile
 	}
 	if f.Rename != nil {
 		if f.Rename.Validate() != nil || (f.Kind != ChangeRenamed && f.Kind != ChangeCopied) || f.OldPath == nil || f.NewPath == nil || !f.Rename.MatchesPaths(*f.OldPath, *f.NewPath) || f.Rename.Kind != f.Kind {

@@ -90,13 +90,15 @@ const (
 // DisplayedContent is the bounded metadata envelope for one code-pane input.
 // Rows arrive separately through DisplayedContentPage.
 type DisplayedContent struct {
-	ID       DisplayedContentID
-	Mode     DisplayMode
-	Status   ContentStatus
-	BasePath *repository.RepoPath
-	HeadPath *repository.RepoPath
-	Binary   *BinaryContentMetadata
-	Reason   string
+	ID                DisplayedContentID
+	Mode              DisplayMode
+	Status            ContentStatus
+	BasePath          *repository.RepoPath
+	HeadPath          *repository.RepoPath
+	Binary            *BinaryContentMetadata
+	BaseTextSemantics *repository.TextByteSemantics
+	HeadTextSemantics *repository.TextByteSemantics
+	Reason            string
 }
 
 // BinaryContentMetadata is the bounded, non-text projection of one binary
@@ -135,6 +137,9 @@ func (c DisplayedContent) Validate() error {
 		return ErrInvalidDisplayedContent
 	}
 	if c.Binary != nil && c.Binary.Validate() != nil {
+		return ErrInvalidDisplayedContent
+	}
+	if c.BaseTextSemantics != nil && c.BaseTextSemantics.Validate() != nil || c.HeadTextSemantics != nil && c.HeadTextSemantics.Validate() != nil {
 		return ErrInvalidDisplayedContent
 	}
 	if c.Status == ContentReady {
@@ -220,11 +225,14 @@ type DisplayedRow struct {
 	ContextGroup     string
 	ContextCollapsed bool
 	Placeholder      PlaceholderKind
+	RawStart         int64
+	RawEnd           int64
+	Terminator       repository.LineTerminator
 }
 
 // Validate checks side identity and keeps placeholders inert.
 func (r DisplayedRow) Validate() error {
-	if r.ID.Validate() != nil || !validRowKind(r.Kind) || !validSide(r.Side) || r.BasePath != nil && r.BasePath.Validate() != nil || r.HeadPath != nil && r.HeadPath.Validate() != nil || !validLinePointer(r.BaseLine) || !validLinePointer(r.HeadLine) {
+	if r.ID.Validate() != nil || !validRowKind(r.Kind) || !validSide(r.Side) || r.BasePath != nil && r.BasePath.Validate() != nil || r.HeadPath != nil && r.HeadPath.Validate() != nil || !validLinePointer(r.BaseLine) || !validLinePointer(r.HeadLine) || r.RawStart < 0 || r.RawEnd < r.RawStart || r.Terminator != "" && r.Terminator.Validate() != nil {
 		return ErrInvalidDisplayedRow
 	}
 	if r.ContextCollapsed && r.ContextGroup == "" || r.ContextGroup != "" && !validIdentity(r.ContextGroup) {
