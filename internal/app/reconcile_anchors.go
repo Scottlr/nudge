@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Scottlr/nudge/internal/domain/repository"
 	"github.com/Scottlr/nudge/internal/domain/review"
 )
 
@@ -105,9 +106,33 @@ func renameMappingsAllowed(transition review.GenerationTransition) bool {
 		return false
 	}
 	if transition.RenameEvidence.Complete() {
-		return true
+		return completeRenameMappings(transition.RenameMappings)
 	}
-	return transition.FromRenameEvidence.Complete() && transition.ToRenameEvidence.Complete() && transition.FromRenameEvidence == transition.ToRenameEvidence
+	return transition.FromRenameEvidence.Complete() && transition.ToRenameEvidence.Complete() && sameRenamePolicyEvidence(transition.FromRenameEvidence, transition.ToRenameEvidence) && completeRenameMappings(transition.RenameMappings)
+}
+
+func sameRenamePolicyEvidence(left, right review.RenamePolicyEvidence) bool {
+	if left.Version != right.Version || left.SimilarityPercent != right.SimilarityPercent || left.MaxDeleteSources != right.MaxDeleteSources || left.MaxAddTargets != right.MaxAddTargets || left.DetectChangedSourceCopies != right.DetectChangedSourceCopies || left.FindCopiesHarder != right.FindCopiesHarder || left.Outcome != right.Outcome || left.DeleteCandidates != right.DeleteCandidates || left.AddCandidates != right.AddCandidates || left.EvidenceHash != right.EvidenceHash || len(left.Flags) != len(right.Flags) {
+		return false
+	}
+	for index := range left.Flags {
+		if left.Flags[index] != right.Flags[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func completeRenameMappings(mappings []review.RenameMapping) bool {
+	if len(mappings) == 0 {
+		return false
+	}
+	for _, mapping := range mappings {
+		if mapping.Validate() != nil || mapping.SimilarityPercent < 60 || mapping.Kind != repository.ChangeRenamed && mapping.Kind != repository.ChangeCopied || len(mapping.EvidenceHash) != 64 {
+			return false
+		}
+	}
+	return true
 }
 
 func contentIdentityMatches(input review.ReconcileInput, path string, content review.CapturedFile) bool {

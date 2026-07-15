@@ -320,7 +320,7 @@ func BuildProposalPatchArtifact(ctx context.Context, input ProposalPatchBuildInp
 		return ProposalPatchArtifact{}, ErrInvalidProposalPatchArtifact
 	}
 	entries := sink.Entries()
-	if err := crossCheckProposalPatch(input.Baseline, expectedDelta, entries); err != nil {
+	if err := crossCheckProposalPatch(input.Baseline, expectedDelta, entries, input.RenamePolicyVersion); err != nil {
 		return ProposalPatchArtifact{}, err
 	}
 	index, err := NewProposalReviewIndex(identity, entries)
@@ -362,7 +362,7 @@ func proposalReviewIndex(identity diff.PatchIndexIdentity, entries []diff.PatchI
 	return ProposalReviewIndex{Version: ProposalReviewIndexVersion, SourceID: identity.SourceID, Size: identity.Size, PatchSHA256: identity.SHA256, Files: files, HunkCount: identity.HunkCount, RowCount: identity.RowCount, Hash: proposalReviewIndexHash(ProposalReviewIndex{Version: ProposalReviewIndexVersion, SourceID: identity.SourceID, Size: identity.Size, PatchSHA256: identity.SHA256, Files: files, HunkCount: identity.HunkCount, RowCount: identity.RowCount, Complete: true}), Complete: true}
 }
 
-func crossCheckProposalPatch(baseline WorkspaceManifest, delta ResultDelta, entries []diff.PatchIndexEntry) error {
+func crossCheckProposalPatch(baseline WorkspaceManifest, delta ResultDelta, entries []diff.PatchIndexEntry, renamePolicyVersion uint32) error {
 	byPath := make(map[repository.RepoPathKey]ResultDeltaEntry, len(delta.Entries))
 	for _, entry := range delta.Entries {
 		if entry.Validate() != nil || !entry.Complete || entry.Reason != ResultReasonNone {
@@ -377,8 +377,7 @@ func crossCheckProposalPatch(baseline WorkspaceManifest, delta ResultDelta, entr
 		}
 		file := entry.File
 		if file.OldPath != nil && file.NewPath != nil && (file.Kind == repository.ChangeRenamed || file.Kind == repository.ChangeCopied) {
-			candidate := ResultRenameCandidate{Source: *file.OldPath, Target: *file.NewPath, Copy: file.Kind == repository.ChangeCopied}
-			if !containsRenameCandidate(delta.Candidates, candidate) {
+			if !renamePatchMatchesDelta(delta, file, renamePolicyVersion) {
 				return ErrInvalidProposalPatchArtifact
 			}
 			if file.Kind == repository.ChangeRenamed {
@@ -444,15 +443,6 @@ func patchModeMatches(manifestMode, patchMode uint32, kind repository.FileKind) 
 		return (manifestMode&0o111 != 0) == (patchMode&0o111 != 0)
 	}
 	return manifestMode == patchMode
-}
-
-func containsRenameCandidate(candidates []ResultRenameCandidate, expected ResultRenameCandidate) bool {
-	for _, candidate := range candidates {
-		if bytes.Equal(candidate.Source, expected.Source) && bytes.Equal(candidate.Target, expected.Target) && candidate.Copy == expected.Copy {
-			return true
-		}
-	}
-	return false
 }
 
 func proposalPatchArtifactID(a ProposalPatchArtifact) string {
@@ -530,6 +520,15 @@ func writeChangedFileHash(h interface{ Write([]byte) (int, error) }, file reposi
 	writeArtifactHashUint(h, uint64(file.OldMode))
 	writeArtifactHashUint(h, uint64(file.NewMode))
 	writeArtifactHashBool(h, file.Binary)
+	if file.Rename == nil {
+		writeArtifactHashUint(h, 0)
+	} else {
+		writeArtifactHashUint(h, 1)
+		writeArtifactHashUint(h, uint64(file.Rename.PolicyVersion))
+		writeArtifactHashUint(h, uint64(file.Rename.SimilarityPercent))
+		writeArtifactHashString(h, string(file.Rename.Kind))
+		writeArtifactHashString(h, file.Rename.EvidenceHash)
+	}
 }
 
 func writeArtifactHashPath(h interface{ Write([]byte) (int, error) }, path *repository.RepoPath) {

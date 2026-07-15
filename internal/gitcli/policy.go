@@ -162,6 +162,7 @@ type RenamePolicyEvidenceV1 struct {
 	DeleteCandidates int
 	AddCandidates    int
 	Flags            []string
+	EvidenceHash     string
 }
 
 // NewRenamePolicyEvidence creates bounded, reproducible rename evidence.
@@ -176,19 +177,21 @@ func NewRenamePolicyEvidence(policy RenamePolicyV1, outcome RenameDetectionOutco
 	if outcome == RenameDetectionLimited && deleteCandidates < policy.MaxDeleteSources && addCandidates < policy.MaxAddTargets {
 		return RenamePolicyEvidenceV1{}, ErrInvalidPolicyEvidence
 	}
-	return RenamePolicyEvidenceV1{
+	result := RenamePolicyEvidenceV1{
 		Policy:           policy,
 		Outcome:          outcome,
 		DeleteCandidates: deleteCandidates,
 		AddCandidates:    addCandidates,
 		Flags:            append([]string(nil), flags...),
-	}, nil
+	}
+	result.EvidenceHash = renamePolicyEvidenceHash(result)
+	return result, nil
 }
 
 // Validate checks that persisted flags and outcome still match v1 policy.
 func (e RenamePolicyEvidenceV1) Validate() error {
 	expected, err := NewRenamePolicyEvidence(e.Policy, e.Outcome, e.DeleteCandidates, e.AddCandidates)
-	if err != nil || !equalStrings(e.Flags, expected.Flags) {
+	if err != nil || !equalStrings(e.Flags, expected.Flags) || e.EvidenceHash != expected.EvidenceHash {
 		return ErrInvalidPolicyEvidence
 	}
 	return nil
@@ -197,6 +200,10 @@ func (e RenamePolicyEvidenceV1) Validate() error {
 // AnchorMappingAllowed reports whether the outcome can supply a rename map.
 func (e RenamePolicyEvidenceV1) AnchorMappingAllowed() bool {
 	return e.Outcome == RenameDetectionComplete && e.Validate() == nil
+}
+
+func renamePolicyEvidenceHash(e RenamePolicyEvidenceV1) string {
+	return repository.RenamePolicyEvidenceHash(e.Policy.Version, e.Policy.SimilarityPercent, e.Policy.MaxDeleteSources, e.Policy.MaxAddTargets, e.Policy.DetectChangedSourceCopies, e.Policy.FindCopiesHarder, string(e.Outcome), e.DeleteCandidates, e.AddCandidates, e.Flags)
 }
 
 // PatchFormatV1 fixes the byte-affecting Git diff format used for persisted

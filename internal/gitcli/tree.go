@@ -38,6 +38,7 @@ type TreeReaderConfig struct {
 	Runner     process.Runner
 	StartPath  string
 	Policy     MachineGitReadPolicyV1
+	Rename     RenamePolicyV1
 	Limits     app.ResourcePolicy
 }
 
@@ -47,6 +48,7 @@ type GitTreeReader struct {
 	builder *CommandBuilder
 	root    string
 	limits  app.ResourcePolicy
+	rename  RenamePolicyV1
 	cache   treePageCache
 }
 
@@ -66,6 +68,13 @@ func NewTreeReader(config TreeReaderConfig) (*GitTreeReader, error) {
 	if limits.Validate() != nil || config.StartPath == "" {
 		return nil, ErrInvalidTreeReader
 	}
+	rename := config.Rename
+	if rename == (RenamePolicyV1{}) {
+		rename = DefaultRenamePolicyV1()
+	}
+	if rename.Validate() != nil {
+		return nil, ErrInvalidTreeReader
+	}
 	root, err := canonicalExistingDirectory(config.StartPath)
 	if err != nil {
 		return nil, &GitError{Code: ErrorInvalidInput, Cause: err}
@@ -79,7 +88,7 @@ func NewTreeReader(config TreeReaderConfig) (*GitTreeReader, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &GitTreeReader{builder: builder, root: root, limits: limits, cache: newTreePageCache(limits.MetadataCache)}, nil
+	return &GitTreeReader{builder: builder, root: root, limits: limits, rename: rename, cache: newTreePageCache(limits.MetadataCache)}, nil
 }
 
 var _ app.TreeReader = (*GitTreeReader)(nil)
@@ -205,7 +214,7 @@ func (r *GitTreeReader) listChanged(ctx context.Context, target repository.Resol
 
 func (r *GitTreeReader) changedFiles(ctx context.Context, target repository.ResolvedTarget) ([]repository.ChangedFile, error) {
 	if target.Head.Kind == repository.SnapshotWorkingTree {
-		status, err := r.builder.Run(ctx, "status", "--porcelain=v2", "-z", "--untracked-files=all", "--renames", "--ignore-submodules=all")
+		status, err := r.builder.Run(ctx, "status", "--porcelain=v2", "-z", "--untracked-files=all", "--find-renames=60%", "--ignore-submodules=all")
 		if err != nil {
 			return nil, err
 		}
@@ -238,7 +247,14 @@ func (r *GitTreeReader) changedFiles(ctx context.Context, target repository.Reso
 	if target.Base.ObjectID == "" || target.Head.ObjectID == "" {
 		return nil, ErrInvalidTreeReader
 	}
-	result, err := r.builder.Run(ctx, "diff", "--raw", "-z", "--full-index", "--find-renames", string(target.Base.ObjectID), string(target.Head.ObjectID), "--")
+	renameArgs, err := r.rename.DiffArgs()
+	if err != nil {
+		return nil, err
+	}
+	args := []string{"diff", "--raw", "-z", "--full-index"}
+	args = append(args, renameArgs...)
+	args = append(args, string(target.Base.ObjectID), string(target.Head.ObjectID), "--")
+	result, err := r.builder.Run(ctx, args...)
 	if err != nil {
 		return nil, err
 	}

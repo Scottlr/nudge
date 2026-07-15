@@ -5,12 +5,14 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Scottlr/nudge/internal/app"
 	"github.com/Scottlr/nudge/internal/artifactspool"
 	"github.com/Scottlr/nudge/internal/capacitystore"
 	"github.com/Scottlr/nudge/internal/domain"
+	"github.com/Scottlr/nudge/internal/domain/repository"
 	"github.com/Scottlr/nudge/internal/process"
 )
 
@@ -136,6 +138,52 @@ func TestCaptureAppliesCompleteRenameEvidence(t *testing.T) {
 	entry := result.Candidate.Entries[0]
 	if entry.Change.OldPath == nil || entry.Change.NewPath == nil || string(*entry.Change.OldPath) != "tracked file.txt" || string(*entry.Change.NewPath) != "renamed.txt" {
 		t.Fatalf("rename paths = %#v", entry.Change)
+	}
+	if entry.Change.Rename == nil || entry.Change.Rename.SimilarityPercent < 60 || entry.Change.Rename.Kind != repository.ChangeRenamed || !entry.Change.Rename.MatchesPaths(*entry.Change.OldPath, *entry.Change.NewPath) || result.Candidate.Policy.RenameEvidenceHash == "" || len(result.Candidate.Policy.RenameFlags) != 2 {
+		t.Fatalf("rename evidence = %#v policy=%#v", entry.Change.Rename, result.Candidate.Policy)
+	}
+}
+
+func TestCaptureAppliesChangedSourceCopyEvidence(t *testing.T) {
+	root, gitPath := initializedRepository(t)
+	source := filepath.Join(root, "tracked file.txt")
+	target := filepath.Join(root, "copied.txt")
+	original := []byte(strings.Repeat("stable source line\n", 10))
+	if err := os.WriteFile(source, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, root, gitPath, "add", "--", "tracked file.txt")
+	runGit(t, root, gitPath, "commit", "--no-gpg-sign", "-m", "expand copy source")
+	content := append(append([]byte(nil), original...), []byte("changed source content\n")...)
+	if err := os.WriteFile(source, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, root, gitPath, "add", "--", "tracked file.txt", "copied.txt")
+	resolver := newTestResolver(t, root, gitPath)
+	repo, worktree, err := resolver.ResolveRepository(context.Background(), root)
+	if err != nil {
+		t.Fatal(describeGitError(err))
+	}
+	result, err := newCaptureTestAdapter(t, root, gitPath).Capture(context.Background(), repo, worktree)
+	if err != nil {
+		t.Fatal(describeGitError(err))
+	}
+	defer func() { _ = result.Abort(context.Background()) }()
+	var found bool
+	for _, entry := range result.Candidate.Entries {
+		if entry.Change.Kind != repository.ChangeCopied {
+			continue
+		}
+		found = true
+		if entry.Change.OldPath == nil || entry.Change.NewPath == nil || string(*entry.Change.OldPath) != "tracked file.txt" || string(*entry.Change.NewPath) != "copied.txt" || entry.Change.Rename == nil || !entry.Change.Rename.MatchesPaths(*entry.Change.OldPath, *entry.Change.NewPath) {
+			t.Fatalf("copy entry = %#v", entry.Change)
+		}
+	}
+	if !found {
+		t.Fatalf("capture entries = %#v", result.Candidate.Entries)
 	}
 }
 

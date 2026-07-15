@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"sort"
 	"time"
 
 	"github.com/Scottlr/nudge/internal/domain"
@@ -66,7 +67,7 @@ func DeriveProposal(input ProposalDerivationInput) (review.ProposedPatch, error)
 	if err := artifactCoversDelta(input.Artifact, input.Snapshot.Delta); err != nil {
 		return review.ProposedPatch{}, err
 	}
-	preconditions, err := deriveDestinationPreconditions(input.Snapshot.Delta, input.DestinationPreconditions)
+	preconditions, err := deriveDestinationPreconditions(input.Snapshot.Delta, input.Artifact.Index.Files, input.DestinationPreconditions)
 	if err != nil {
 		return review.ProposedPatch{}, err
 	}
@@ -362,10 +363,15 @@ func artifactCoversDelta(artifact ProposalPatchArtifact, delta ResultDelta) erro
 		if file.Validate() != nil {
 			return ErrProposalPublicationInvalid
 		}
+		if file.Kind == repository.ChangeRenamed || file.Kind == repository.ChangeCopied {
+			if !renamePatchMatchesDelta(delta, file, artifact.RenamePolicyVersion) {
+				return ErrProposalPublicationInvalid
+			}
+		}
 		if file.OldPath != nil {
 			entry, ok := byPath[file.OldPath.Key()]
 			if !ok {
-				if file.Kind != repository.ChangeCopied || file.NewPath == nil || !containsRenameCandidate(delta.Candidates, ResultRenameCandidate{Source: *file.OldPath, Target: *file.NewPath, Copy: true}) {
+				if file.Kind != repository.ChangeCopied {
 					return ErrProposalPublicationInvalid
 				}
 			} else if entry.Baseline == nil || entry.Baseline.Kind != file.OldFileKind || !patchModeMatches(entry.Baseline.Mode, file.OldMode, file.OldFileKind) {
@@ -392,7 +398,30 @@ func artifactCoversDelta(artifact ProposalPatchArtifact, delta ResultDelta) erro
 	return nil
 }
 
-func deriveDestinationPreconditions(delta ResultDelta, observed []repository.PathPrecondition) ([]repository.PathPrecondition, error) {
+func renamePatchMatchesDelta(delta ResultDelta, file repository.ChangedFile, policyVersion uint32) bool {
+	if file.OldPath == nil || file.NewPath == nil || file.Rename == nil || file.Rename.PolicyVersion != policyVersion || !file.Rename.MatchesPaths(*file.OldPath, *file.NewPath) {
+		return false
+	}
+	var oldEntry, newEntry *ResultDeltaEntry
+	for index := range delta.Entries {
+		entry := &delta.Entries[index]
+		if entry.Path.Key() == file.OldPath.Key() {
+			oldEntry = entry
+		}
+		if entry.Path.Key() == file.NewPath.Key() {
+			newEntry = entry
+		}
+	}
+	if newEntry == nil || newEntry.Baseline != nil || newEntry.Result == nil {
+		return false
+	}
+	if file.Kind == repository.ChangeRenamed {
+		return oldEntry != nil && oldEntry.Baseline != nil && oldEntry.Result == nil
+	}
+	return oldEntry != nil && oldEntry.Baseline != nil && oldEntry.Result != nil
+}
+
+func deriveDestinationPreconditions(delta ResultDelta, files []ProposalReviewFile, observed []repository.PathPrecondition) ([]repository.PathPrecondition, error) {
 	actual := make(map[repository.RepoPathKey]repository.PathPrecondition, len(observed))
 	for _, precondition := range observed {
 		if precondition.Validate() != nil {
@@ -403,18 +432,43 @@ func deriveDestinationPreconditions(delta ResultDelta, observed []repository.Pat
 		}
 		actual[precondition.Path.Key()] = clonePathPrecondition(precondition)
 	}
-	result := make([]repository.PathPrecondition, 0, len(delta.Entries))
+	expected := make(map[repository.RepoPathKey]repository.PathPrecondition, len(delta.Entries))
 	for _, entry := range delta.Entries {
-		expected := baselinePrecondition(entry)
-		value, ok := actual[entry.Path.Key()]
-		if !ok {
+		expected[entry.Path.Key()] = baselinePrecondition(entry)
+	}
+	for _, indexed := range files {
+		if indexed.File.Validate() != nil {
+			return nil, ErrProposalPublicationInvalid
+		}
+		if indexed.File.Kind != repository.ChangeCopied || indexed.File.OldPath == nil {
+			continue
+		}
+		oldPath := indexed.File.OldPath.Key()
+		if _, exists := expected[oldPath]; exists {
+			continue
+		}
+		var source ResultDeltaEntry
+		found := false
+		for _, entry := range delta.Entries {
+			if entry.Path.Key() == oldPath {
+				source, found = entry, true
+				break
+			}
+		}
+		if !found || source.Baseline == nil {
 			return nil, ErrProposalPublicationStale
 		}
-		if !preconditionMatchesExpected(value, expected) {
+		expected[oldPath] = baselinePrecondition(source)
+	}
+	result := make([]repository.PathPrecondition, 0, len(expected))
+	for path, want := range expected {
+		value, ok := actual[path]
+		if !ok || !preconditionMatchesExpected(value, want) {
 			return nil, ErrProposalPublicationStale
 		}
 		result = append(result, value)
 	}
+	sort.Slice(result, func(i, j int) bool { return string(result[i].Path) < string(result[j].Path) })
 	return result, nil
 }
 
@@ -467,8 +521,16 @@ func deriveProposedFiles(files []ProposalReviewFile, snapshot ResultSnapshot) ([
 			value.OldPath = &oldPath
 			value.OldKind = file.OldFileKind
 			value.OldMode = file.OldMode
+			if file.Kind == repository.ChangeCopied {
+				if oldEntry, ok := byPath[file.OldPath.Key()]; ok && oldEntry.Result != nil {
+					value.OldContentHash = oldEntry.Result.SHA256
+				} else if oldEntry, ok := byPath[file.OldPath.Key()]; ok && oldEntry.Baseline != nil {
+					value.OldContentHash = oldEntry.Baseline.SHA256
+				}
+			}
 		}
 		value.Added = file.Kind == repository.ChangeAdded || file.Kind == repository.ChangeUntracked
+		value.Copied = file.Kind == repository.ChangeCopied
 		value.TypeChanged = file.Kind == repository.ChangeTypeChanged
 		if file.Kind == repository.ChangeDeleted {
 			value.Deleted = true

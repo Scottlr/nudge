@@ -119,9 +119,12 @@ func (p PathIdentity) Validate() error {
 // RenameMapping is path-scope evidence only. It never proves that an anchor
 // belongs at a destination; content or context evidence must still match.
 type RenameMapping struct {
-	OldPath repository.RepoPath
-	NewPath repository.RepoPath
-	Side    repository.DiffSide
+	OldPath           repository.RepoPath
+	NewPath           repository.RepoPath
+	Side              repository.DiffSide
+	SimilarityPercent uint8
+	Kind              repository.ChangeKind
+	EvidenceHash      string
 }
 
 func (m RenameMapping) Validate() error {
@@ -130,6 +133,11 @@ func (m RenameMapping) Validate() error {
 	}
 	if err := m.NewPath.Validate(); err != nil || string(m.OldPath) == string(m.NewPath) || (m.Side != repository.DiffBase && m.Side != repository.DiffHead) {
 		return ErrInvalidReconcileInput
+	}
+	if m.SimilarityPercent != 0 || m.Kind != "" || m.EvidenceHash != "" {
+		if m.SimilarityPercent < 60 || m.SimilarityPercent > 100 || m.Kind != repository.ChangeRenamed && m.Kind != repository.ChangeCopied || len(m.EvidenceHash) != 64 {
+			return ErrInvalidReconcileInput
+		}
 	}
 	return nil
 }
@@ -146,10 +154,12 @@ type RenamePolicyEvidence struct {
 	Outcome                   string
 	DeleteCandidates          int
 	AddCandidates             int
+	Flags                     []string
+	EvidenceHash              string
 }
 
 func (e RenamePolicyEvidence) Complete() bool {
-	return e.Validate() == nil && e.Outcome == "complete"
+	return e.Validate() == nil && e.Outcome == "complete" && len(e.Flags) > 0 && len(e.EvidenceHash) == 64
 }
 
 func (e RenamePolicyEvidence) Validate() error {
@@ -157,6 +167,12 @@ func (e RenamePolicyEvidence) Validate() error {
 		return ErrInvalidReconcileInput
 	}
 	if e.Outcome == "rename_detection_limited" && e.DeleteCandidates < e.MaxDeleteSources && e.AddCandidates < e.MaxAddTargets {
+		return ErrInvalidReconcileInput
+	}
+	if e.EvidenceHash != "" && (len(e.Flags) == 0 || len(e.EvidenceHash) != 64) {
+		return ErrInvalidReconcileInput
+	}
+	if e.EvidenceHash != "" && repository.RenamePolicyEvidenceHash(uint32(e.Version), e.SimilarityPercent, e.MaxDeleteSources, e.MaxAddTargets, e.DetectChangedSourceCopies, e.FindCopiesHarder, e.Outcome, e.DeleteCandidates, e.AddCandidates, e.Flags) != e.EvidenceHash {
 		return ErrInvalidReconcileInput
 	}
 	return nil
@@ -202,16 +218,20 @@ func (t GenerationTransition) Validate() error {
 			return err
 		}
 	}
-	if t.RenameEvidence != (RenamePolicyEvidence{}) && t.RenameEvidence.Validate() != nil {
+	if renamePolicyEvidencePresent(t.RenameEvidence) && t.RenameEvidence.Validate() != nil {
 		return ErrInvalidReconcileInput
 	}
-	if t.FromRenameEvidence != (RenamePolicyEvidence{}) && t.FromRenameEvidence.Validate() != nil {
+	if renamePolicyEvidencePresent(t.FromRenameEvidence) && t.FromRenameEvidence.Validate() != nil {
 		return ErrInvalidReconcileInput
 	}
-	if t.ToRenameEvidence != (RenamePolicyEvidence{}) && t.ToRenameEvidence.Validate() != nil {
+	if renamePolicyEvidencePresent(t.ToRenameEvidence) && t.ToRenameEvidence.Validate() != nil {
 		return ErrInvalidReconcileInput
 	}
 	return nil
+}
+
+func renamePolicyEvidencePresent(e RenamePolicyEvidence) bool {
+	return e.Version != 0 || e.SimilarityPercent != 0 || e.MaxDeleteSources != 0 || e.MaxAddTargets != 0 || e.DetectChangedSourceCopies || e.FindCopiesHarder || e.Outcome != "" || e.DeleteCandidates != 0 || e.AddCandidates != 0 || len(e.Flags) != 0 || e.EvidenceHash != ""
 }
 
 // ReconcileInput is the complete pure input to one anchor relocation. New

@@ -309,31 +309,33 @@ func (s *patchScanner) next() (patchLine, bool, error) {
 }
 
 type sectionBuilder struct {
-	start         int64
-	headerLen     int64
-	lastEnd       int64
-	oldPath       *repository.RepoPath
-	newPath       *repository.RepoPath
-	renameFrom    *repository.RepoPath
-	renameTo      *repository.RepoPath
-	copyFrom      *repository.RepoPath
-	copyTo        *repository.RepoPath
-	oldMode       uint32
-	newMode       uint32
-	indexMode     uint32
-	oldModeSet    bool
-	newModeSet    bool
-	indexModeSet  bool
-	oldObject     *repository.ObjectID
-	newObject     *repository.ObjectID
-	binary        bool
-	binaryStart   int64
-	metadataBytes int64
-	hunk          *hunkBuilder
-	hunks         []PatchHunkIndex
-	diffHunks     []repository.DiffHunk
-	collect       bool
-	totalRows     int
+	start             int64
+	headerLen         int64
+	lastEnd           int64
+	oldPath           *repository.RepoPath
+	newPath           *repository.RepoPath
+	renameFrom        *repository.RepoPath
+	renameTo          *repository.RepoPath
+	copyFrom          *repository.RepoPath
+	copyTo            *repository.RepoPath
+	oldMode           uint32
+	newMode           uint32
+	indexMode         uint32
+	oldModeSet        bool
+	newModeSet        bool
+	indexModeSet      bool
+	oldObject         *repository.ObjectID
+	newObject         *repository.ObjectID
+	binary            bool
+	binaryStart       int64
+	metadataBytes     int64
+	hunk              *hunkBuilder
+	hunks             []PatchHunkIndex
+	diffHunks         []repository.DiffHunk
+	collect           bool
+	totalRows         int
+	similarityPercent uint8
+	similaritySet     bool
 }
 
 type hunkBuilder struct {
@@ -508,6 +510,14 @@ func (b *sectionBuilder) consume(line patchLine, limits PatchParseLimits) error 
 		return nil
 	}
 	if bytes.HasPrefix(text, []byte("similarity index ")) || bytes.HasPrefix(text, []byte("dissimilarity index ")) {
+		if bytes.HasPrefix(text, []byte("similarity index ")) {
+			value, err := parseSimilarityPercent(text[len("similarity index "):])
+			if err != nil {
+				return err
+			}
+			b.similarityPercent = value
+			b.similaritySet = true
+		}
 		return nil
 	}
 	if len(text) == 0 {
@@ -760,10 +770,32 @@ func (b *sectionBuilder) changedFile() (repository.ChangedFile, error) {
 		OldObjectID: b.oldObject, NewObjectID: b.newObject,
 		Binary: b.binary,
 	}
+	if kind == repository.ChangeRenamed || kind == repository.ChangeCopied {
+		if !b.similaritySet {
+			return repository.ChangedFile{}, malformed("rename similarity evidence missing")
+		}
+		evidence, err := repository.NewRenameEvidence(1, b.similarityPercent, kind, *oldPath, *newPath)
+		if err != nil {
+			return repository.ChangedFile{}, fmt.Errorf("%w: rename evidence", ErrPatchMalformed)
+		}
+		file.Rename = &evidence
+	}
 	if err := file.Validate(); err != nil {
 		return repository.ChangedFile{}, fmt.Errorf("%w: file metadata", ErrPatchMalformed)
 	}
 	return file, nil
+}
+
+func parseSimilarityPercent(value []byte) (uint8, error) {
+	value = bytes.TrimSpace(value)
+	if len(value) != 4 || value[3] != '%' {
+		return 0, malformed("similarity index")
+	}
+	parsed, err := strconv.Atoi(string(value[:3]))
+	if err != nil || parsed < 60 || parsed > 100 {
+		return 0, malformed("similarity index")
+	}
+	return uint8(parsed), nil
 }
 
 func parseSectionBytes(data []byte, base int64, limits PatchParseLimits, collect bool) (*sectionBuilder, error) {

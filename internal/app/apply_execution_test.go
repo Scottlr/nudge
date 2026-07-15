@@ -40,6 +40,33 @@ func TestApplyExecutionMutatesVerifiesAndTerminalizesOnce(t *testing.T) {
 	}
 }
 
+func TestApplyResultPathsMatchPreservesChangedCopySource(t *testing.T) {
+	source := repository.RepoPath([]byte("source.txt"))
+	target := repository.RepoPath([]byte("target.txt"))
+	files := []review.ProposedFile{{
+		Path:           target,
+		OldPath:        &source,
+		OldKind:        repository.FileKindRegular,
+		Kind:           repository.FileKindRegular,
+		OldMode:        0o100644,
+		Mode:           0o100644,
+		OldContentHash: strings.Repeat("a", 64),
+		ContentHash:    strings.Repeat("b", 64),
+		Copied:         true,
+	}}
+	actual := map[repository.RepoPathKey]ApplyPathEvidence{
+		source.Key(): {Path: source, Exists: true, Kind: repository.FileKindRegular, Mode: 0o100644, ContentHash: strings.Repeat("a", 64)},
+		target.Key(): {Path: target, Exists: true, Kind: repository.FileKindRegular, Mode: 0o100644, ContentHash: strings.Repeat("b", 64)},
+	}
+	if !applyResultPathsMatch(actual, files) {
+		t.Fatal("copy result did not preserve source")
+	}
+	delete(actual, source.Key())
+	if applyResultPathsMatch(actual, files) {
+		t.Fatal("copy result accepted a missing source")
+	}
+}
+
 func TestApplyExecutionRecoveryClassifiesAllBaselineAsRetrySafe(t *testing.T) {
 	fixture := newApplyPreflightFixture(t)
 	preflight := fixture.service(t)
