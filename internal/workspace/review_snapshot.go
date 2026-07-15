@@ -465,7 +465,7 @@ type snapshotMarker struct {
 }
 
 func (m *ReviewSnapshotManager) materialize(ctx context.Context, request app.ReviewSnapshotEnsureRequest, manifest *app.CaptureManifest) (app.ReviewSnapshot, snapshotMarker, string, error) {
-	base := repository.LocalCaptureBase{}
+	var base repository.LocalCaptureBase
 	if request.Target != nil {
 		base = repository.LocalCaptureBase{ObjectFormat: request.ObjectFormat, ObjectID: request.Target.Head.ObjectID}
 	} else {
