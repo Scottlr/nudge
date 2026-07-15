@@ -41,7 +41,11 @@ func (m *Model) View() string {
 	if m.replyFocused && m.draft != nil {
 		lines = append(lines, m.draft.View())
 	} else {
-		lines = append(lines, "ctrl+enter reply | R resolve/reopen | mark read after presentation")
+		if len(m.actionHints) > 0 {
+			lines = append(lines, strings.Join(m.actionHints, " | ")+" | mark read after presentation")
+		} else {
+			lines = append(lines, "mark read after presentation")
+		}
 	}
 	return strings.Join(lines, "\n")
 }

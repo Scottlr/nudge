@@ -179,6 +179,10 @@ type SelectRowMsg struct {
 // BeginSelectionMsg starts a same-side range selection at the current row.
 type BeginSelectionMsg struct{}
 
+// ToggleSelectionMsg begins a selection at the current row or completes the
+// active selection at that same stable row identity.
+type ToggleSelectionMsg struct{}
+
 // ExtendSelectionMsg ends a same-side range selection at one row.
 type ExtendSelectionMsg struct {
 	RowID app.CodeRowID

@@ -17,8 +17,10 @@ func (m *Model) View() string {
 	lines = append(lines, m.textarea.View())
 	if m.lastErr != nil {
 		lines = append(lines, fmt.Sprintf("%s (%d/%d bytes)", m.lastErr, m.ByteCount(), MaxCommentBytes))
+	} else if len(m.hints) > 0 {
+		lines = append(lines, fmt.Sprintf("%d/%d bytes | %s", m.ByteCount(), MaxCommentBytes, strings.Join(m.hints, " | ")))
 	} else {
-		lines = append(lines, fmt.Sprintf("%d/%d bytes | ctrl+enter send | esc cancel", m.ByteCount(), MaxCommentBytes))
+		lines = append(lines, fmt.Sprintf("%d/%d bytes", m.ByteCount(), MaxCommentBytes))
 	}
 	return strings.Join(lines, "\n")
 }

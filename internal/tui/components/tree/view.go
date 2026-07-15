@@ -137,7 +137,7 @@ func rowBadge(row TreeRow) string {
 
 func (m *Model) rowStyle(row TreeRow) lipgloss.Style {
 	role := theme.RoleForeground
-	if row.Path.Key() == m.selected {
+	if row.Path.Key() == m.selected && m.focused {
 		role = theme.RoleFocus
 	} else if row.Conflict {
 		role = theme.RoleThreadError

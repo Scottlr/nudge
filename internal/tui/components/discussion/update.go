@@ -33,6 +33,7 @@ func (m *Model) Update(message any) []Intent {
 		}
 	case UpdateDraftMsg:
 		if m.replyFocused && m.draft != nil {
+			m.draft.SetActionHints(m.draftHints)
 			intent, _ := m.draft.Update(value.Message)
 			if intent.CreateThread != nil {
 				return m.sendReply()

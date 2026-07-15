@@ -154,6 +154,7 @@ func (m *Model) resizeChildPanes() {
 	}
 	if m.repositoryPane != nil {
 		setSize(m.layout.Regions.Repository, m.repositoryPane.SetSize)
+		m.repositoryPane.Update(treepane.SetFocusMsg{Focused: m.focus == PaneRepository})
 	}
 	if m.codePane != nil {
 		setSize(m.layout.Regions.Code, m.codePane.SetSize)

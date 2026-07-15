@@ -16,6 +16,11 @@ type SetFilterMsg struct {
 	Filter FilterMode
 }
 
+// SetFocusMsg controls selected-row emphasis without changing selection.
+type SetFocusMsg struct {
+	Focused bool
+}
+
 // ToggleExpandedMsg expands or collapses one directory by raw path identity.
 type ToggleExpandedMsg struct {
 	Path repository.RepoPathKey
@@ -96,6 +101,8 @@ func (m *Model) Update(message any) []Intent {
 			m.clearPages()
 			return m.InitialPageRequest()
 		}
+	case SetFocusMsg:
+		m.focused = value.Focused
 	case ToggleExpandedMsg:
 		if !m.findRow(value.Path) {
 			return nil

@@ -39,6 +39,7 @@ type Model struct {
 	textarea textarea.Model
 	anchor   review.CodeAnchor
 	lastErr  error
+	hints    []string
 	width    int
 	height   int
 }
@@ -95,6 +96,15 @@ func (m *Model) Blur() {
 // Focused reports whether the underlying editor owns focus.
 func (m *Model) Focused() bool {
 	return m.textarea.Focused()
+}
+
+// SetActionHints supplies root-derived editor hints without giving the
+// component ownership of the keyboard map.
+func (m *Model) SetActionHints(values []string) {
+	if m == nil {
+		return
+	}
+	m.hints = append([]string(nil), values...)
 }
 
 // SetValue replaces the current draft, retaining it until an explicit send.

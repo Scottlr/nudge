@@ -32,6 +32,10 @@ func (m *Model) render() string {
 	if m.layout.Mode == LayoutUnknown {
 		return "Waiting for terminal size"
 	}
+	m.syncCommandHints()
+	if overlay, ok := m.overlays.Top(); ok {
+		return m.renderOverlay(overlay)
+	}
 	if m.layout.Mode == LayoutTooSmall {
 		return m.renderTooSmall()
 	}
@@ -168,9 +172,69 @@ func (m *Model) statusBar(rect Rect) string {
 	if m.themeHealth.Failure != "" {
 		themeStatus += " fallback:" + string(m.themeHealth.Failure)
 	}
-	status := fmt.Sprintf("%s | %s | %s | %s | changed %d | focus %s | Codex %s | theme %s | q quit%s", repositoryName, branch, target, phase, changed, m.focus, provider, themeStatus, m.statusError())
+	hints := ""
+	if m.commands != nil {
+		hints = strings.Join(m.commands.StatusHints(m), " | ")
+	}
+	status := fmt.Sprintf("%s | %s | %s | %s | changed %d | focus %s | Codex %s | theme %s | %s%s", repositoryName, branch, target, phase, changed, m.focus, provider, themeStatus, hints, m.statusError())
 	style, _ := m.theme.StyleFor(theme.RoleMuted)
 	return style.Lipgloss().Width(rect.Width).Height(rect.Height).MaxWidth(rect.Width).MaxHeight(rect.Height).Render(ansi.Truncate(safeText(status), rect.Width, ""))
+}
+
+func (m *Model) syncCommandHints() {
+	if m == nil || m.commands == nil {
+		return
+	}
+	normal := m.commands.Entries(m, []CommandContext{ContextPane, ContextGlobal})
+	if m.discussionPane != nil {
+		m.discussionPane.SetActionHints(hintsFor(normal, CommandReply, CommandResolve))
+	}
+	if editorAvailable(m) && m.discussionPane != nil {
+		m.discussionPane.SetDraftHints(hintsFor(m.commands.Entries(m, []CommandContext{ContextEditor}), CommandEditorSubmit, CommandEditorCancel))
+	} else if m.discussionPane != nil {
+		m.discussionPane.SetDraftHints(nil)
+	}
+}
+
+func hintsFor(entries []HelpEntry, ids ...CommandID) []string {
+	result := make([]string, 0, len(ids))
+	for _, id := range ids {
+		for _, entry := range entries {
+			if entry.ID == id {
+				result = append(result, formatHint(entry))
+				break
+			}
+		}
+	}
+	return result
+}
+
+func (m *Model) renderOverlay(overlay Overlay) string {
+	lines := []string{safeText(overlay.Title), safeText(overlay.Body)}
+	if m.commands != nil {
+		entries := m.commands.Entries(m, []CommandContext{ContextOverlay})
+		if hints := hintsForEntries(entries); hints != "" {
+			lines = append(lines, "", hints)
+		}
+	}
+	content := strings.Join(lines, "\n")
+	width := maxInt(m.dimensions.Width-4, 20)
+	if m.dimensions.Width > 0 && width > m.dimensions.Width-2 {
+		width = maxInt(m.dimensions.Width-2, 1)
+	}
+	style := lipgloss.NewStyle().Border(m.theme.Border()).Padding(0, 1).Width(width).MaxWidth(width)
+	if border, ok := m.theme.StyleFor(theme.RoleOverlay); ok && border.Foreground != "" && border.Foreground != "inherit" {
+		style = style.BorderForeground(lipgloss.Color(border.Foreground))
+	}
+	return style.Render(content)
+}
+
+func hintsForEntries(entries []HelpEntry) string {
+	values := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		values = append(values, formatHint(entry))
+	}
+	return strings.Join(values, " | ")
 }
 
 func (m *Model) repositoryBody() string {

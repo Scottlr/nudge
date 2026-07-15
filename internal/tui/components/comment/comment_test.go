@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-
 	"github.com/Scottlr/nudge/internal/domain/review"
 )
 
@@ -17,7 +16,7 @@ func TestCommentEditorExplicitSend(t *testing.T) {
 	if intent.CreateThread != nil || !strings.Contains(model.Value(), "\n") {
 		t.Fatalf("bare Enter did not remain a multiline edit: intent=%+v value=%q", intent, model.Value())
 	}
-	intent, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModCtrl})
+	intent, _ = model.Update(SubmitMsg{})
 	if intent.CreateThread == nil || intent.CreateThread.Comment != "  first line\n\n  second line  " {
 		t.Fatalf("send intent = %+v", intent.CreateThread)
 	}
@@ -29,7 +28,7 @@ func TestCommentEditorExplicitSend(t *testing.T) {
 func TestCommentEditorCancellationAndLimit(t *testing.T) {
 	model := NewModel(structuredAnchorForTest())
 	model.SetValue("draft")
-	intent, _ := model.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	intent, _ := model.Update(CancelMsg{})
 	if !intent.Cancelled || model.Value() != "draft" {
 		t.Fatalf("cancel intent=%+v draft=%q", intent, model.Value())
 	}
@@ -42,7 +41,7 @@ func TestCommentEditorCancellationAndLimit(t *testing.T) {
 	if model.CanSubmit() || model.LastError() != ErrCommentTooLarge {
 		t.Fatalf("over-limit draft state: canSubmit=%v error=%v", model.CanSubmit(), model.LastError())
 	}
-	intent, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModCtrl})
+	intent, _ = model.Update(SubmitMsg{})
 	if intent.CreateThread != nil {
 		t.Fatal("over-limit draft emitted a thread intent")
 	}

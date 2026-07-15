@@ -45,6 +45,8 @@ type Model struct {
 	budget        viewport.RenderBudget
 	theme         theme.Theme
 	lastError     string
+	actionHints   []string
+	draftHints    []string
 }
 
 // NewModel creates an empty bounded discussion projection.
@@ -96,6 +98,30 @@ func (m *Model) Thread() *app.ThreadSummary {
 	}
 	copyValue := *m.thread
 	return &copyValue
+}
+
+// ReplyFocused reports whether the retained reply editor owns keyboard input.
+func (m *Model) ReplyFocused() bool {
+	return m != nil && m.replyFocused
+}
+
+// SetActionHints supplies root-derived thread action hints.
+func (m *Model) SetActionHints(values []string) {
+	if m == nil {
+		return
+	}
+	m.actionHints = append([]string(nil), values...)
+}
+
+// SetDraftHints supplies root-derived editor hints to the retained draft.
+func (m *Model) SetDraftHints(values []string) {
+	if m == nil {
+		return
+	}
+	m.draftHints = append([]string(nil), values...)
+	if m.draft != nil {
+		m.draft.SetActionHints(values)
+	}
 }
 
 // InitialPageRequest asks the root for the first message metadata page.

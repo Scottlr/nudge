@@ -4,6 +4,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/Scottlr/nudge/internal/app"
@@ -47,6 +48,9 @@ type Model struct {
 	overlays       OverlayStack
 	theme          theme.Theme
 	themeHealth    theme.Health
+	commands       *CommandRegistry
+	focusTarget    FocusTargetID
+	focusRestore   *FocusTargetID
 	scheduler      *RenderScheduler
 	animationFrame uint64
 
@@ -141,6 +145,7 @@ func NewModel(client app.ApplicationClient, options ...ModelOption) *Model {
 		client:         client,
 		ctx:            context.Background(),
 		focus:          PaneRepository,
+		focusTarget:    FocusTargetRepository,
 		lowerPane:      PaneThreads,
 		narrowPane:     PaneRepository,
 		repositoryPane: treepane.NewModel(),
@@ -152,6 +157,11 @@ func NewModel(client app.ApplicationClient, options ...ModelOption) *Model {
 		layout:         CalculateLayout(Dimensions{}),
 		scheduler:      DefaultRenderScheduler(),
 	}
+	commands, err := newDefaultCommandRegistry()
+	if err != nil {
+		panic(fmt.Sprintf("compose TUI command registry: %v", err))
+	}
+	model.commands = commands
 	if client != nil {
 		model.snapshots = client.Snapshots()
 		model.events = client.Events()
@@ -165,6 +175,7 @@ func NewModel(client app.ApplicationClient, options ...ModelOption) *Model {
 		model.layout = CalculateLayout(model.dimensions)
 	}
 	model.resizeChildPanes()
+	model.normalizeFocus()
 	model.syncReviewSnapshot()
 	return model
 }
@@ -216,6 +227,14 @@ func (m *Model) Focus() Pane {
 		return ""
 	}
 	return m.focus
+}
+
+// FocusTarget returns the stable target currently owning keyboard focus.
+func (m *Model) FocusTarget() FocusTargetID {
+	if m == nil {
+		return ""
+	}
+	return m.focusTarget
 }
 
 // AnimationFrame returns the root-owned animation frame used by visible
