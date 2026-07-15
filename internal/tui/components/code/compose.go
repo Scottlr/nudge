@@ -142,10 +142,7 @@ func syntaxText(spans []highlight.StyledSpan, fallback string, styles theme.Them
 	var builder strings.Builder
 	for _, span := range spans {
 		value := expandTabs(presentation.ProjectTerminalText(span.Text, presentation.TerminalTextScalar))
-		role := theme.RoleForeground
-		if strings.Contains(strings.ToLower(span.Token), "comment") {
-			role = theme.RoleMuted
-		}
+		role := syntaxRole(span.Token)
 		style, ok := styles.StyleFor(role)
 		if ok {
 			builder.WriteString(style.Lipgloss().Render(value))
@@ -154,6 +151,28 @@ func syntaxText(spans []highlight.StyledSpan, fallback string, styles theme.Them
 		}
 	}
 	return builder.String()
+}
+
+func syntaxRole(token string) theme.Role {
+	value := strings.ToLower(token)
+	switch {
+	case strings.Contains(value, "comment"):
+		return theme.RoleSyntaxComment
+	case strings.Contains(value, "keyword"):
+		return theme.RoleSyntaxKeyword
+	case strings.Contains(value, "string"):
+		return theme.RoleSyntaxString
+	case strings.Contains(value, "number"):
+		return theme.RoleSyntaxNumber
+	case strings.Contains(value, "class"), strings.Contains(value, "type"):
+		return theme.RoleSyntaxType
+	case strings.Contains(value, "operator"):
+		return theme.RoleSyntaxOperator
+	case strings.Contains(value, "punctuation"):
+		return theme.RoleSyntaxPunct
+	default:
+		return theme.RoleSyntax
+	}
 }
 
 func composeRow(row codeRow, side app.RowSide, left, width, lineWidth int, styles theme.Theme, selected, matched, focused, anchored bool, threadMarker string, threadRole theme.Role) string {

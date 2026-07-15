@@ -22,6 +22,9 @@ func TestRootCommandShowsHelp(t *testing.T) {
 	if command.Flags().Lookup("no-persist") == nil || !strings.Contains(output.String(), "--no-persist") {
 		t.Fatalf("root output does not expose --no-persist: %q", output.String())
 	}
+	if command.Flags().Lookup("theme") == nil || !strings.Contains(output.String(), "--theme") {
+		t.Fatalf("root output does not expose --theme: %q", output.String())
+	}
 }
 
 func TestVersionCommandUsesInjectedBuildInfo(t *testing.T) {

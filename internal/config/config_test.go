@@ -76,6 +76,14 @@ func TestConfigValidationRejectsContradictoryPersistence(t *testing.T) {
 	}
 }
 
+func TestConfigValidationRejectsThemePathIdentity(t *testing.T) {
+	value := Defaults()
+	value.UI.Theme = "../hostile"
+	if err := value.Validate(); !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("unsafe theme identity error = %v", err)
+	}
+}
+
 func testLocations(root string) (paths.Locations, error) {
 	return paths.Resolve(map[string]string{
 		"NUDGE_CONFIG_HOME": filepath.Join(root, "config"),

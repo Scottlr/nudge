@@ -23,11 +23,12 @@ import (
 	"github.com/Scottlr/nudge/internal/paths"
 	"github.com/Scottlr/nudge/internal/process"
 	"github.com/Scottlr/nudge/internal/store/sqlite"
+	"github.com/Scottlr/nudge/internal/theme"
 	"github.com/Scottlr/nudge/internal/tui"
 	"github.com/Scottlr/nudge/internal/workspace"
 )
 
-func runLocalReview(ctx context.Context, startPath string, noPersist bool) error {
+func runLocalReview(ctx context.Context, startPath string, noPersist bool, themeOverride *string) error {
 	if ctx == nil {
 		return errors.New("local review: nil context")
 	}
@@ -50,9 +51,14 @@ func runLocalReview(ctx context.Context, startPath string, noPersist bool) error
 	if err != nil {
 		return fmt.Errorf("local review: locations: %w", err)
 	}
-	loaded, err := config.Load(runCtx, locations, environ, config.CLIOverrides{})
+	loaded, err := config.Load(runCtx, locations, environ, config.CLIOverrides{UITheme: themeOverride})
 	if err != nil {
 		return fmt.Errorf("local review: configuration: %w", err)
+	}
+	presentationPolicy := theme.RenderPolicy{Color: true, ASCII: !loaded.Config.UI.Unicode, Explicit: true}
+	resolvedTheme, err := theme.Load(runCtx, locations, loaded.Config.UI.Theme, presentationPolicy)
+	if err != nil {
+		return fmt.Errorf("local review: theme: %w", err)
 	}
 	persistenceMode := app.PersistenceDurable
 	if noPersist || !loaded.Config.Persistence.Enabled {
@@ -181,7 +187,7 @@ func runLocalReview(ctx context.Context, startPath string, noPersist bool) error
 	if err != nil {
 		return fmt.Errorf("local review: start: %w", err)
 	}
-	model := tui.NewModel(nil, tui.WithContext(runCtx), tui.WithLocalReviewStream(stream), tui.WithAltScreen(true), tui.WithReportFocus(true))
+	model := tui.NewModel(nil, tui.WithContext(runCtx), tui.WithLocalReviewStream(stream), tui.WithThemeResolution(resolvedTheme), tui.WithAltScreen(true), tui.WithReportFocus(true))
 	program := tea.NewProgram(model, tea.WithContext(runCtx))
 	_, err = program.Run()
 	return err

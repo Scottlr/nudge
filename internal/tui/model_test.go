@@ -9,6 +9,7 @@ import (
 	"github.com/Scottlr/nudge/internal/app"
 	"github.com/Scottlr/nudge/internal/domain"
 	"github.com/Scottlr/nudge/internal/domain/repository"
+	"github.com/Scottlr/nudge/internal/theme"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -113,6 +114,34 @@ func TestViewKeepsNarrowRowsWithinTerminalWidth(t *testing.T) {
 	widePlain := ansi.Strip(wide.View().Content)
 	if !strings.Contains(widePlain, "HEAD -> working tree") || !strings.Contains(widePlain, "Codex not connected") {
 		t.Fatalf("wide status lost target or provider context: %q", widePlain)
+	}
+}
+
+func TestViewHonorsExplicitMonochromeASCIIThemePolicy(t *testing.T) {
+	t.Parallel()
+
+	value := theme.BuiltinDark().WithPolicy(theme.RenderPolicy{ASCII: true, Explicit: true})
+	model := NewModel(nil,
+		WithDimensions(140, 20),
+		WithTheme(value),
+		WithInitialSnapshot(app.AppSnapshot{Repository: app.RepositorySummary{DisplayName: "repo", BranchName: "main"}}),
+	)
+	content := model.View().Content
+	plain := ansi.Strip(content)
+	if strings.Contains(content, "\x1b[") {
+		t.Fatalf("monochrome theme emitted SGR: %q", content)
+	}
+	if strings.ContainsAny(plain, "│─┌┐└┘") {
+		t.Fatalf("ASCII theme emitted Unicode border geometry: %q", plain)
+	}
+	if !strings.Contains(plain, "theme dark@1/builtin") {
+		t.Fatalf("theme health evidence missing: %q", plain)
+	}
+	before := model.Snapshot()
+	model.SetTheme(theme.BuiltinLight().WithPolicy(theme.MonochromeRenderPolicy()))
+	after := model.Snapshot()
+	if before.Revision != after.Revision || before.Repository != after.Repository {
+		t.Fatalf("theme switch changed canonical snapshot: before=%#v after=%#v", before, after)
 	}
 }
 

@@ -19,7 +19,7 @@ func (m *Model) View() string {
 		return ""
 	}
 	if m.large != nil && m.large.open != nil {
-		value := m.large.view(m.renderWidth(), m.renderHeight())
+		value := m.large.view(m.renderWidth(), m.renderHeight(), m.theme)
 		if value != "" {
 			lines := strings.Split(value, "\n")
 			admitted := make([]string, 0, len(lines))

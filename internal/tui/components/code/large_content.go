@@ -6,6 +6,7 @@ import (
 
 	"github.com/Scottlr/nudge/internal/app"
 	"github.com/Scottlr/nudge/internal/domain"
+	"github.com/Scottlr/nudge/internal/theme"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -78,7 +79,7 @@ func (p *largeContentProjection) segmentsCopy() []app.ContentSegment {
 	return append([]app.ContentSegment(nil), p.segments...)
 }
 
-func (p *largeContentProjection) view(width, height int) string {
+func (p *largeContentProjection) view(width, height int, styles theme.Theme) string {
 	if p == nil || p.open == nil {
 		return ""
 	}
@@ -98,10 +99,10 @@ func (p *largeContentProjection) view(width, height int) string {
 	for _, segment := range p.segments {
 		marker := " "
 		if segment.ContinuationBefore {
-			marker = ">"
+			marker = styles.Glyph(theme.GlyphContinuation)
 		}
 		if segment.ContinuationAfter {
-			marker += "..."
+			marker += styles.Glyph(theme.GlyphEllipsis)
 		}
 		line := fmt.Sprintf("%s %d:%d-%d %s", marker, segment.Line+1, segment.Range.Start, segment.Range.End, segment.Text)
 		if segment.InvalidEncoding {

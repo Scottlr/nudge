@@ -56,7 +56,8 @@ func (m *Model) threadHeader() string {
 	if m.thread.AnchorStartLine > 0 {
 		location = fmt.Sprintf("%s:%d", path, m.thread.AnchorStartLine)
 	}
-	return fmt.Sprintf("%s — %s", ansi.Truncate(title, 40, "…"), ansi.Truncate(location, 40, "…"))
+	ellipsis := m.theme.Glyph(theme.GlyphEllipsis)
+	return fmt.Sprintf("%s - %s", ansi.Truncate(title, 40, ellipsis), ansi.Truncate(location, 40, ellipsis))
 }
 
 func (m *Model) renderMessage(message app.MessageSummary) string {
@@ -76,7 +77,7 @@ func (m *Model) renderMessage(message app.MessageSummary) string {
 	} else if !state.ready {
 		body = "[message body loading; range incomplete]"
 	} else {
-		body = strings.ReplaceAll(string(state.chunk.Bytes), "\n", " ↵ ")
+		body = strings.ReplaceAll(string(state.chunk.Bytes), "\n", " "+m.theme.Glyph(theme.GlyphLineBreak)+" ")
 		body = presentation.ProjectTerminalText(body, presentation.TerminalTextScalar)
 	}
 	line := fmt.Sprintf("%s %s: %s", selection, presentation.ProjectTerminalText(role, presentation.TerminalTextScalar), body)

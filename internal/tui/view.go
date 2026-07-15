@@ -72,7 +72,7 @@ func (m *Model) panel(rect Rect, pane Pane, title, body string) string {
 		return ""
 	}
 	style, _ := m.theme.StyleFor(theme.RoleBorder)
-	panelStyle := lipgloss.NewStyle().Border(lipgloss.NormalBorder())
+	panelStyle := lipgloss.NewStyle().Border(m.theme.Border())
 	if style.Border != "" && style.Border != "inherit" {
 		panelStyle = panelStyle.BorderForeground(lipgloss.Color(style.Border))
 	}
@@ -164,7 +164,11 @@ func (m *Model) statusBar(rect Rect) string {
 	if provider == "" {
 		provider = "not connected"
 	}
-	status := fmt.Sprintf("%s | %s | %s | %s | changed %d | focus %s | Codex %s | q quit%s", repositoryName, branch, target, phase, changed, m.focus, provider, m.statusError())
+	themeStatus := fmt.Sprintf("%s@%d/%s", m.themeHealth.ThemeID, m.themeHealth.SchemaVersion, m.themeHealth.Source)
+	if m.themeHealth.Failure != "" {
+		themeStatus += " fallback:" + string(m.themeHealth.Failure)
+	}
+	status := fmt.Sprintf("%s | %s | %s | %s | changed %d | focus %s | Codex %s | theme %s | q quit%s", repositoryName, branch, target, phase, changed, m.focus, provider, themeStatus, m.statusError())
 	style, _ := m.theme.StyleFor(theme.RoleMuted)
 	return style.Lipgloss().Width(rect.Width).Height(rect.Height).MaxWidth(rect.Width).MaxHeight(rect.Height).Render(ansi.Truncate(safeText(status), rect.Width, ""))
 }

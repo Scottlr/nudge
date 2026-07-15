@@ -21,6 +21,7 @@ type BuildInfo struct {
 // added only when their complete behavior is implemented.
 func NewRootCommand(info BuildInfo) *cobra.Command {
 	var noPersist bool
+	var themeName string
 	command := &cobra.Command{
 		Use:           "nudge [path]",
 		Short:         "Review local Git changes safely.",
@@ -39,10 +40,15 @@ func NewRootCommand(info BuildInfo) *cobra.Command {
 					return err
 				}
 			}
-			return runLocalReview(cmd.Context(), path, noPersist)
+			var themeOverride *string
+			if cmd.Flags().Changed("theme") {
+				themeOverride = &themeName
+			}
+			return runLocalReview(cmd.Context(), path, noPersist, themeOverride)
 		},
 	}
 	command.Flags().BoolVar(&noPersist, "no-persist", false, "Run without saving review state.")
+	command.Flags().StringVar(&themeName, "theme", "", "Use a built-in or protected user theme.")
 	command.CompletionOptions.DisableDefaultCmd = true
 	command.AddCommand(newVersionCommand(info))
 	command.AddCommand(newConfigCommand())
