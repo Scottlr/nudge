@@ -26,6 +26,7 @@ type ProposalBaselineRequest struct {
 	PolicyEvaluation CapturePolicyEvaluation
 	Policy           CapabilityPolicyV1
 	ResourcePolicy   ResourcePolicy
+	ModeEvidence     map[repository.RepoPathKey]ModeCapabilityEvidence
 }
 
 // ProposalBaseline is the complete independently verified baseline evidence
@@ -57,6 +58,11 @@ func (r ProposalBaselineRequest) Validate() error {
 	for _, entry := range candidate.Entries {
 		if err := validateProposalBaselineChange(entry.Change); err != nil {
 			return err
+		}
+		if entry.Change.ModeTransition != nil && entry.Change.ModeTransition.IsExecutableChange() {
+			if evidence, ok := r.ModeEvidence[repository.RepoPath([]byte(changePath(entry.Change))).Key()]; !ok || evidence.Transition != *entry.Change.ModeTransition || !evidence.Supported() {
+				return ErrProposalBaselineUnsupported
+			}
 		}
 		for _, path := range changePaths(entry.Change) {
 			decision, ok := proposalBaselineDecision(r.PolicyEvaluation.Decisions, path, r.Policy)
@@ -107,11 +113,11 @@ func validateProposalBaselineChange(change repository.ChangedFile) error {
 		if side.kind == "" || side.kind == repository.FileKindUnknown {
 			continue
 		}
-		if side.kind != repository.FileKindRegular || side.mode&0o111 != 0 {
+		if side.kind != repository.FileKindRegular || side.mode&0o111 != 0 && (change.ModeTransition == nil || !change.ModeTransition.IsExecutableChange()) {
 			return ErrProposalBaselineUnsupported
 		}
 	}
-	if change.OldMode != 0 && change.NewMode != 0 && change.OldMode != change.NewMode {
+	if change.OldMode != 0 && change.NewMode != 0 && change.OldMode != change.NewMode && (change.ModeTransition == nil || !change.ModeTransition.IsExecutableChange()) {
 		return ErrProposalBaselineUnsupported
 	}
 	return nil

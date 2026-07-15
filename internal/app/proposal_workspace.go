@@ -116,7 +116,7 @@ type WorkspaceManifestEntry struct {
 
 func (e WorkspaceManifestEntry) Validate() error {
 	path, pathErr := repository.NewRepoPath(e.Path)
-	if pathErr != nil || e.Mode == 0 || e.NativePath != nil && (e.NativePath.Validate() != nil || e.NativePath.RepoPathKey != path.Key()) {
+	if pathErr != nil || repository.ValidateGitMode(e.Mode) != nil || repositoryModeKind(e.Mode) != e.Kind || e.NativePath != nil && (e.NativePath.Validate() != nil || e.NativePath.RepoPathKey != path.Key()) {
 		return ErrInvalidProposalWorkspaceLifecycle
 	}
 	switch e.Kind {
@@ -136,6 +136,19 @@ func (e WorkspaceManifestEntry) Validate() error {
 		return ErrInvalidProposalWorkspaceLifecycle
 	}
 	return nil
+}
+
+func repositoryModeKind(mode uint32) repository.FileKind {
+	switch repository.ClassifyGitMode(mode) {
+	case repository.ModeRegularNonExecutable, repository.ModeRegularExecutable:
+		return repository.FileKindRegular
+	case repository.ModeSymlink:
+		return repository.FileKindSymlink
+	case repository.ModeTree:
+		return repository.FileKindDirectory
+	default:
+		return repository.FileKindUnknown
+	}
 }
 
 // WorkspaceManifest is a deterministic identity for the complete contents of

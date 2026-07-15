@@ -820,6 +820,19 @@ func (b *sectionBuilder) changedFile() (repository.ChangedFile, error) {
 		OldObjectID: b.oldObject, NewObjectID: b.newObject,
 		Binary: b.binary,
 	}
+	if oldPath != nil && newPath != nil && (oldMode != newMode || oldKind != newKind) {
+		transition, transitionErr := repository.NewModeTransition(oldMode, newMode)
+		if transitionErr != nil {
+			return repository.ChangedFile{}, fmt.Errorf("%w: mode transition", ErrPatchMalformed)
+		}
+		if transition.Kind == repository.ModeTypeChanged && (kind == repository.ChangeRenamed || kind == repository.ChangeCopied) {
+			return repository.ChangedFile{}, fmt.Errorf("%w: rename type transition", ErrPatchMalformed)
+		}
+		file.ModeTransition = &transition
+		if transition.Kind == repository.ModeTypeChanged {
+			file.Kind = repository.ChangeTypeChanged
+		}
+	}
 	if b.binary && (oldKind == repository.FileKindRegular || newKind == repository.FileKindRegular) {
 		file.ContentClass = repository.ContentClassRegularBinary
 	} else if (oldKind == repository.FileKindRegular || newKind == repository.FileKindRegular) && len(b.diffHunks) != 0 {
@@ -852,7 +865,7 @@ func (b *sectionBuilder) changedFile() (repository.ChangedFile, error) {
 		file.Rename = &evidence
 	}
 	if err := file.Validate(); err != nil {
-		return repository.ChangedFile{}, fmt.Errorf("%w: file metadata", ErrPatchMalformed)
+		return repository.ChangedFile{}, fmt.Errorf("%w: file metadata: %v", ErrPatchMalformed, err)
 	}
 	return file, nil
 }
@@ -1048,7 +1061,7 @@ func parseMode(raw []byte) (uint32, error) {
 		return 0, malformed("empty file mode")
 	}
 	value, err := strconv.ParseUint(string(raw), 8, 32)
-	if err != nil || value == 0 {
+	if err != nil || value == 0 || repository.ValidateGitMode(uint32(value)) != nil {
 		return 0, malformed("file mode")
 	}
 	return uint32(value), nil
@@ -1125,14 +1138,14 @@ func parseHunkRange(value string, prefix byte) (int, int, error) {
 }
 
 func modeKind(mode uint32) repository.FileKind {
-	switch mode & 0o170000 {
-	case 0o100000:
+	switch repository.ClassifyGitMode(mode) {
+	case repository.ModeRegularNonExecutable, repository.ModeRegularExecutable:
 		return repository.FileKindRegular
-	case 0o120000:
+	case repository.ModeSymlink:
 		return repository.FileKindSymlink
-	case 0o160000:
+	case repository.ModeGitlink:
 		return repository.FileKindGitlink
-	case 0o040000:
+	case repository.ModeTree:
 		return repository.FileKindDirectory
 	default:
 		return repository.FileKindUnknown

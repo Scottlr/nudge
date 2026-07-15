@@ -421,6 +421,15 @@ func (c LocalCaptureCandidate) FingerprintValue() (string, error) {
 		writeCaptureUint64(h, uint64(entry.Change.NewMode))
 		writeCaptureString(h, string(entry.Change.OldFileKind))
 		writeCaptureString(h, string(entry.Change.NewFileKind))
+		if entry.Change.ModeTransition != nil {
+			writeCaptureString(h, entry.Change.ModeTransition.EvidenceHash)
+			writeCaptureString(h, entry.Change.ModeTransition.PolicyVersion)
+			writeCaptureString(h, string(entry.Change.ModeTransition.Kind))
+		} else {
+			writeCaptureString(h, "")
+			writeCaptureString(h, "")
+			writeCaptureString(h, "")
+		}
 		if entry.Change.OldObjectID != nil {
 			writeCaptureString(h, string(*entry.Change.OldObjectID))
 		}

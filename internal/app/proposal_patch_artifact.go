@@ -505,10 +505,22 @@ func baselineManifestSideMatches(manifest WorkspaceManifest, path repository.Rep
 }
 
 func patchModeMatches(manifestMode, patchMode uint32, kind repository.FileKind) bool {
-	if kind == repository.FileKindRegular {
-		return (manifestMode&0o111 != 0) == (patchMode&0o111 != 0)
+	return manifestMode == patchMode && repository.ValidateGitMode(manifestMode) == nil && repository.ValidateGitMode(patchMode) == nil && patchModeKind(manifestMode) == kind && patchModeKind(patchMode) == kind
+}
+
+func patchModeKind(mode uint32) repository.FileKind {
+	switch repository.ClassifyGitMode(mode) {
+	case repository.ModeRegularNonExecutable, repository.ModeRegularExecutable:
+		return repository.FileKindRegular
+	case repository.ModeSymlink:
+		return repository.FileKindSymlink
+	case repository.ModeGitlink:
+		return repository.FileKindGitlink
+	case repository.ModeTree:
+		return repository.FileKindDirectory
+	default:
+		return repository.FileKindUnknown
 	}
-	return manifestMode == patchMode
 }
 
 func proposalPatchArtifactID(a ProposalPatchArtifact) string {
@@ -586,6 +598,16 @@ func writeChangedFileHash(h interface{ Write([]byte) (int, error) }, file reposi
 	writeArtifactHashString(h, string(file.NewFileKind))
 	writeArtifactHashUint(h, uint64(file.OldMode))
 	writeArtifactHashUint(h, uint64(file.NewMode))
+	if file.ModeTransition == nil {
+		writeArtifactHashUint(h, 0)
+	} else {
+		writeArtifactHashUint(h, 1)
+		writeArtifactHashString(h, string(file.ModeTransition.OldClass))
+		writeArtifactHashString(h, string(file.ModeTransition.NewClass))
+		writeArtifactHashString(h, string(file.ModeTransition.Kind))
+		writeArtifactHashString(h, file.ModeTransition.EvidenceHash)
+		writeArtifactHashString(h, file.ModeTransition.PolicyVersion)
+	}
 	writeArtifactHashString(h, string(file.ContentClass))
 	writeArtifactTextSemanticsHash(h, file.OldTextSemantics)
 	writeArtifactTextSemanticsHash(h, file.NewTextSemantics)

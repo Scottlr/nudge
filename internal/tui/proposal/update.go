@@ -352,6 +352,10 @@ func cloneEntryPage(value EntryPage) EntryPage {
 		value.Entries[index] = entry
 		value.Entries[index].Path = repository.RepoPath(entry.Path.Bytes())
 		value.Entries[index].OldPath = clonePath(entry.OldPath)
+		if entry.ModeTransition != nil {
+			transition := *entry.ModeTransition
+			value.Entries[index].ModeTransition = &transition
+		}
 	}
 	return value
 }

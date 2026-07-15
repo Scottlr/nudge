@@ -455,10 +455,10 @@ func materializedManifest(root string, policy app.ResourcePolicy) (app.Workspace
 			total += app.ByteSize(entry.Bytes)
 		case info.IsDir():
 			entry.Kind = repository.FileKindDirectory
-			entry.Mode = 0o40000 | uint32(info.Mode().Perm())
+			entry.Mode = 0o40000
 		default:
 			entry.Kind = repository.FileKindRegular
-			entry.Mode = uint32(info.Mode().Perm())
+			entry.Mode = snapshotLogicalMode(repository.FileKindRegular, uint32(info.Mode().Perm()))
 			file, err := paths.OpenExistingProtectedFile(root, filepath.FromSlash(string(rawPath)))
 			if err != nil {
 				return err
@@ -627,11 +627,11 @@ func (s *FilesystemTreeSource) List(ctx context.Context) ([]repository.TreeEntry
 			return err
 		}
 		kind := repository.FileKindRegular
-		mode := uint32(info.Mode().Perm())
+		mode := snapshotLogicalMode(repository.FileKindRegular, uint32(info.Mode().Perm()))
 		if info.Mode()&os.ModeSymlink != 0 {
 			kind, mode = repository.FileKindSymlink, 0o120000
 		} else if info.IsDir() {
-			kind, mode = repository.FileKindDirectory, 0o40000|uint32(info.Mode().Perm())
+			kind, mode = repository.FileKindDirectory, 0o40000
 		}
 		entries = append(entries, treeEntryForPath(repoPath, kind, mode))
 		return nil
@@ -826,7 +826,7 @@ func removeCaptureSourceEntries(entries map[repository.RepoPathKey]captureSource
 
 func treeEntryForPath(path repository.RepoPath, kind repository.FileKind, mode uint32) repository.TreeEntry {
 	value := path.Bytes()
-	entry := repository.TreeEntry{Path: value, Kind: kind, Mode: mode}
+	entry := repository.TreeEntry{Path: value, Kind: kind, Mode: mode, ModeClass: repository.ClassifyGitMode(mode)}
 	separator := bytes.LastIndexByte(value, '/')
 	if separator >= 0 {
 		entry.Parent = append([]byte(nil), value[:separator]...)

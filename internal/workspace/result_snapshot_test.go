@@ -153,7 +153,10 @@ func resultFileMode(t *testing.T, path string) uint32 {
 	if err != nil {
 		t.Fatalf("stat %s: %v", path, err)
 	}
-	return 0o100000 | uint32(info.Mode().Perm())
+	if info.Mode().Perm()&0o111 != 0 {
+		return 0o100755
+	}
+	return 0o100644
 }
 
 func hexDigest(value []byte) string {

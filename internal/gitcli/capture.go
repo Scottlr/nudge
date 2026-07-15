@@ -712,7 +712,10 @@ func parseGitMode(value string) (uint32, error) {
 		return 0, nil
 	}
 	parsed, err := strconv.ParseUint(value, 8, 32)
-	return uint32(parsed), err
+	if err != nil || repository.ValidateGitMode(uint32(parsed)) != nil {
+		return 0, malformed("Git mode")
+	}
+	return uint32(parsed), nil
 }
 
 func allZeroObjectID(value repository.ObjectID) bool {
@@ -822,6 +825,9 @@ func parseStatusRecords(statusData, untrackedData []byte) ([]captureStatusRecord
 			entry.Change.Kind = repository.ChangeRenamed
 			if len(fields[8]) > 0 && fields[8][0] == 'C' {
 				entry.Change.Kind = repository.ChangeCopied
+			}
+			if entry.Change.ModeTransition != nil && entry.Change.ModeTransition.Kind == repository.ModeTypeChanged {
+				return nil, nil, malformed("rename type transition")
 			}
 			records = append(records, captureStatusRecord{entry: entry, baseID: baseID, indexID: indexID})
 			continue
@@ -959,6 +965,16 @@ func makeOrdinaryStatusEntry(fields [][]byte, renameOld repository.RepoPath) (re
 	default:
 		return repository.LocalCaptureEntry{Change: change}, baseID, indexID, nil
 	}
+	if oldPresent && newPresent && (change.OldMode != change.NewMode || change.OldFileKind != change.NewFileKind) {
+		transition, transitionErr := repository.NewModeTransition(change.OldMode, change.NewMode)
+		if transitionErr != nil {
+			return repository.LocalCaptureEntry{}, nil, nil, malformed("status mode transition")
+		}
+		change.ModeTransition = &transition
+		if transition.Kind == repository.ModeTypeChanged {
+			change.Kind = repository.ChangeTypeChanged
+		}
+	}
 	return repository.LocalCaptureEntry{Change: change}, baseID, indexID, nil
 }
 
@@ -1015,6 +1031,15 @@ func makeUnmergedStatusEntry(fields [][]byte) (captureStatusRecord, error) {
 		change.Kind = repository.ChangeDeleted
 		change.NewPath = nil
 		change.NewFileKind = ""
+	} else if change.OldMode != change.NewMode || change.OldFileKind != change.NewFileKind {
+		transition, transitionErr := repository.NewModeTransition(change.OldMode, change.NewMode)
+		if transitionErr != nil {
+			return captureStatusRecord{}, malformed("unmerged mode transition")
+		}
+		change.ModeTransition = &transition
+		if transition.Kind == repository.ModeTypeChanged {
+			change.Kind = repository.ChangeTypeChanged
+		}
 	}
 	return captureStatusRecord{entry: repository.LocalCaptureEntry{Change: change}, stageIDs: ids, stageModes: [3]uint32{modes[0], modes[1], modes[2]}}, nil
 }
@@ -1040,16 +1065,16 @@ func statusChanged(value byte) bool {
 }
 
 func fileKindFromGitMode(mode uint32) repository.FileKind {
-	switch mode & 0170000 {
-	case 0100000:
+	switch repository.ClassifyGitMode(mode) {
+	case repository.ModeRegularNonExecutable, repository.ModeRegularExecutable:
 		return repository.FileKindRegular
-	case 0120000:
+	case repository.ModeSymlink:
 		return repository.FileKindSymlink
-	case 0160000:
+	case repository.ModeGitlink:
 		return repository.FileKindGitlink
-	case 0040000:
+	case repository.ModeTree:
 		return repository.FileKindDirectory
-	case 0:
+	case repository.ModeUnsupported:
 		return repository.FileKindUnknown
 	default:
 		return repository.FileKindUnknown

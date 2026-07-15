@@ -55,7 +55,7 @@ func (p PathPrecondition) Validate() error {
 	if !p.Kind.valid() || p.Kind == FileKindUnknown {
 		return ErrInvalidPathPrecondition
 	}
-	if p.Mode == 0 || (p.ContentHash != "" && !validContentHash(p.ContentHash)) || (p.ContentClass != "" && p.ContentClass.Validate() != nil) || (p.SymlinkTargetHash != "" && !validContentHash(p.SymlinkTargetHash)) {
+	if ValidateGitMode(p.Mode) != nil || gitModeClassFileKind(ClassifyGitMode(p.Mode)) != p.Kind || (p.ContentHash != "" && !validContentHash(p.ContentHash)) || (p.ContentClass != "" && p.ContentClass.Validate() != nil) || (p.SymlinkTargetHash != "" && !validContentHash(p.SymlinkTargetHash)) {
 		return ErrInvalidPathPrecondition
 	}
 	if p.Kind == FileKindSymlink {

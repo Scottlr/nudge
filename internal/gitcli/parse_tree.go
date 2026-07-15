@@ -53,7 +53,7 @@ func parseTreeMode(value string) (uint32, error) {
 		return 0, malformedTree("empty tree mode")
 	}
 	parsed, err := strconv.ParseUint(value, 8, 32)
-	if err != nil || parsed == 0 {
+	if err != nil || parsed == 0 || repository.ValidateGitMode(uint32(parsed)) != nil {
 		return 0, malformedTree("invalid tree mode")
 	}
 	return uint32(parsed), nil
@@ -204,6 +204,19 @@ func parseRawDiff(data []byte) ([]repository.ChangedFile, error) {
 			OldFileKind: fileKindFromGitMode(oldMode), NewFileKind: fileKindFromGitMode(newMode),
 			OldMode: oldMode, NewMode: newMode, OldObjectID: oldID, NewObjectID: newID,
 		}
+		if oldPath != nil && newPath != nil && (oldMode != newMode || change.OldFileKind != change.NewFileKind) {
+			transition, transitionErr := repository.NewModeTransition(oldMode, newMode)
+			if transitionErr != nil {
+				return nil, transitionErr
+			}
+			if transition.Kind == repository.ModeTypeChanged && (kind == repository.ChangeRenamed || kind == repository.ChangeCopied) {
+				return nil, malformedTree("rename type transition")
+			}
+			change.ModeTransition = &transition
+			if transition.Kind == repository.ModeTypeChanged {
+				change.Kind = repository.ChangeTypeChanged
+			}
+		}
 		if oldPath == nil {
 			change.OldFileKind, change.OldMode, change.OldObjectID = "", 0, nil
 		}
@@ -265,7 +278,7 @@ func newTreeEntry(path repository.RepoPath, kind repository.FileKind, mode uint3
 		name = repository.RepoPath(path[lastSlash+1:])
 	}
 	entry := repository.TreeEntry{
-		Path: path.Bytes(), Name: name.Bytes(), Parent: parent.Bytes(), Kind: kind, Mode: mode,
+		Path: path.Bytes(), Name: name.Bytes(), Parent: parent.Bytes(), Kind: kind, Mode: mode, ModeClass: repository.ClassifyGitMode(mode),
 		ObjectID: cloneObjectID(objectID), LazyChild: kind == repository.FileKindDirectory,
 		ChangedSummary: cloneChangedFile(changed),
 	}
@@ -334,6 +347,10 @@ func cloneChangedFile(value *repository.ChangedFile) *repository.ChangedFile {
 	if value.NewTextSemantics != nil {
 		semantics := *value.NewTextSemantics
 		copyValue.NewTextSemantics = &semantics
+	}
+	if value.ModeTransition != nil {
+		transition := *value.ModeTransition
+		copyValue.ModeTransition = &transition
 	}
 	return &copyValue
 }

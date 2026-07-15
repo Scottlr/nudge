@@ -113,20 +113,22 @@ type DesiredCell struct {
 type CapabilityReasonCode string
 
 const (
-	ReasonCapabilityNotImplemented CapabilityReasonCode = "capability_not_implemented"
-	ReasonEvidenceStale            CapabilityReasonCode = "evidence_stale"
-	ReasonEvidenceWrongCell        CapabilityReasonCode = "evidence_wrong_cell"
-	ReasonPolicyDisabled           CapabilityReasonCode = "policy_disabled"
-	ReasonPermanentFalse           CapabilityReasonCode = "permanent_false"
-	ReasonPolicyMismatch           CapabilityReasonCode = "policy_mismatch"
-	ReasonResourceLimit            CapabilityReasonCode = "resource_limit"
-	ReasonPlatformUnqualified      CapabilityReasonCode = "platform_unqualified"
-	ReasonSessionUnavailable       CapabilityReasonCode = "session_unavailable"
-	ReasonIndexUnsafe              CapabilityReasonCode = "index_unsafe"
-	ReasonProviderUnavailable      CapabilityReasonCode = "provider_unavailable"
-	ReasonAccountUnavailable       CapabilityReasonCode = "account_unavailable"
-	ReasonDisclosureUnavailable    CapabilityReasonCode = "disclosure_unavailable"
-	ReasonPermissionUnavailable    CapabilityReasonCode = "permission_unavailable"
+	ReasonCapabilityNotImplemented      CapabilityReasonCode = "capability_not_implemented"
+	ReasonEvidenceStale                 CapabilityReasonCode = "evidence_stale"
+	ReasonEvidenceWrongCell             CapabilityReasonCode = "evidence_wrong_cell"
+	ReasonPolicyDisabled                CapabilityReasonCode = "policy_disabled"
+	ReasonPermanentFalse                CapabilityReasonCode = "permanent_false"
+	ReasonPolicyMismatch                CapabilityReasonCode = "policy_mismatch"
+	ReasonResourceLimit                 CapabilityReasonCode = "resource_limit"
+	ReasonPlatformUnqualified           CapabilityReasonCode = "platform_unqualified"
+	ReasonSessionUnavailable            CapabilityReasonCode = "session_unavailable"
+	ReasonIndexUnsafe                   CapabilityReasonCode = "index_unsafe"
+	ReasonProviderUnavailable           CapabilityReasonCode = "provider_unavailable"
+	ReasonAccountUnavailable            CapabilityReasonCode = "account_unavailable"
+	ReasonDisclosureUnavailable         CapabilityReasonCode = "disclosure_unavailable"
+	ReasonPermissionUnavailable         CapabilityReasonCode = "permission_unavailable"
+	ReasonExecutableModeUnrepresentable CapabilityReasonCode = "executable_mode_unrepresentable"
+	ReasonTypeTransitionUnsupported     CapabilityReasonCode = "type_transition_unsupported"
 )
 
 // CapabilityReason is intentionally payload-free. Raw paths, prompts, and
@@ -301,6 +303,44 @@ type CurrentCapabilityEvidence struct {
 	EvidenceVersion       EvidenceVersion
 	Platform              PlatformEvidence
 	Session               SessionEvidence
+	Mode                  *ModeCapabilityEvidence
+}
+
+// ModeCapabilityEvidence is the T089 conformance intersection. It proves
+// exact Git executable-mode representation and keeps type transitions gated by
+// both independently supported endpoints.
+type ModeCapabilityEvidence struct {
+	Version              uint32
+	Transition           repository.ModeTransition
+	GenericTransition    bool
+	OldEndpointSupported bool
+	NewEndpointSupported bool
+	PlatformSupported    bool
+	CoreFilemode         bool
+	ModeRepresentable    bool
+	ModeReadbackVerified bool
+	ContentUnchanged     bool
+	IndexUnchanged       bool
+	Reason               CapabilityReasonCode
+}
+
+const ModeCapabilityEvidenceVersion uint32 = 1
+
+func (e ModeCapabilityEvidence) Validate() error {
+	if e.Version != ModeCapabilityEvidenceVersion || e.Transition.Validate() != nil || e.Reason != "" && !validReasonCode(e.Reason) {
+		return ErrInvalidCapabilityEvidence
+	}
+	return nil
+}
+
+func (e ModeCapabilityEvidence) Supported() bool {
+	if e.Validate() != nil || e.Reason != "" || !e.GenericTransition || !e.OldEndpointSupported || !e.NewEndpointSupported || !e.PlatformSupported || !e.IndexUnchanged {
+		return false
+	}
+	if e.Transition.IsExecutableChange() {
+		return e.CoreFilemode && e.ModeRepresentable && e.ModeReadbackVerified && e.ContentUnchanged
+	}
+	return true
 }
 
 // CapabilityRequest is an exact entry evaluation input.
@@ -310,6 +350,7 @@ type CapabilityRequest struct {
 	ChangeKind             repository.ChangeKind
 	PathClass              PathClass
 	Index                  IndexState
+	ModeTransition         *repository.ModeTransition
 	ImplementationEvidence []ImplementationEvidence
 	Current                CurrentCapabilityEvidence
 }
@@ -438,10 +479,31 @@ func resolveAxis(axis CapabilityAxis, desired DesiredCell, request CapabilityReq
 	if !platformAllows(axis, request) {
 		return false, []CapabilityReason{{Code: ReasonPlatformUnqualified}}
 	}
+	if axis == CapabilityPropose || axis == CapabilityApply {
+		if reason, ok := modeCapabilityReason(request); !ok {
+			return false, []CapabilityReason{{Code: reason}}
+		}
+	}
 	if !sessionAllows(axis, request.Current.Session) {
 		return false, []CapabilityReason{{Code: ReasonSessionUnavailable}}
 	}
 	return true, nil
+}
+
+func modeCapabilityReason(request CapabilityRequest) (CapabilityReasonCode, bool) {
+	if request.ModeTransition == nil || request.ModeTransition.Kind == repository.ModeUnchanged {
+		return "", true
+	}
+	if request.ModeTransition.Validate() != nil {
+		return ReasonEvidenceStale, false
+	}
+	if request.Current.Mode == nil || request.Current.Mode.Validate() != nil || request.Current.Mode.Transition != *request.ModeTransition || !request.Current.Mode.Supported() {
+		if request.ModeTransition.IsExecutableChange() {
+			return ReasonExecutableModeUnrepresentable, false
+		}
+		return ReasonTypeTransitionUnsupported, false
+	}
+	return "", true
 }
 
 func matchingEvidence(cell CapabilityCell, all []ImplementationEvidence, policy CapabilityPolicyV1) (ImplementationEvidence, bool, bool) {
@@ -681,7 +743,7 @@ func validIndexState(state IndexState) bool {
 
 func validReasonCode(code CapabilityReasonCode) bool {
 	switch code {
-	case ReasonCapabilityNotImplemented, ReasonEvidenceStale, ReasonEvidenceWrongCell, ReasonPolicyDisabled, ReasonPermanentFalse, ReasonPolicyMismatch, ReasonResourceLimit, ReasonPlatformUnqualified, ReasonSessionUnavailable, ReasonIndexUnsafe, ReasonProviderUnavailable, ReasonAccountUnavailable, ReasonDisclosureUnavailable, ReasonPermissionUnavailable:
+	case ReasonCapabilityNotImplemented, ReasonEvidenceStale, ReasonEvidenceWrongCell, ReasonPolicyDisabled, ReasonPermanentFalse, ReasonPolicyMismatch, ReasonResourceLimit, ReasonPlatformUnqualified, ReasonSessionUnavailable, ReasonIndexUnsafe, ReasonProviderUnavailable, ReasonAccountUnavailable, ReasonDisclosureUnavailable, ReasonPermissionUnavailable, ReasonExecutableModeUnrepresentable, ReasonTypeTransitionUnsupported:
 		return true
 	default:
 		return false

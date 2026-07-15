@@ -532,6 +532,10 @@ func deriveProposedFiles(files []ProposalReviewFile, snapshot ResultSnapshot) ([
 			return nil, ErrProposalPublicationInvalid
 		}
 		value := review.ProposedFile{Binary: indexed.Binary}
+		if file.ModeTransition != nil {
+			transition := *file.ModeTransition
+			value.ModeTransition = &transition
+		}
 		switch {
 		case file.NewPath != nil:
 			value.Path = repository.RepoPath(file.NewPath.Bytes())

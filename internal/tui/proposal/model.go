@@ -145,23 +145,24 @@ func validateProjectionText(values ...any) error {
 // Entry is one complete file-level index item. Paths remain raw repository
 // identities until the view projects them through terminal sanitization.
 type Entry struct {
-	ID          string
-	Ordinal     uint64
-	Path        repository.RepoPath
-	OldPath     *repository.RepoPath
-	Kind        repository.ChangeKind
-	OldKind     repository.FileKind
-	NewKind     repository.FileKind
-	OldMode     uint32
-	NewMode     uint32
-	Binary      bool
-	Unsupported bool
-	Reason      string
-	Offset      int64
-	Length      int64
-	HunkCount   uint64
-	Bytes       uint64
-	SHA256      string
+	ID             string
+	Ordinal        uint64
+	Path           repository.RepoPath
+	OldPath        *repository.RepoPath
+	Kind           repository.ChangeKind
+	OldKind        repository.FileKind
+	NewKind        repository.FileKind
+	OldMode        uint32
+	NewMode        uint32
+	ModeTransition *repository.ModeTransition
+	Binary         bool
+	Unsupported    bool
+	Reason         string
+	Offset         int64
+	Length         int64
+	HunkCount      uint64
+	Bytes          uint64
+	SHA256         string
 }
 
 func (e Entry) Validate() error {
@@ -175,7 +176,12 @@ func (e Entry) Validate() error {
 	if e.Kind == repository.ChangeDeleted {
 		newPath = nil
 	}
-	change := repository.ChangedFile{OldPath: clonePath(e.OldPath), NewPath: newPath, Kind: e.Kind, OldFileKind: e.OldKind, NewFileKind: e.NewKind, OldMode: e.OldMode, NewMode: e.NewMode, Binary: e.Binary}
+	var transition *repository.ModeTransition
+	if e.ModeTransition != nil {
+		value := *e.ModeTransition
+		transition = &value
+	}
+	change := repository.ChangedFile{OldPath: clonePath(e.OldPath), NewPath: newPath, Kind: e.Kind, OldFileKind: e.OldKind, NewFileKind: e.NewKind, OldMode: e.OldMode, NewMode: e.NewMode, ModeTransition: transition, Binary: e.Binary}
 	if change.Validate() != nil {
 		return ErrInvalidPage
 	}
