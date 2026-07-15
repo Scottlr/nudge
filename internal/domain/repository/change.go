@@ -92,6 +92,7 @@ type ChangedFile struct {
 	Staged      bool
 	Unstaged    bool
 	Conflict    *IndexConflictEvidence
+	Rename      *RenameEvidence
 }
 
 // Validate enforces path-side, object-side, and change-kind invariants.
@@ -136,6 +137,11 @@ func (f ChangedFile) Validate() error {
 	}
 	if f.Conflict != nil && f.Conflict.Validate() != nil {
 		return ErrInvalidChangedFile
+	}
+	if f.Rename != nil {
+		if f.Rename.Validate() != nil || (f.Kind != ChangeRenamed && f.Kind != ChangeCopied) || f.OldPath == nil || f.NewPath == nil || !f.Rename.MatchesPaths(*f.OldPath, *f.NewPath) || f.Rename.Kind != f.Kind {
+			return ErrInvalidChangedFile
+		}
 	}
 	return nil
 }

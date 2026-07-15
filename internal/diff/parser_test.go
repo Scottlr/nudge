@@ -76,6 +76,12 @@ func TestParsePatchGolden(t *testing.T) {
 	if files[3].File.Kind != repository.ChangeRenamed || files[4].File.Kind != repository.ChangeCopied {
 		t.Fatalf("rename/copy kinds = %s/%s", files[3].File.Kind, files[4].File.Kind)
 	}
+	if files[3].File.Rename == nil || files[3].File.Rename.SimilarityPercent != 100 || files[3].File.Rename.Kind != repository.ChangeRenamed || !files[3].File.Rename.MatchesPaths(*files[3].File.OldPath, *files[3].File.NewPath) {
+		t.Fatalf("rename evidence = %#v", files[3].File.Rename)
+	}
+	if files[4].File.Rename == nil || files[4].File.Rename.SimilarityPercent != 100 || files[4].File.Rename.Kind != repository.ChangeCopied {
+		t.Fatalf("copy evidence = %#v", files[4].File.Rename)
+	}
 	if files[5].File.OldMode != 0o100644 || files[5].File.NewMode != 0o100755 {
 		t.Fatalf("mode change = %#v", files[5].File)
 	}

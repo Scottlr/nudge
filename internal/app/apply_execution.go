@@ -536,7 +536,11 @@ func applyResultPathsMatch(actual map[repository.RepoPathKey]ApplyPathEvidence, 
 	for _, file := range files {
 		expected[file.Path.Key()] = applyExpectedPath{exists: !file.Deleted, kind: file.Kind, mode: file.Mode, contentHash: file.ContentHash}
 		if file.OldPath != nil && !bytes.Equal(file.OldPath.Bytes(), file.Path.Bytes()) {
-			expected[(*file.OldPath).Key()] = applyExpectedPath{}
+			if file.Copied {
+				expected[(*file.OldPath).Key()] = applyExpectedPath{exists: true, kind: file.OldKind, mode: file.OldMode, contentHash: file.OldContentHash}
+			} else {
+				expected[(*file.OldPath).Key()] = applyExpectedPath{}
+			}
 		}
 	}
 	if len(actual) != len(expected) {

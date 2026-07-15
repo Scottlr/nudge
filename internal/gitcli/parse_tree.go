@@ -210,6 +210,17 @@ func parseRawDiff(data []byte) ([]repository.ChangedFile, error) {
 		if newPath == nil {
 			change.NewFileKind, change.NewMode, change.NewObjectID = "", 0, nil
 		}
+		if kind == repository.ChangeRenamed || kind == repository.ChangeCopied {
+			similarity, scoreErr := parseRenameScore([]byte(status[1:]))
+			if scoreErr != nil {
+				return nil, scoreErr
+			}
+			evidence, evidenceErr := repository.NewRenameEvidence(1, similarity, kind, *change.OldPath, *change.NewPath)
+			if evidenceErr != nil {
+				return nil, malformedTree("rename evidence")
+			}
+			change.Rename = &evidence
+		}
 		if err := change.Validate(); err != nil {
 			return nil, fmt.Errorf("%w: %v", errInvalidTreeOutput, err)
 		}
@@ -311,6 +322,10 @@ func cloneChangedFile(value *repository.ChangedFile) *repository.ChangedFile {
 		conflict.Stage2 = cloneIndexStage(value.Conflict.Stage2)
 		conflict.Stage3 = cloneIndexStage(value.Conflict.Stage3)
 		copyValue.Conflict = &conflict
+	}
+	if value.Rename != nil {
+		rename := *value.Rename
+		copyValue.Rename = &rename
 	}
 	return &copyValue
 }

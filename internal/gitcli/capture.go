@@ -349,7 +349,7 @@ func (a *LocalCaptureAdapter) Capture(ctx context.Context, repo repository.Repos
 	}
 	entries := attachBlobRefs(statusEntries, blobRecords, blobIdentity)
 	if renameEvidence.AnchorMappingAllowed() {
-		entries = applyRenameRecords(entries, renameRecords)
+		entries = applyRenameRecords(entries, renameRecords, a.renamePolicy.Version)
 	}
 	if err := a.revalidateWorkingBlobs(worktree.RootPath, blobRecords); err != nil {
 		return nil, err
@@ -1167,9 +1167,10 @@ func observeWorkingPath(root string, path repository.RepoPath) (repository.FileK
 }
 
 type renameCaptureRecord struct {
-	Kind    byte
-	OldPath repository.RepoPath
-	NewPath repository.RepoPath
+	Kind              byte
+	SimilarityPercent uint8
+	OldPath           repository.RepoPath
+	NewPath           repository.RepoPath
 }
 
 func (a *LocalCaptureAdapter) readRenameEvidence(ctx context.Context, builder *CommandBuilder, base repository.ObjectID, entries []captureStatusRecord) ([]renameCaptureRecord, RenamePolicyEvidenceV1, error) {
@@ -1269,12 +1270,16 @@ func parseRenameRecords(data []byte) ([]renameCaptureRecord, int, int, error) {
 			if index+2 >= len(parts) {
 				return nil, 0, 0, malformed("rename name-status paths")
 			}
+			similarity, scoreErr := parseRenameScore(status[1:])
+			if scoreErr != nil {
+				return nil, 0, 0, scoreErr
+			}
 			oldPath, oldErr := repository.NewRepoPath(parts[index+1])
 			newPath, newErr := repository.NewRepoPath(parts[index+2])
 			if oldErr != nil || newErr != nil {
 				return nil, 0, 0, malformed("rename name-status paths")
 			}
-			records = append(records, renameCaptureRecord{Kind: status[0], OldPath: oldPath, NewPath: newPath})
+			records = append(records, renameCaptureRecord{Kind: status[0], SimilarityPercent: similarity, OldPath: oldPath, NewPath: newPath})
 			index += 2
 			deleteCandidates++
 			addCandidates++
@@ -1287,7 +1292,27 @@ func parseRenameRecords(data []byte) ([]renameCaptureRecord, int, int, error) {
 	return records, deleteCandidates, addCandidates, nil
 }
 
-func applyRenameRecords(entries []repository.LocalCaptureEntry, renames []renameCaptureRecord) []repository.LocalCaptureEntry {
+func parseRenameScore(value []byte) (uint8, error) {
+	if len(value) == 0 {
+		return 100, nil
+	}
+	parsed := 0
+	for _, digit := range value {
+		if digit < '0' || digit > '9' {
+			return 0, malformed("rename similarity score")
+		}
+		parsed = parsed*10 + int(digit-'0')
+		if parsed > 100 {
+			return 0, malformed("rename similarity score")
+		}
+	}
+	if parsed < 60 {
+		return 0, malformed("rename similarity below policy threshold")
+	}
+	return uint8(parsed), nil
+}
+
+func applyRenameRecords(entries []repository.LocalCaptureEntry, renames []renameCaptureRecord, policyVersion uint32) []repository.LocalCaptureEntry {
 	for _, rename := range renames {
 		oldIndex, newIndex := -1, -1
 		for index := range entries {
@@ -1313,6 +1338,12 @@ func applyRenameRecords(entries []repository.LocalCaptureEntry, renames []rename
 		} else {
 			current.Change.Kind = repository.ChangeRenamed
 		}
+		kind := current.Change.Kind
+		evidence, err := repository.NewRenameEvidence(policyVersion, rename.SimilarityPercent, kind, rename.OldPath, rename.NewPath)
+		if err != nil {
+			continue
+		}
+		current.Change.Rename = &evidence
 		for _, blob := range old.Blobs {
 			if blob.Side == repository.CaptureBlobBase {
 				current.Blobs = append(current.Blobs, blob)
@@ -1337,18 +1368,25 @@ func newCapturePolicyEvidence(a *LocalCaptureAdapter, rename RenamePolicyEvidenc
 		return repository.CapturePolicyEvidence{}, err
 	}
 	return repository.CapturePolicyEvidence{
-		MachineGitVersion:       MachineGitReadPolicyVersion,
-		RenameVersion:           rename.Policy.Version,
-		RenameOutcome:           string(rename.Outcome),
-		RenameDeleteCandidates:  uint64(rename.DeleteCandidates),
-		RenameAddCandidates:     uint64(rename.AddCandidates),
-		PatchFormatVersion:      a.patchPolicy.Version,
-		ConversionPolicyVersion: a.conversionPolicy.Version,
-		ConversionDecision:      string(conversion.Decision),
-		ConversionReason:        string(conversion.Reason),
-		ConversionFingerprint:   conversion.Fingerprint,
-		AttributesChanged:       conversion.AttributesChanged,
-		ResourcePolicyVersion:   uint32(a.policy.Version),
+		MachineGitVersion:               MachineGitReadPolicyVersion,
+		RenameVersion:                   rename.Policy.Version,
+		RenameOutcome:                   string(rename.Outcome),
+		RenameDeleteCandidates:          uint64(rename.DeleteCandidates),
+		RenameAddCandidates:             uint64(rename.AddCandidates),
+		RenameSimilarityPercent:         rename.Policy.SimilarityPercent,
+		RenameMaxDeleteSources:          uint64(rename.Policy.MaxDeleteSources),
+		RenameMaxAddTargets:             uint64(rename.Policy.MaxAddTargets),
+		RenameDetectChangedSourceCopies: rename.Policy.DetectChangedSourceCopies,
+		RenameFindCopiesHarder:          rename.Policy.FindCopiesHarder,
+		RenameFlags:                     append([]string(nil), rename.Flags...),
+		RenameEvidenceHash:              rename.EvidenceHash,
+		PatchFormatVersion:              a.patchPolicy.Version,
+		ConversionPolicyVersion:         a.conversionPolicy.Version,
+		ConversionDecision:              string(conversion.Decision),
+		ConversionReason:                string(conversion.Reason),
+		ConversionFingerprint:           conversion.Fingerprint,
+		AttributesChanged:               conversion.AttributesChanged,
+		ResourcePolicyVersion:           uint32(a.policy.Version),
 	}, nil
 }
 

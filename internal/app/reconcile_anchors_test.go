@@ -87,10 +87,15 @@ func TestReconcileRename(t *testing.T) {
 	oldPath := repository.RepoPath([]byte("old/name.go"))
 	newPath := repository.RepoPath([]byte("new/name.go"))
 	anchor := testReconcileAnchor(t, string(oldPath), 2, 2, "target", nil, nil, false)
-	evidence := review.RenamePolicyEvidence{Version: 1, SimilarityPercent: 60, MaxDeleteSources: 1000, MaxAddTargets: 1000, DetectChangedSourceCopies: true, Outcome: "complete"}
+	flags := []string{"--find-renames=60%", "--find-copies=60%"}
+	evidence := review.RenamePolicyEvidence{Version: 1, SimilarityPercent: 60, MaxDeleteSources: 1000, MaxAddTargets: 1000, DetectChangedSourceCopies: true, Outcome: "complete", Flags: flags, EvidenceHash: repository.RenamePolicyEvidenceHash(1, 60, 1000, 1000, true, false, "complete", 0, 0, flags)}
+	rename, err := repository.NewRenameEvidence(1, 100, repository.ChangeRenamed, oldPath, newPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	content := review.CapturedFile{Path: newPath, Side: repository.DiffHead, Lines: []string{"before", "target", "after"}}
 	transition := testTransition(1, 2)
-	transition.RenameMappings = []review.RenameMapping{{OldPath: oldPath, NewPath: newPath, Side: repository.DiffHead}}
+	transition.RenameMappings = []review.RenameMapping{{OldPath: oldPath, NewPath: newPath, Side: repository.DiffHead, SimilarityPercent: rename.SimilarityPercent, Kind: rename.Kind, EvidenceHash: rename.EvidenceHash}}
 	transition.RenameEvidence = evidence
 	outcome, err := ReconcileAnchor(review.ReconcileInput{Anchor: anchor, Transition: transition, NewContent: content, Now: time.Unix(20, 0).UTC()})
 	if err != nil || outcome.State != review.AnchorRelocated || outcome.Anchor.Path.Key() != newPath.Key() {
@@ -99,6 +104,7 @@ func TestReconcileRename(t *testing.T) {
 
 	transition.RenameEvidence.Outcome = "rename_detection_limited"
 	transition.RenameEvidence.DeleteCandidates = 1000
+	transition.RenameEvidence.EvidenceHash = repository.RenamePolicyEvidenceHash(1, 60, 1000, 1000, true, false, "rename_detection_limited", 1000, 0, flags)
 	outcome, err = ReconcileAnchor(review.ReconcileInput{Anchor: anchor, Transition: transition, NewContent: content, Now: time.Unix(20, 0).UTC()})
 	if err != nil || outcome.State != review.AnchorOrphaned {
 		t.Fatalf("limited rename = %#v, err=%v", outcome, err)

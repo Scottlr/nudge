@@ -766,6 +766,10 @@ func cloneChangedFile(value repository.ChangedFile) repository.ChangedFile {
 		}
 		value.Conflict = &conflict
 	}
+	if value.Rename != nil {
+		rename := *value.Rename
+		value.Rename = &rename
+	}
 	return value
 }
 

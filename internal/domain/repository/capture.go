@@ -193,18 +193,25 @@ func (i LocalCaptureIndexEvidence) Validate() error {
 // CapturePolicyEvidence records the exact policy versions and bounded rename
 // outcome used to create the candidate.
 type CapturePolicyEvidence struct {
-	MachineGitVersion       uint32
-	RenameVersion           uint32
-	RenameOutcome           string
-	RenameDeleteCandidates  uint64
-	RenameAddCandidates     uint64
-	PatchFormatVersion      uint32
-	ConversionPolicyVersion uint32
-	ConversionDecision      string
-	ConversionReason        string
-	ConversionFingerprint   string
-	AttributesChanged       bool
-	ResourcePolicyVersion   uint32
+	MachineGitVersion               uint32
+	RenameVersion                   uint32
+	RenameOutcome                   string
+	RenameDeleteCandidates          uint64
+	RenameAddCandidates             uint64
+	RenameSimilarityPercent         uint8
+	RenameMaxDeleteSources          uint64
+	RenameMaxAddTargets             uint64
+	RenameDetectChangedSourceCopies bool
+	RenameFindCopiesHarder          bool
+	RenameFlags                     []string
+	RenameEvidenceHash              string
+	PatchFormatVersion              uint32
+	ConversionPolicyVersion         uint32
+	ConversionDecision              string
+	ConversionReason                string
+	ConversionFingerprint           string
+	AttributesChanged               bool
+	ResourcePolicyVersion           uint32
 }
 
 // Validate checks the versioned policy identity without importing adapters.
@@ -214,6 +221,14 @@ func (p CapturePolicyEvidence) Validate() error {
 	}
 	if p.ConversionDecision == "byte_neutral" && p.ConversionReason != "" || p.ConversionDecision == "review_only" && !validCaptureText(p.ConversionReason) {
 		return ErrInvalidLocalCaptureCandidate
+	}
+	if p.RenameEvidenceHash != "" {
+		if len(p.RenameFlags) == 0 || p.RenameSimilarityPercent != 60 || p.RenameMaxDeleteSources != 1000 || p.RenameMaxAddTargets != 1000 || !p.RenameDetectChangedSourceCopies || p.RenameFindCopiesHarder || !validCaptureSHA256(p.RenameEvidenceHash) {
+			return ErrInvalidLocalCaptureCandidate
+		}
+		if expected := RenamePolicyEvidenceHash(p.RenameVersion, p.RenameSimilarityPercent, int(p.RenameMaxDeleteSources), int(p.RenameMaxAddTargets), p.RenameDetectChangedSourceCopies, p.RenameFindCopiesHarder, p.RenameOutcome, int(p.RenameDeleteCandidates), int(p.RenameAddCandidates), p.RenameFlags); expected != p.RenameEvidenceHash {
+			return ErrInvalidLocalCaptureCandidate
+		}
 	}
 	return nil
 }
@@ -368,6 +383,15 @@ func (c LocalCaptureCandidate) FingerprintValue() (string, error) {
 	writeCaptureUint64(h, uint64(c.Policy.RenameVersion))
 	writeCaptureUint64(h, uint64(c.Policy.RenameDeleteCandidates))
 	writeCaptureUint64(h, uint64(c.Policy.RenameAddCandidates))
+	writeCaptureUint64(h, uint64(c.Policy.RenameSimilarityPercent))
+	writeCaptureUint64(h, c.Policy.RenameMaxDeleteSources)
+	writeCaptureUint64(h, c.Policy.RenameMaxAddTargets)
+	writeCaptureUint64(h, boolUint(c.Policy.RenameDetectChangedSourceCopies))
+	writeCaptureUint64(h, boolUint(c.Policy.RenameFindCopiesHarder))
+	for _, flag := range c.Policy.RenameFlags {
+		writeCaptureString(h, flag)
+	}
+	writeCaptureString(h, c.Policy.RenameEvidenceHash)
 	writeCaptureUint64(h, uint64(c.Policy.PatchFormatVersion))
 	writeCaptureUint64(h, uint64(c.Policy.ConversionPolicyVersion))
 	writeCaptureString(h, c.Policy.ConversionDecision)
@@ -400,6 +424,12 @@ func (c LocalCaptureCandidate) FingerprintValue() (string, error) {
 		writeCaptureUint64(h, boolUint(entry.Change.Binary))
 		if entry.Change.Conflict != nil {
 			writeCaptureString(h, entry.Change.Conflict.Code)
+		}
+		if entry.Change.Rename != nil {
+			writeCaptureUint64(h, uint64(entry.Change.Rename.PolicyVersion))
+			writeCaptureUint64(h, uint64(entry.Change.Rename.SimilarityPercent))
+			writeCaptureString(h, string(entry.Change.Rename.Kind))
+			writeCaptureString(h, entry.Change.Rename.EvidenceHash)
 		}
 		for _, blob := range entry.Blobs {
 			writeCaptureString(h, string(blob.Side))

@@ -290,24 +290,29 @@ func (d DestinationConstraints) Validate() error {
 // ProposedFile is complete, path-identity-preserving file metadata for one
 // immutable proposal version.
 type ProposedFile struct {
-	Path        repository.RepoPath
-	OldPath     *repository.RepoPath
-	OldKind     repository.FileKind
-	Kind        repository.FileKind
-	OldMode     uint32
-	Mode        uint32
-	ContentHash string
-	Added       bool
-	Deleted     bool
-	TypeChanged bool
-	Binary      bool
+	Path           repository.RepoPath
+	OldPath        *repository.RepoPath
+	OldKind        repository.FileKind
+	Kind           repository.FileKind
+	OldMode        uint32
+	Mode           uint32
+	ContentHash    string
+	OldContentHash string
+	Added          bool
+	Deleted        bool
+	Copied         bool
+	TypeChanged    bool
+	Binary         bool
 }
 
 func (f ProposedFile) Validate() error {
-	if f.Path.Validate() != nil || f.Added && f.Deleted || f.Deleted && (f.Mode != 0 || f.Kind != repository.FileKindUnknown) || !f.Deleted && (!validFileKind(f.Kind) || f.Kind == repository.FileKindUnknown || f.Mode == 0) || (f.OldPath != nil && f.OldPath.Validate() != nil) || (f.OldPath == nil && (f.OldKind != "" || f.OldMode != 0)) || (f.OldPath != nil && (!validFileKind(f.OldKind) || f.OldKind == repository.FileKindUnknown || f.OldMode == 0)) || (f.ContentHash != "" && !validSHA256(f.ContentHash)) {
+	if f.Path.Validate() != nil || f.Added && f.Deleted || f.Deleted && (f.Mode != 0 || f.Kind != repository.FileKindUnknown) || !f.Deleted && (!validFileKind(f.Kind) || f.Kind == repository.FileKindUnknown || f.Mode == 0) || (f.OldPath != nil && f.OldPath.Validate() != nil) || (f.OldPath == nil && (f.OldKind != "" || f.OldMode != 0 || f.OldContentHash != "")) || (f.OldPath != nil && (!validFileKind(f.OldKind) || f.OldKind == repository.FileKindUnknown || f.OldMode == 0)) || (f.ContentHash != "" && !validSHA256(f.ContentHash)) || (f.OldContentHash != "" && !validSHA256(f.OldContentHash)) {
 		return ErrInvalidProposal
 	}
 	if f.Added && f.OldPath != nil || f.Deleted && f.OldPath != nil {
+		return ErrInvalidProposal
+	}
+	if f.Copied && (f.OldPath == nil || f.Added || f.Deleted || f.TypeChanged || f.OldContentHash == "") {
 		return ErrInvalidProposal
 	}
 	return nil
