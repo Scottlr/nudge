@@ -252,6 +252,32 @@ func runFakeAppServer(mode string) {
 		write(responseLine(login.ID, `{"type":"chatgpt","loginId":"login-1","authUrl":"https://auth.example.test/login"}`))
 		for input.Scan() {
 		}
+	case "conversation_lifecycle":
+		start := readRequest()
+		if start.Method != "thread/start" || string(start.Params) != `{}` {
+			os.Exit(14)
+		}
+		write(responseLine(start.ID, `{"thread":{"id":"codex-thread-1"}}`))
+		resume := readRequest()
+		if resume.Method != "thread/resume" || !strings.Contains(string(resume.Params), `"threadId":"codex-thread-1"`) {
+			os.Exit(15)
+		}
+		write(responseLine(resume.ID, `{"thread":{"id":"codex-thread-1"}}`))
+		turnStart := readRequest()
+		if turnStart.Method != "turn/start" || !strings.Contains(string(turnStart.Params), `"text":"hello"`) {
+			os.Exit(16)
+		}
+		write(responseLine(turnStart.ID, `{"turn":{"id":"codex-turn-1"}}`))
+		steer := readRequest()
+		if steer.Method != "turn/steer" || !strings.Contains(string(steer.Params), `"expectedTurnId":"codex-turn-1"`) || !strings.Contains(string(steer.Params), `"text":"continue"`) {
+			os.Exit(17)
+		}
+		write(responseLine(steer.ID, `{"turnId":"codex-turn-1"}`))
+		interrupt := readRequest()
+		if interrupt.Method != "turn/interrupt" || !strings.Contains(string(interrupt.Params), `"turnId":"codex-turn-1"`) {
+			os.Exit(18)
+		}
+		write(responseLine(interrupt.ID, `{}`))
 	case "out_of_order":
 		first := readRequest()
 		second := readRequest()

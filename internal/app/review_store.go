@@ -376,6 +376,10 @@ type ReviewStore interface {
 	LoadThread(ctx context.Context, threadID domain.ReviewThreadID) (review.ReviewThread, error)
 	ListMessages(ctx context.Context, threadID domain.ReviewThreadID, page MessagePage) (MessagePageResult, error)
 	ReadMessageBody(ctx context.Context, bodyRange BodyRange) (MessageBodyChunk, error)
+	LoadProviderConversation(ctx context.Context, id domain.ProviderConversationID) (*ProviderConversationRecord, error)
+	LoadProviderConversationForThread(ctx context.Context, threadID domain.ReviewThreadID) (*ProviderConversationRecord, error)
+	LoadProviderTurn(ctx context.Context, id domain.ProviderTurnID) (*ProviderTurnRecord, error)
+	ListProviderTurns(ctx context.Context, threadID domain.ReviewThreadID) ([]ProviderTurnRecord, error)
 	WithSessionTx(ctx context.Context, guard SessionWriteGuard, fn func(ReviewStoreTx) error) (SessionWriteGuard, error)
 	Close() error
 }
@@ -386,6 +390,8 @@ type ReviewStoreTx interface {
 	SaveSession(ctx context.Context, session review.ReviewSession) error
 	SaveThread(ctx context.Context, thread review.ReviewThread) error
 	SaveMessage(ctx context.Context, message review.Message) error
+	SaveProviderConversation(ctx context.Context, record ProviderConversationRecord) error
+	SaveProviderTurn(ctx context.Context, record ProviderTurnRecord) error
 	SaveCaptureGeneration(ctx context.Context, generation CaptureGeneration, manifest CaptureManifest) error
 	SaveAcceptedTargetGeneration(ctx context.Context, generation AcceptedTargetGeneration) error
 	CreateReconciliation(ctx context.Context, operation ReconciliationOperation) error

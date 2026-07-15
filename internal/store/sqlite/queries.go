@@ -16,6 +16,7 @@ import (
 	"github.com/Scottlr/nudge/internal/domain"
 	"github.com/Scottlr/nudge/internal/domain/repository"
 	"github.com/Scottlr/nudge/internal/domain/review"
+	"github.com/Scottlr/nudge/internal/provider"
 )
 
 func (s *Store) UpsertRepository(ctx context.Context, repo repository.Repository, worktree repository.WorktreeRef) error {
@@ -302,6 +303,113 @@ func (s *Store) FindCompatibleSession(ctx context.Context, key review.SessionKey
 	return &session, nil
 }
 
+// LoadProviderConversation returns one durable local conversation journal.
+func (s *Store) LoadProviderConversation(ctx context.Context, id domain.ProviderConversationID) (*app.ProviderConversationRecord, error) {
+	if err := s.ensureOpen(); err != nil {
+		return nil, err
+	}
+	if id == "" {
+		return nil, app.ErrReviewStoreInput
+	}
+	row := s.db.QueryRowContext(ctx, `SELECT id, thread_id, provider_name, provider_conversation_ref,
+		provider_session_ref, provider_version, operation_id, correlation_id, state, error_code, created_at, updated_at
+		FROM provider_conversations WHERE id = ?`, id)
+	record, err := scanProviderConversation(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, app.ErrReviewStoreNotFound
+		}
+		return nil, app.ErrReviewStoreCorrupt
+	}
+	if err := record.Validate(); err != nil {
+		return nil, app.ErrReviewStoreCorrupt
+	}
+	return &record, nil
+}
+
+// LoadProviderConversationForThread returns the unique conversation journal
+// attached to a review thread.
+func (s *Store) LoadProviderConversationForThread(ctx context.Context, threadID domain.ReviewThreadID) (*app.ProviderConversationRecord, error) {
+	if err := s.ensureOpen(); err != nil {
+		return nil, err
+	}
+	if threadID == "" {
+		return nil, app.ErrReviewStoreInput
+	}
+	row := s.db.QueryRowContext(ctx, `SELECT id, thread_id, provider_name, provider_conversation_ref,
+		provider_session_ref, provider_version, operation_id, correlation_id, state, error_code, created_at, updated_at
+		FROM provider_conversations WHERE thread_id = ?`, threadID)
+	record, err := scanProviderConversation(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, app.ErrReviewStoreNotFound
+		}
+		return nil, app.ErrReviewStoreCorrupt
+	}
+	if err := record.Validate(); err != nil {
+		return nil, app.ErrReviewStoreCorrupt
+	}
+	return &record, nil
+}
+
+// LoadProviderTurn returns one durable local turn journal.
+func (s *Store) LoadProviderTurn(ctx context.Context, id domain.ProviderTurnID) (*app.ProviderTurnRecord, error) {
+	if err := s.ensureOpen(); err != nil {
+		return nil, err
+	}
+	if id == "" {
+		return nil, app.ErrReviewStoreInput
+	}
+	row := s.db.QueryRowContext(ctx, `SELECT id, thread_id, conversation_id, provider_turn_ref,
+		operation_id, correlation_id, mode, state, provider_version, request_expression_version,
+		started_at, completed_at, error_code FROM provider_turns WHERE id = ?`, id)
+	turn, err := scanProviderTurn(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, app.ErrReviewStoreNotFound
+		}
+		return nil, app.ErrReviewStoreCorrupt
+	}
+	if err := turn.Validate(); err != nil {
+		return nil, app.ErrReviewStoreCorrupt
+	}
+	return &turn, nil
+}
+
+// ListProviderTurns returns the bounded local turn journals for a thread in
+// stable start order.
+func (s *Store) ListProviderTurns(ctx context.Context, threadID domain.ReviewThreadID) ([]app.ProviderTurnRecord, error) {
+	if err := s.ensureOpen(); err != nil {
+		return nil, err
+	}
+	if threadID == "" {
+		return nil, app.ErrReviewStoreInput
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id, thread_id, conversation_id, provider_turn_ref,
+		operation_id, correlation_id, mode, state, provider_version, request_expression_version,
+		started_at, completed_at, error_code FROM provider_turns
+		WHERE thread_id = ? ORDER BY started_at ASC, id ASC`, threadID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	turns := make([]app.ProviderTurnRecord, 0)
+	for rows.Next() {
+		turn, err := scanProviderTurn(rows)
+		if err != nil {
+			return nil, app.ErrReviewStoreCorrupt
+		}
+		if err := turn.Validate(); err != nil {
+			return nil, app.ErrReviewStoreCorrupt
+		}
+		turns = append(turns, turn)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return turns, nil
+}
+
 func (s *Store) WithSessionTx(ctx context.Context, guard app.SessionWriteGuard, fn func(app.ReviewStoreTx) error) (app.SessionWriteGuard, error) {
 	if err := s.ensureOpen(); err != nil {
 		return guard, err
@@ -361,6 +469,83 @@ type transaction struct {
 	tx              *sql.Tx
 	sessionID       domain.ReviewSessionID
 	maxMessageBytes uint64
+}
+
+func (t *transaction) SaveProviderConversation(ctx context.Context, record app.ProviderConversationRecord) error {
+	if err := record.Validate(); err != nil || record.ThreadID == "" {
+		return app.ErrReviewStoreInput
+	}
+	var threadSession domain.ReviewSessionID
+	if err := t.tx.QueryRowContext(ctx, "SELECT session_id FROM review_threads WHERE id = ?", record.ThreadID).Scan(&threadSession); err != nil {
+		return mapNotFound(err)
+	}
+	if threadSession != t.sessionID {
+		return app.ErrReviewStoreInput
+	}
+	var existingThread, existingCreated string
+	err := t.tx.QueryRowContext(ctx, "SELECT thread_id, created_at FROM provider_conversations WHERE id = ?", record.ID).Scan(&existingThread, &existingCreated)
+	switch {
+	case err == nil:
+		if existingThread != string(record.ThreadID) || existingCreated != formatTime(record.CreatedAt) {
+			return app.ErrReviewStoreInput
+		}
+		_, err = t.tx.ExecContext(ctx, `UPDATE provider_conversations SET provider_name = ?, provider_conversation_ref = ?,
+			provider_session_ref = ?, provider_version = ?, operation_id = ?, correlation_id = ?, state = ?, error_code = ?, updated_at = ?
+			WHERE id = ? AND thread_id = ?`, record.ProviderName, nullableID(string(record.ProviderConversationRef)), nullableID(record.ProviderSessionRef),
+			record.ProviderVersion, record.OperationID, record.CorrelationID, record.State, record.ErrorCode, formatTime(record.UpdatedAt), record.ID, record.ThreadID)
+		return err
+	case !errors.Is(err, sql.ErrNoRows):
+		return err
+	}
+	_, err = t.tx.ExecContext(ctx, `INSERT INTO provider_conversations(
+		id, thread_id, provider_name, provider_conversation_ref, provider_session_ref, provider_version,
+		operation_id, correlation_id, state, error_code, created_at, updated_at)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, record.ID, record.ThreadID, record.ProviderName,
+		nullableID(string(record.ProviderConversationRef)), nullableID(record.ProviderSessionRef), record.ProviderVersion,
+		record.OperationID, record.CorrelationID, record.State, record.ErrorCode, formatTime(record.CreatedAt), formatTime(record.UpdatedAt))
+	return err
+}
+
+func (t *transaction) SaveProviderTurn(ctx context.Context, turn app.ProviderTurnRecord) error {
+	if err := turn.Validate(); err != nil {
+		return app.ErrReviewStoreInput
+	}
+	var threadSession domain.ReviewSessionID
+	if err := t.tx.QueryRowContext(ctx, "SELECT session_id FROM review_threads WHERE id = ?", turn.ThreadID).Scan(&threadSession); err != nil {
+		return mapNotFound(err)
+	}
+	if threadSession != t.sessionID {
+		return app.ErrReviewStoreInput
+	}
+	var conversationThread string
+	if err := t.tx.QueryRowContext(ctx, "SELECT thread_id FROM provider_conversations WHERE id = ?", turn.ConversationID).Scan(&conversationThread); err != nil {
+		return mapNotFound(err)
+	}
+	if conversationThread != string(turn.ThreadID) {
+		return app.ErrReviewStoreInput
+	}
+	var existingThread, existingConversation, existingStarted string
+	err := t.tx.QueryRowContext(ctx, "SELECT thread_id, conversation_id, started_at FROM provider_turns WHERE id = ?", turn.ID).Scan(&existingThread, &existingConversation, &existingStarted)
+	switch {
+	case err == nil:
+		if existingThread != string(turn.ThreadID) || existingConversation != string(turn.ConversationID) || existingStarted != formatTime(turn.StartedAt) {
+			return app.ErrReviewStoreInput
+		}
+		_, err = t.tx.ExecContext(ctx, `UPDATE provider_turns SET provider_turn_ref = ?, operation_id = ?, correlation_id = ?,
+			mode = ?, state = ?, provider_version = ?, request_expression_version = ?, completed_at = ?, error_code = ?
+			WHERE id = ? AND thread_id = ?`, nullableID(string(turn.ProviderTurnRef)), turn.OperationID, turn.CorrelationID, turn.Mode,
+			turn.State, turn.ProviderVersion, turn.RequestExpressionVersion, nullableTime(turn.CompletedAt), turn.ErrorCode, turn.ID, turn.ThreadID)
+		return err
+	case !errors.Is(err, sql.ErrNoRows):
+		return err
+	}
+	_, err = t.tx.ExecContext(ctx, `INSERT INTO provider_turns(
+		id, thread_id, conversation_id, provider_turn_ref, operation_id, correlation_id, mode, state,
+		provider_version, request_expression_version, started_at, completed_at, error_code)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, turn.ID, turn.ThreadID, turn.ConversationID,
+		nullableID(string(turn.ProviderTurnRef)), turn.OperationID, turn.CorrelationID, turn.Mode, turn.State,
+		turn.ProviderVersion, turn.RequestExpressionVersion, formatTime(turn.StartedAt), nullableTime(turn.CompletedAt), turn.ErrorCode)
+	return err
 }
 
 func (t *transaction) SaveSession(ctx context.Context, session review.ReviewSession) error {
@@ -1101,6 +1286,66 @@ func mapNotFound(err error) error {
 		return app.ErrReviewStoreNotFound
 	}
 	return err
+}
+
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanProviderConversation(row rowScanner) (app.ProviderConversationRecord, error) {
+	var id, threadID, providerName, providerVersion, operationID, correlationID, state, errorCode, createdAt, updatedAt string
+	var conversationRef, sessionRef sql.NullString
+	if err := row.Scan(&id, &threadID, &providerName, &conversationRef, &sessionRef, &providerVersion, &operationID, &correlationID, &state, &errorCode, &createdAt, &updatedAt); err != nil {
+		return app.ProviderConversationRecord{}, err
+	}
+	created, err := parseTime(createdAt)
+	if err != nil {
+		return app.ProviderConversationRecord{}, err
+	}
+	updated, err := parseTime(updatedAt)
+	if err != nil {
+		return app.ProviderConversationRecord{}, err
+	}
+	record := app.ProviderConversationRecord{
+		ID: domain.ProviderConversationID(id), ThreadID: domain.ReviewThreadID(threadID), ProviderName: providerName,
+		ProviderVersion: providerVersion, OperationID: domain.OperationID(operationID), CorrelationID: app.CorrelationID(correlationID),
+		State: app.ProviderConversationState(state), ErrorCode: review.ErrorCode(errorCode), CreatedAt: created, UpdatedAt: updated,
+	}
+	if conversationRef.Valid {
+		record.ProviderConversationRef = provider.ProviderConversationRef(conversationRef.String)
+	}
+	if sessionRef.Valid {
+		record.ProviderSessionRef = sessionRef.String
+	}
+	return record, nil
+}
+
+func scanProviderTurn(row rowScanner) (app.ProviderTurnRecord, error) {
+	var id, threadID, conversationID, operationID, correlationID, mode, state, providerVersion, expressionVersion, startedAt, errorCode string
+	var turnRef, completedAt sql.NullString
+	if err := row.Scan(&id, &threadID, &conversationID, &turnRef, &operationID, &correlationID, &mode, &state, &providerVersion, &expressionVersion, &startedAt, &completedAt, &errorCode); err != nil {
+		return app.ProviderTurnRecord{}, err
+	}
+	started, err := parseTime(startedAt)
+	if err != nil {
+		return app.ProviderTurnRecord{}, err
+	}
+	turn := app.ProviderTurnRecord{
+		ID: domain.ProviderTurnID(id), ThreadID: domain.ReviewThreadID(threadID), ConversationID: domain.ProviderConversationID(conversationID),
+		OperationID: domain.OperationID(operationID), CorrelationID: app.CorrelationID(correlationID), Mode: provider.TurnMode(mode), State: app.ProviderTurnState(state),
+		ProviderVersion: providerVersion, RequestExpressionVersion: expressionVersion, StartedAt: started, ErrorCode: review.ErrorCode(errorCode),
+	}
+	if turnRef.Valid {
+		turn.ProviderTurnRef = provider.ProviderTurnRef(turnRef.String)
+	}
+	if completedAt.Valid {
+		value, err := parseTime(completedAt.String)
+		if err != nil {
+			return app.ProviderTurnRecord{}, err
+		}
+		turn.CompletedAt = &value
+	}
+	return turn, nil
 }
 
 func formatTime(value time.Time) string {
