@@ -8,6 +8,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/Scottlr/nudge/internal/privacy"
 	"github.com/Scottlr/nudge/internal/theme"
 )
 
@@ -67,9 +68,10 @@ type UIConfig struct {
 
 // PersistenceConfig controls local review metadata retention.
 type PersistenceConfig struct {
-	Enabled                bool `toml:"enabled"`
-	StoreAnchorSnippets    bool `toml:"store_anchor_snippets"`
-	WorkspaceRetentionDays int  `toml:"workspace_retention_days"`
+	Enabled                bool   `toml:"enabled"`
+	StoreAnchorSnippets    bool   `toml:"store_anchor_snippets"`
+	AnchorExcerptRetention string `toml:"anchor_excerpt_retention"`
+	WorkspaceRetentionDays int    `toml:"workspace_retention_days"`
 }
 
 // LoggingConfig controls the bounded operational log level.
@@ -94,6 +96,7 @@ type CLIOverrides struct {
 	Unicode                  *bool
 	PersistenceEnabled       *bool
 	StoreAnchorSnippets      *bool
+	AnchorExcerptRetention   *string
 	WorkspaceRetentionDays   *int
 	LoggingLevel             *string
 }
@@ -125,6 +128,7 @@ func Defaults() Config {
 		Persistence: PersistenceConfig{
 			Enabled:                true,
 			StoreAnchorSnippets:    true,
+			AnchorExcerptRetention: string(privacy.AnchorExcerptRetained),
 			WorkspaceRetentionDays: 14,
 		},
 		Logging: LoggingConfig{Level: "info"},
@@ -149,6 +153,7 @@ func DefaultSources() map[string]Source {
 		"ui.unicode":                           SourceDefault,
 		"persistence.enabled":                  SourceDefault,
 		"persistence.store_anchor_snippets":    SourceDefault,
+		"persistence.anchor_excerpt_retention": SourceDefault,
 		"persistence.workspace_retention_days": SourceDefault,
 		"logging.level":                        SourceDefault,
 	}
@@ -180,12 +185,32 @@ func (c Config) Validate() error {
 	if c.Persistence.WorkspaceRetentionDays < 1 || c.Persistence.WorkspaceRetentionDays > 14 || (!c.Persistence.Enabled && c.Persistence.StoreAnchorSnippets) {
 		return invalidField("persistence")
 	}
+	if _, err := c.PrivacyPolicy(); err != nil {
+		return fmt.Errorf("%w: persistence privacy policy: %v", ErrInvalidConfig, err)
+	}
 	switch c.Logging.Level {
 	case "debug", "info", "warn", "error":
 	default:
 		return invalidField("logging.level")
 	}
 	return nil
+}
+
+// PrivacyPolicy derives the immutable privacy contract from effective
+// configuration. The legacy boolean remains accepted as a compatibility
+// alias: disabling it always disables durable anchor excerpts.
+func (c Config) PrivacyPolicy() (privacy.Policy, error) {
+	retention := privacy.AnchorExcerptRetention(c.Persistence.AnchorExcerptRetention)
+	if retention == "" {
+		retention = privacy.AnchorExcerptRetained
+	}
+	if _, err := privacy.NewPolicy(privacy.PolicyVersionV1, retention, c.Persistence.WorkspaceRetentionDays); err != nil {
+		return privacy.Policy{}, err
+	}
+	if !c.Persistence.StoreAnchorSnippets {
+		retention = privacy.AnchorExcerptNone
+	}
+	return privacy.NewPolicy(privacy.PolicyVersionV1, retention, c.Persistence.WorkspaceRetentionDays)
 }
 
 func invalidField(field string) error {

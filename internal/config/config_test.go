@@ -24,8 +24,9 @@ func TestLoadPrecedenceAndSources(t *testing.T) {
 
 	flagMode := "branch"
 	loaded, err := Load(context.Background(), locations, map[string]string{
-		"NUDGE_REVIEW_DIFF_CONTEXT_LINES": "8",
-		"NUDGE_CODEX_MODEL":               "from-env",
+		"NUDGE_REVIEW_DIFF_CONTEXT_LINES":            "8",
+		"NUDGE_CODEX_MODEL":                          "from-env",
+		"NUDGE_PERSISTENCE_ANCHOR_EXCERPT_RETENTION": "session",
 	}, CLIOverrides{DefaultMode: &flagMode})
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
@@ -33,8 +34,31 @@ func TestLoadPrecedenceAndSources(t *testing.T) {
 	if loaded.Config.Review.DefaultMode != "branch" || loaded.Config.Review.DiffContextLines != 8 || loaded.Config.Codex.Model != "from-env" {
 		t.Fatalf("loaded config = %+v", loaded.Config)
 	}
+	if loaded.Config.Persistence.AnchorExcerptRetention != "session" {
+		t.Fatalf("anchor excerpt retention = %q", loaded.Config.Persistence.AnchorExcerptRetention)
+	}
 	if loaded.Sources["review.default_mode"] != SourceCLI || loaded.Sources["review.diff_context_lines"] != SourceEnv || loaded.Sources["codex.model"] != SourceEnv {
 		t.Fatalf("source metadata = %#v", loaded.Sources)
+	}
+}
+
+func TestPrivacyPolicyHonorsAnchorExcerptOptOut(t *testing.T) {
+	value := Defaults()
+	value.Persistence.StoreAnchorSnippets = false
+	policy, err := value.PrivacyPolicy()
+	if err != nil {
+		t.Fatalf("PrivacyPolicy() error = %v", err)
+	}
+	if policy.StoresAnchorExcerpt() || policy.SupportsReattachment() {
+		t.Fatal("anchor excerpt opt-out still permits durable retention")
+	}
+}
+
+func TestConfigRejectsUnknownAnchorExcerptRetention(t *testing.T) {
+	value := Defaults()
+	value.Persistence.AnchorExcerptRetention = "forever"
+	if err := value.Validate(); !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("invalid anchor excerpt retention error = %v", err)
 	}
 }
 

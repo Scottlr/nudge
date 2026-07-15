@@ -93,9 +93,10 @@ type uiOverlay struct {
 }
 
 type persistenceOverlay struct {
-	Enabled                *bool `toml:"enabled"`
-	StoreAnchorSnippets    *bool `toml:"store_anchor_snippets"`
-	WorkspaceRetentionDays *int  `toml:"workspace_retention_days"`
+	Enabled                *bool   `toml:"enabled"`
+	StoreAnchorSnippets    *bool   `toml:"store_anchor_snippets"`
+	AnchorExcerptRetention *string `toml:"anchor_excerpt_retention"`
+	WorkspaceRetentionDays *int    `toml:"workspace_retention_days"`
 }
 
 type loggingOverlay struct {
@@ -161,6 +162,9 @@ func applyFile(data []byte, value *Config, sources map[string]Source) error {
 		}
 		if field := overlay.Persistence.StoreAnchorSnippets; field != nil {
 			value.Persistence.StoreAnchorSnippets, sources["persistence.store_anchor_snippets"] = *field, SourceFile
+		}
+		if field := overlay.Persistence.AnchorExcerptRetention; field != nil {
+			value.Persistence.AnchorExcerptRetention, sources["persistence.anchor_excerpt_retention"] = *field, SourceFile
 		}
 		if field := overlay.Persistence.WorkspaceRetentionDays; field != nil {
 			value.Persistence.WorkspaceRetentionDays, sources["persistence.workspace_retention_days"] = *field, SourceFile
@@ -245,6 +249,8 @@ func applyEnvironment(environ map[string]string, value *Config, sources map[stri
 				return invalidField("persistence.store_anchor_snippets")
 			}
 			value.Persistence.StoreAnchorSnippets, sources["persistence.store_anchor_snippets"] = parsed, SourceEnv
+		case "NUDGE_PERSISTENCE_ANCHOR_EXCERPT_RETENTION":
+			value.Persistence.AnchorExcerptRetention, sources["persistence.anchor_excerpt_retention"] = raw, SourceEnv
 		case "NUDGE_PERSISTENCE_WORKSPACE_RETENTION_DAYS":
 			parsed, err := parseInt(raw)
 			if err != nil {
@@ -304,6 +310,9 @@ func applyCLI(flags CLIOverrides, value *Config, sources map[string]Source) erro
 	}
 	if flags.StoreAnchorSnippets != nil {
 		value.Persistence.StoreAnchorSnippets, sources["persistence.store_anchor_snippets"] = *flags.StoreAnchorSnippets, SourceCLI
+	}
+	if flags.AnchorExcerptRetention != nil {
+		value.Persistence.AnchorExcerptRetention, sources["persistence.anchor_excerpt_retention"] = *flags.AnchorExcerptRetention, SourceCLI
 	}
 	if flags.WorkspaceRetentionDays != nil {
 		value.Persistence.WorkspaceRetentionDays, sources["persistence.workspace_retention_days"] = *flags.WorkspaceRetentionDays, SourceCLI

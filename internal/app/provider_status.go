@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/Scottlr/nudge/internal/privacy"
 )
 
 var (
@@ -14,13 +16,13 @@ var (
 
 // ProviderDisclosureVersion identifies the exact disclosure text and scope
 // acknowledged by the user.
-type ProviderDisclosureVersion string
+type ProviderDisclosureVersion = privacy.PolicyVersion
 
-const ProviderDisclosureVersionV1 ProviderDisclosureVersion = "provider-data-v1"
+const ProviderDisclosureVersionV1 ProviderDisclosureVersion = privacy.PolicyVersionV1
 
 // DisclosurePersistence identifies whether an acknowledgement is process-only
 // or written by the protected-settings owner from T005.
-type DisclosurePersistence string
+type DisclosurePersistence = privacy.DisclosurePersistence
 
 const (
 	DisclosureProcessOnly       DisclosurePersistence = "process_only"
