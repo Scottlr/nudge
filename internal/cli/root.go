@@ -66,6 +66,7 @@ func NewRootCommand(info BuildInfo) *cobra.Command {
 	command.CompletionOptions.DisableDefaultCmd = true
 	command.AddCommand(newVersionCommand(info))
 	command.AddCommand(newConfigCommand())
+	command.AddCommand(newDoctorCommand())
 	return command
 }
 

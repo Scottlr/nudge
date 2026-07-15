@@ -48,6 +48,16 @@ func EnsurePrivateDir(path string) error {
 	return validatePrivateDirNative(clean)
 }
 
+// ValidatePrivateDir verifies an existing Nudge-owned directory without
+// creating, locking, changing permissions, or traversing its contents.
+func ValidatePrivateDir(path string) error {
+	clean, err := absoluteClean(path)
+	if err != nil {
+		return err
+	}
+	return validatePrivateDirNative(clean)
+}
+
 // OpenProtectedFile opens a direct or nested child beneath a private root.
 // Creation must use O_CREATE|O_EXCL so a source-bearing file is private at its
 // first observable instant and every component is checked without following

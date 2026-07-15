@@ -24,6 +24,12 @@ func main() {
 		Commit:  commit,
 		Date:    date,
 	}); err != nil {
+		if code, ok := cli.HealthExitCode(err); ok {
+			if message := err.Error(); message != "" {
+				fmt.Fprintln(os.Stderr, message)
+			}
+			os.Exit(code)
+		}
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
