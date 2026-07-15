@@ -72,6 +72,15 @@ type AdvanceBaselineRequest struct {
 	Apply  ApplyVerification
 }
 
+// RefreshBaselineRequest replaces the isolated baseline from a newly
+// accepted generation without attributing the operation to a destination
+// apply. The result root is reset from that verified baseline before the
+// lifecycle becomes ready again.
+type RefreshBaselineRequest struct {
+	LifecycleRequest
+	Source TrustedTreeSource
+}
+
 type RecoverLifecycleRequest struct {
 	LifecycleRequest
 	Nonce       string
@@ -221,6 +230,75 @@ func (l *Lifecycle) AdvanceBaseline(ctx context.Context, request AdvanceBaseline
 		return LifecycleResult{}, ErrWorkspaceLifecycleMismatch
 	}
 	reservation, lease, claim, guard, err := beginLifecycle(ctx, request.LifecycleRequest, app.WorkspacePurposeAdvanceBaseline, app.WorkspaceBaselineAdvancing, request.Source.Identity(), previous.Baseline.Clone(), previous.Result.Clone())
+	if err != nil {
+		return LifecycleResult{}, err
+	}
+	durable := true
+	defer func() {
+		if !durable {
+			_ = request.Capacity.Release(context.Background(), reservation, request.CapacityPlan, request.CapacityPolicy)
+		}
+		_ = lease.Close()
+	}()
+	if err := recheckLifecycleCapacity(ctx, request.LifecycleRequest, reservation); err != nil {
+		return LifecycleResult{Evidence: claim, Guard: guard}, err
+	}
+	if err := clearMaterializeRoot(lease.Handle().Roots.Baseline.Path()); err != nil {
+		return LifecycleResult{Evidence: claim, Guard: guard}, err
+	}
+	baseline, err := MaterializeTree(ctx, request.Source, lease.Handle().Roots.Baseline, request.CapacityPolicy)
+	if err != nil {
+		return LifecycleResult{Evidence: claim, Guard: guard}, err
+	}
+	claim.Baseline = baseline
+	claim.UpdatedAt = lifecycleNow(request.Now)
+	guard, err = persistLifecycleUpdate(ctx, request.Store, guard, claim)
+	if err != nil {
+		return LifecycleResult{Evidence: claim, Guard: guard}, err
+	}
+	if err := ResetResultToBaseline(ctx, lease.Handle().Roots.Baseline, lease.Handle().Roots.Result, baseline, request.CapacityPolicy); err != nil {
+		return LifecycleResult{Evidence: claim, Guard: guard}, err
+	}
+	claim.Result = baseline.Clone()
+	claim.Phase = app.WorkspaceLifecycleReady
+	claim.UpdatedAt = lifecycleNow(request.Now)
+	workspace := request.Workspace
+	workspace.State = review.WorkspaceReady
+	workspace.UpdatedAt = claim.UpdatedAt
+	guard, err = persistLifecycleCompletion(ctx, request.Store, guard, claim, workspace)
+	if err != nil {
+		return LifecycleResult{Evidence: claim, Guard: guard}, err
+	}
+	if err := recheckLifecycleCapacity(ctx, request.LifecycleRequest, reservation); err != nil {
+		return LifecycleResult{Evidence: claim, Guard: guard}, err
+	}
+	durable = false
+	if err := request.Capacity.Release(ctx, reservation, request.CapacityPlan, request.CapacityPolicy); err != nil {
+		return LifecycleResult{Evidence: claim, Guard: guard}, err
+	}
+	return LifecycleResult{Evidence: claim, Guard: guard}, nil
+}
+
+// RefreshBaseline rebuilds an existing proposal workspace from current
+// immutable source evidence. It never reads or mutates the user destination.
+func (l *Lifecycle) RefreshBaseline(ctx context.Context, request RefreshBaselineRequest) (LifecycleResult, error) {
+	if l == nil || request.Source == nil {
+		return LifecycleResult{}, ErrWorkspaceLifecycleUnavailable
+	}
+	if err := request.validate(); err != nil {
+		return LifecycleResult{}, err
+	}
+	if err := request.Source.Identity().Validate(); err != nil {
+		return LifecycleResult{}, err
+	}
+	if request.Workspace.State != review.WorkspaceReady && request.Workspace.State != review.WorkspaceResultReady {
+		return LifecycleResult{}, ErrWorkspaceLifecycleMismatch
+	}
+	previous, err := loadLatestLifecycle(ctx, request.Store, request.Handle.WorkspaceID)
+	if err != nil || previous.Phase != app.WorkspaceLifecycleReady || previous.Baseline.Validate() != nil {
+		return LifecycleResult{}, ErrWorkspaceLifecycleMismatch
+	}
+	reservation, lease, claim, guard, err := beginLifecycle(ctx, request.LifecycleRequest, app.WorkspacePurposeRefreshBaseline, app.WorkspaceBaselineAdvancing, request.Source.Identity(), previous.Baseline.Clone(), previous.Result.Clone())
 	if err != nil {
 		return LifecycleResult{}, err
 	}

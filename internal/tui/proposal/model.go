@@ -363,6 +363,14 @@ type ApproveProposalIntent struct {
 
 type RejectProposalIntent struct{ Identity ActionIdentity }
 
+// RefreshProposalIntent is emitted only for a stale or rejected immutable
+// version. The root/application layer supplies the current captured context
+// and explicit anchor confirmation before dispatching Refresh proposal.
+type RefreshProposalIntent struct {
+	Identity        ActionIdentity
+	AnchorConfirmed bool
+}
+
 // ResultDiscardIdentity binds failed-result cleanup to the exact terminal
 // attempt currently visible in proposal mode.
 type ResultDiscardIdentity struct {
@@ -397,6 +405,7 @@ type Intent struct {
 	Range     *PatchRangeRequest
 	Approve   *ApproveProposalIntent
 	Reject    *RejectProposalIntent
+	Refresh   *RefreshProposalIntent
 	Discard   *DiscardProposalResultIntent
 	Mode      *ModeIntent
 }
@@ -411,6 +420,7 @@ const (
 	confirmationNone    confirmationKind = ""
 	confirmationApprove confirmationKind = "approve"
 	confirmationReject  confirmationKind = "reject"
+	confirmationRefresh confirmationKind = "refresh"
 	confirmationDiscard confirmationKind = "discard"
 )
 
@@ -536,6 +546,15 @@ func (m *Model) CanApprove() bool {
 		return false
 	}
 	return true
+}
+
+// CanRefresh reports whether the visible immutable version is eligible for
+// the explicit same-conversation refresh action.
+func (m *Model) CanRefresh() bool {
+	if m == nil || m.projection.Validate() != nil || m.projection.NoChanges {
+		return false
+	}
+	return (m.projection.Status == review.ProposalVersionStale || m.projection.Status == review.ProposalVersionRejected) && m.projection.Applicability == ApplicabilityStale
 }
 
 // CanDiscardResult reports whether an exact terminal failed-result reset may

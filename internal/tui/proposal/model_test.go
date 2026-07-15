@@ -103,6 +103,27 @@ func TestProposalIdentityAndStatusChangesInvalidateReviewState(t *testing.T) {
 	}
 }
 
+func TestStaleProposalOffersExplicitRefreshIntent(t *testing.T) {
+	model := NewModel()
+	projection := proposalProjection()
+	projection.Status = review.ProposalVersionStale
+	projection.Applicability = ApplicabilityStale
+	projection.StatusReason = "path_precondition_changed"
+	projection.ApplicabilityReason = "the touched path changed"
+	model.Update(SetProjectionMsg{Projection: projection})
+	if !model.CanRefresh() {
+		t.Fatal("stale proposal did not expose refresh")
+	}
+	model.Update(BeginRefreshMsg{})
+	if model.Confirmation() != string(confirmationRefresh) {
+		t.Fatalf("refresh confirmation = %q", model.Confirmation())
+	}
+	intents := model.Update(ConfirmRefreshMsg{})
+	if len(intents) != 1 || intents[0].Refresh == nil || intents[0].Refresh.Identity.Version != projection.Version {
+		t.Fatalf("refresh intent = %#v", intents)
+	}
+}
+
 func TestNoChangesHasNoProposalActions(t *testing.T) {
 	model := NewModel()
 	model.Update(SetProjectionMsg{Projection: Projection{Revision: 1, ProposalID: "proposal-1", NoChanges: true}})

@@ -296,6 +296,10 @@ func (t *proposalTurnTx) RecordProposalAttempt(_ context.Context, value review.P
 func (t *proposalTurnTx) CreateWorkspace(context.Context, review.ProposalWorkspace, review.ProposalIntent, review.Proposal) error {
 	return nil
 }
+func (t *proposalTurnTx) UpdateProposalIntent(_ context.Context, value review.ProposalIntent) error {
+	t.store.aggregate.Intent = value
+	return nil
+}
 func (t *proposalTurnTx) RecordNoChanges(context.Context, review.ProposalAttempt) error { return nil }
 func (t *proposalTurnTx) PublishProposal(context.Context, review.ProposedPatch) error   { return nil }
 func (t *proposalTurnTx) TransitionProposal(_ context.Context, value review.ProposalTransition) error {
