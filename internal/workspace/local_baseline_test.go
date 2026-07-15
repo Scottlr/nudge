@@ -52,11 +52,11 @@ func TestLocalBaselineRejectsUnsupportedBytesAndPathCollisions(t *testing.T) {
 	}
 
 	request, source = localBaselineFixture(t, []byte("safe\n"))
-	foo := treeEntryForPath(repository.RepoPath("Foo.txt"), repository.FileKindRegular, 0o100644)
-	fooLower := treeEntryForPath(repository.RepoPath("foo.txt"), repository.FileKindRegular, 0o100644)
-	source.entries = append(source.entries, foo, fooLower)
-	source.content[foo.Path.Key()] = []byte("one\n")
-	source.content[fooLower.Path.Key()] = []byte("two\n")
+	file := treeEntryForPath(repository.RepoPath("a"), repository.FileKindRegular, 0o100644)
+	child := treeEntryForPath(repository.RepoPath("a/b.txt"), repository.FileKindRegular, 0o100644)
+	source.entries = append(source.entries, file, child)
+	source.content[file.Path.Key()] = []byte("one\n")
+	source.content[child.Path.Key()] = []byte("two\n")
 	baseline, err := NewLocalBaseline(request, source, func(context.Context, app.CaptureGeneration) error { return nil })
 	if err != nil {
 		t.Fatal(err)
