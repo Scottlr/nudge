@@ -94,6 +94,11 @@ func (m *Model) Update(message any) []Intent {
 		m.selectionFrom = &start
 		m.selection = nil
 		m.lastSelection = SelectionRejected{}
+	case ToggleSelectionMsg:
+		if m.selectionFrom == nil {
+			return m.Update(BeginSelectionMsg{})
+		}
+		return m.Update(ExtendSelectionMsg{RowID: m.selected})
 	case ExtendSelectionMsg:
 		return m.updateSelectionFrom(value.RowID)
 	case ClearSelectionMsg:

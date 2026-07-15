@@ -6,32 +6,28 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-// Update handles explicit send/cancel keys before delegating all ordinary
-// editing, including bare Enter, to the Bubbles textarea.
+// SubmitMsg is the root-owned editor submit intent.
+type SubmitMsg struct{}
+
+// CancelMsg is the root-owned editor cancellation intent.
+type CancelMsg struct{}
+
+// Update handles typed editor intents before delegating ordinary editing,
+// including bare Enter, to the Bubbles textarea.
 func (m *Model) Update(msg tea.Msg) (Intent, tea.Cmd) {
-	if key, ok := msg.(tea.KeyPressMsg); ok {
-		if isCancelKey(key) {
-			return Intent{Cancelled: true}, nil
+	switch msg.(type) {
+	case CancelMsg:
+		return Intent{Cancelled: true}, nil
+	case SubmitMsg:
+		if err := m.validateDraft(); err != nil {
+			return Intent{}, nil
 		}
-		if isSendKey(key) {
-			if err := m.validateDraft(); err != nil {
-				return Intent{}, nil
-			}
-			return Intent{CreateThread: &CreateThreadIntent{Anchor: m.anchor, Comment: trimBlankLines(m.Value())}}, nil
-		}
+		return Intent{CreateThread: &CreateThreadIntent{Anchor: m.anchor, Comment: trimBlankLines(m.Value())}}, nil
 	}
 	var cmd tea.Cmd
 	m.textarea, cmd = m.textarea.Update(msg)
 	m.validateDraft()
 	return Intent{}, cmd
-}
-
-func isSendKey(key tea.KeyPressMsg) bool {
-	return key.Code == tea.KeyEnter && key.Mod&tea.ModCtrl != 0
-}
-
-func isCancelKey(key tea.KeyPressMsg) bool {
-	return key.Code == tea.KeyEscape || key.Code == tea.KeyEsc
 }
 
 // trimBlankLines removes only blank lines at the outside of a submission.

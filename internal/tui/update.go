@@ -54,10 +54,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case discussionpane.MessagePageResultMsg, discussionpane.BodyRangeResultMsg, discussionpane.MoveSelectionMsg, discussionpane.PresentMessageMsg, discussionpane.ToggleReplyMsg, discussionpane.UpdateDraftMsg, discussionpane.SetDraftMsg, discussionpane.ResolveMsg, discussionpane.LoadNextPageMsg:
 		return m, tea.Batch(m.discussionPaneMessage(message)...)
 	case tea.KeyPressMsg:
-		switch message.Keystroke() {
-		case "q", "ctrl+c", "esc":
-			return m, func() tea.Msg { return tea.Quit() }
-		}
+		return m, m.handleKeyPress(message)
 	case FocusNextMsg:
 		m.moveFocus(1)
 	case FocusPreviousMsg:
@@ -97,9 +94,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.lastError = ""
 		}
 	case ShowOverlayMsg:
-		m.overlays.Push(message.Overlay)
+		m.showOverlay(message.Overlay)
 	case DismissOverlayMsg:
-		m.overlays.Pop()
+		m.dismissOverlay()
 	case QuitIntentMsg:
 		return m, func() tea.Msg { return tea.Quit() }
 	}
@@ -162,45 +159,44 @@ func (m *Model) setDimensions(dimensions Dimensions) {
 			m.narrowPane = previousFocus
 		}
 		m.focus = m.narrowPane
-		m.resizeChildPanes()
-		return
-	}
-	if m.layout.Mode == LayoutMedium && (m.focus == PaneThreads || m.focus == PaneDiscussion) {
+	} else if m.layout.Mode == LayoutMedium && (m.focus == PaneThreads || m.focus == PaneDiscussion) {
 		m.lowerPane = m.focus
 	}
 	if !isPane(m.focus) {
 		m.focus = PaneRepository
 	}
+	m.normalizeFocus()
 	m.resizeChildPanes()
 }
 
 func (m *Model) moveFocus(step int) {
-	panes := []Pane{PaneRepository, PaneCode, PaneThreads, PaneDiscussion}
-	current := 0
-	for i, pane := range panes {
-		if pane == m.focus {
-			current = i
-			break
-		}
+	if target, ok := m.focusRing().Next(m.currentFocusTarget(), step); ok {
+		m.setFocus(target.Pane)
 	}
-	if step < 0 {
-		current = (current + len(panes) - 1) % len(panes)
-	} else {
-		current = (current + 1) % len(panes)
-	}
-	m.setFocus(panes[current])
 }
 
 func (m *Model) setFocus(pane Pane) {
 	if !isPane(pane) {
 		return
 	}
-	m.focus = pane
-	if pane == PaneThreads || pane == PaneDiscussion {
+	if m.layout.Mode == LayoutMedium && (pane == PaneThreads || pane == PaneDiscussion) {
 		m.lowerPane = pane
 	}
 	if m.layout.Mode == LayoutNarrow {
 		m.narrowPane = pane
+	}
+	target, ok := m.focusRing().ForPane(pane)
+	if !ok {
+		if m.layout.Mode == LayoutUnknown || m.layout.Mode == LayoutTooSmall {
+			m.focus = pane
+			m.focusTarget = focusTargetID(pane)
+		}
+		return
+	}
+	m.focus = target.Pane
+	m.focusTarget = target.ID
+	if pane == PaneThreads || pane == PaneDiscussion {
+		m.lowerPane = pane
 	}
 	m.updateChildFocus()
 }
@@ -211,8 +207,7 @@ func (m *Model) setNarrowPane(pane Pane) {
 	}
 	m.narrowPane = pane
 	if m.layout.Mode == LayoutNarrow {
-		m.focus = pane
-		m.updateChildFocus()
+		m.setFocus(pane)
 	}
 }
 

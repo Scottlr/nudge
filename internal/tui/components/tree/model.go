@@ -48,6 +48,7 @@ type Model struct {
 	height            int
 	top               int
 	lastError         string
+	focused           bool
 	searchSnapshot    repository.SnapshotRef
 	searching         bool
 	searchQuery       string
@@ -106,6 +107,11 @@ func (m *Model) SetTheme(value theme.Theme) {
 	if m != nil && value.Validate() == nil {
 		m.theme = value
 	}
+}
+
+// Focused reports whether the repository pane owns keyboard focus.
+func (m *Model) Focused() bool {
+	return m != nil && m.focused
 }
 
 // SetBudget supplies a smaller valid per-frame budget when the root scheduler
