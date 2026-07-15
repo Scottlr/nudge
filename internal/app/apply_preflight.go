@@ -379,7 +379,7 @@ func (s *ApplyPreflightService) Prepare(ctx context.Context, request ApplyPrefli
 		return ApplyPreparation{}, ErrApplyStale
 	}
 	patch, ok := proposalVersion(aggregate, request.ProposalVersion)
-	if !ok || patch.Status != review.ProposalVersionReady || patch.Version != request.ProposalVersion || patch.Destination.WorktreeID != request.Worktree.ID {
+	if !ok || !proposalVersionCanApply(patch.Status) || patch.Version != request.ProposalVersion || patch.Destination.WorktreeID != request.Worktree.ID {
 		return ApplyPreparation{}, ErrApplyStale
 	}
 	if err := validateApplyPatchIdentity(patch); err != nil {
@@ -437,7 +437,7 @@ func (s *ApplyPreflightService) Prepare(ctx context.Context, request ApplyPrefli
 }
 
 func validateApplyPatchIdentity(patch review.ProposedPatch) error {
-	if patch.Validate() != nil || patch.Status != review.ProposalVersionReady || len(patch.Preconditions) == 0 {
+	if patch.Validate() != nil || !proposalVersionCanApply(patch.Status) || len(patch.Preconditions) == 0 {
 		return ErrApplyStale
 	}
 	if patch.Artifact == (review.ProposedPatchArtifactReference{}) {
@@ -450,6 +450,10 @@ func validateApplyPatchIdentity(patch review.ProposedPatch) error {
 		return ErrApplyUnsupported
 	}
 	return nil
+}
+
+func proposalVersionCanApply(status review.ProposalStatus) bool {
+	return status == review.ProposalVersionReady || status == review.ProposalVersionApplying
 }
 
 func validateApplyInspection(evidence ApplyDestinationEvidence, patch review.ProposedPatch, worktree repository.WorktreeRef, request ApplyDestinationInspectionRequest) error {

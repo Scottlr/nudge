@@ -100,7 +100,7 @@ func (s ProposalStatus) CanTransitionTo(next ProposalStatus) bool {
 	case ProposalVersionStale:
 		return next == ProposalVersionRejected
 	case ProposalVersionApplying:
-		return next == ProposalVersionApplied || next == ProposalVersionFailed
+		return next == ProposalVersionApplied || next == ProposalVersionFailed || next == ProposalVersionStale
 	case ProposalVersionFailed:
 		return next == ProposalVersionDeriving
 	case ProposalVersionRejected, ProposalVersionApplied:

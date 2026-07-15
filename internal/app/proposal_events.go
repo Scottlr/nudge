@@ -104,8 +104,22 @@ type ProposalResultDiscarded struct {
 	Reason        string
 }
 
-func (ProposalRejected) isEvent()        {}
-func (ProposalResultDiscarded) isEvent() {}
+// ProposalApplicationFinalized reports the one guarded terminal aggregate
+// transition after T113 has classified the durable apply operation.
+type ProposalApplicationFinalized struct {
+	Revision      uint64
+	ProposalID    domain.ProposalID
+	WorkspaceID   domain.WorkspaceID
+	ThreadID      domain.ReviewThreadID
+	Version       review.ProposalVersionNumber
+	OperationID   domain.OperationID
+	CorrelationID CorrelationID
+	Outcome       ProposalApplyOutcome
+}
+
+func (ProposalRejected) isEvent()             {}
+func (ProposalResultDiscarded) isEvent()      {}
+func (ProposalApplicationFinalized) isEvent() {}
 
 func (e ProposalRejected) eventMetadata() EventMetadata {
 	return EventMetadata{Revision: e.Revision, OperationID: e.OperationID, CorrelationID: e.CorrelationID}
@@ -121,6 +135,15 @@ func (e ProposalResultDiscarded) eventMetadata() EventMetadata {
 }
 
 func (e ProposalResultDiscarded) withRevision(revision uint64) Event {
+	e.Revision = revision
+	return e
+}
+
+func (e ProposalApplicationFinalized) eventMetadata() EventMetadata {
+	return EventMetadata{Revision: e.Revision, OperationID: e.OperationID, CorrelationID: e.CorrelationID}
+}
+
+func (e ProposalApplicationFinalized) withRevision(revision uint64) Event {
 	e.Revision = revision
 	return e
 }

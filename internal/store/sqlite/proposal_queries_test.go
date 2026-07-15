@@ -196,14 +196,14 @@ func TestProposalWorkspaceAndVersionRoundTrip(t *testing.T) {
 
 	for _, status := range []review.ProposalStatus{review.ProposalVersionApplying, review.ProposalVersionApplied} {
 		guard, err = withProposalTx(ctx, store, guard, func(tx app.ProposalWorkspaceStoreTx) error {
-			return tx.TransitionProposal(ctx, review.ProposalTransition{ProposalID: intent.ID, Version: 1, Status: status, FailurePhase: review.ProposalFailureNone, ChangedAt: now.Add(2 * time.Minute)})
+			return tx.TransitionProposal(ctx, review.ProposalTransition{ProposalID: intent.ID, Version: 1, Status: status, ApplyOperationID: domain.OperationID("apply-op-1"), FailurePhase: review.ProposalFailureNone, ChangedAt: now.Add(2 * time.Minute)})
 		})
 		if err != nil {
 			t.Fatalf("transition %s: %v", status, err)
 		}
 	}
 	aggregate, err = store.LoadProposalAggregate(ctx, intent.ID)
-	if err != nil || aggregate.Versions[0].Status != review.ProposalVersionApplied {
+	if err != nil || aggregate.Versions[0].Status != review.ProposalVersionApplied || aggregate.Proposal.ApplyingOperationID == nil || *aggregate.Proposal.ApplyingOperationID != "apply-op-1" {
 		t.Fatalf("applied aggregate = %#v err=%v", aggregate, err)
 	}
 

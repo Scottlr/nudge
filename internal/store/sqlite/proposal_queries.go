@@ -359,7 +359,7 @@ func (t *transaction) TransitionProposal(ctx context.Context, transition review.
 	if _, err := t.tx.ExecContext(ctx, `UPDATE proposal_versions SET status = ?, patch_json = ? WHERE proposal_id = ? AND version = ?`, string(transition.Status), updatedJSON, transition.ProposalID, transition.Version); err != nil {
 		return err
 	}
-	_, err = t.tx.ExecContext(ctx, `UPDATE proposals SET status = ?, current_version = ?, updated_at = ? WHERE id = ?`, string(transition.Status), int64(transition.Version), formatTime(transition.ChangedAt), transition.ProposalID)
+	_, err = t.tx.ExecContext(ctx, `UPDATE proposals SET status = ?, current_version = ?, applying_operation_id = COALESCE(?, applying_operation_id), updated_at = ? WHERE id = ?`, string(transition.Status), int64(transition.Version), nullableOperationID(transition.ApplyOperationID), formatTime(transition.ChangedAt), transition.ProposalID)
 	return err
 }
 
@@ -387,13 +387,14 @@ func (s *Store) LoadProposalAggregate(ctx context.Context, proposalID domain.Pro
 	var currentVersion sql.NullInt64
 	var proposalCreated, proposalUpdated string
 	var workspaceID, intentID, intentThread string
+	var applyingOperationID sql.NullString
 	if err := s.db.QueryRowContext(ctx, `SELECT w.workspace_json, i.intent_json, p.id, p.workspace_id,
-		p.thread_id, p.status, p.current_version, p.created_at, p.updated_at,
+		p.thread_id, p.status, p.current_version, p.applying_operation_id, p.created_at, p.updated_at,
 		i.proposal_id, i.thread_id
 		FROM proposals p JOIN proposal_workspaces w ON w.id = p.workspace_id
 		JOIN proposal_intents i ON i.proposal_id = p.id WHERE p.id = ?`, proposalID).Scan(
 		&workspaceJSON, &intentJSON, &proposal.ID, &workspaceID, &proposal.ThreadID, &proposalStatus,
-		&currentVersion, &proposalCreated, &proposalUpdated, &intentID, &intentThread); err != nil {
+		&currentVersion, &applyingOperationID, &proposalCreated, &proposalUpdated, &intentID, &intentThread); err != nil {
 		return review.ProposalAggregate{}, mapNotFound(err)
 	}
 	if err := json.Unmarshal(workspaceJSON, &workspace); err != nil {
@@ -409,6 +410,10 @@ func (s *Store) LoadProposalAggregate(ctx context.Context, proposalID domain.Pro
 	if currentVersion.Valid {
 		value := review.ProposalVersionNumber(currentVersion.Int64)
 		proposal.CurrentVersion = &value
+	}
+	if applyingOperationID.Valid {
+		value := domain.OperationID(applyingOperationID.String)
+		proposal.ApplyingOperationID = &value
 	}
 	if proposal.ID != proposalID || intentID != string(proposalID) || intentThread != string(proposal.ThreadID) {
 		return review.ProposalAggregate{}, app.ErrReviewStoreCorrupt
@@ -480,6 +485,13 @@ func nullableProposalVersion(version *review.ProposalVersionNumber) any {
 		return nil
 	}
 	return int64(*version)
+}
+
+func nullableOperationID(operationID domain.OperationID) any {
+	if operationID == "" {
+		return nil
+	}
+	return string(operationID)
 }
 
 func proposalVersionPointer(version review.ProposalVersionNumber) *review.ProposalVersionNumber {

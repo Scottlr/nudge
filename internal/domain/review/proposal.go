@@ -186,8 +186,11 @@ type Proposal struct {
 	ThreadID       domain.ReviewThreadID
 	Status         ProposalStatus
 	CurrentVersion *ProposalVersionNumber
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	// ApplyingOperationID links the mutable aggregate projection to the
+	// durable apply journal without changing the immutable proposal version.
+	ApplyingOperationID *domain.OperationID
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 func (p Proposal) Validate() error {
@@ -195,6 +198,9 @@ func (p Proposal) Validate() error {
 		return ErrInvalidProposal
 	}
 	if p.CurrentVersion != nil && *p.CurrentVersion == 0 {
+		return ErrInvalidProposal
+	}
+	if p.Status == ProposalVersionApplying && p.ApplyingOperationID == nil || p.ApplyingOperationID != nil && *p.ApplyingOperationID == "" {
 		return ErrInvalidProposal
 	}
 	return nil
@@ -461,16 +467,17 @@ func (a ProposalAggregate) Validate() error {
 
 // ProposalTransition is the atomic status update consumed by the store port.
 type ProposalTransition struct {
-	ProposalID   domain.ProposalID
-	Version      ProposalVersionNumber
-	Status       ProposalStatus
-	FailurePhase ProposalFailurePhase
-	Reason       string
-	ChangedAt    time.Time
+	ProposalID       domain.ProposalID
+	Version          ProposalVersionNumber
+	Status           ProposalStatus
+	FailurePhase     ProposalFailurePhase
+	Reason           string
+	ApplyOperationID domain.OperationID
+	ChangedAt        time.Time
 }
 
 func (t ProposalTransition) Validate() error {
-	if t.ProposalID == "" || t.Version == 0 || t.Status.Validate() != nil || t.FailurePhase.Validate() != nil || !utf8.ValidString(t.Reason) || t.ChangedAt.IsZero() {
+	if t.ProposalID == "" || t.Version == 0 || t.Status.Validate() != nil || t.FailurePhase.Validate() != nil || t.Status == ProposalVersionApplying && t.ApplyOperationID == "" || !utf8.ValidString(t.Reason) || t.ChangedAt.IsZero() {
 		return ErrInvalidProposal
 	}
 	return nil
