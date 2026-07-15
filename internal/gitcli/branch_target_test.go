@@ -87,6 +87,28 @@ func TestResolveBranchTargetFreezesObjectsAndExcludesDirtyWorktree(t *testing.T)
 	}
 }
 
+func TestResolveBranchTargetRequiresObservedCurrentHeadForEditability(t *testing.T) {
+	root, gitPath := initializedRepository(t)
+	resolver := newTestResolver(t, root, gitPath)
+	repo, worktree, err := resolver.ResolveRepository(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	worktree.CurrentObjectID = ""
+	target, err := resolver.ResolveBranchTarget(context.Background(), app.BranchTargetRequest{
+		Repository: repo,
+		Worktree:   worktree,
+		Selection:  app.BaseBranchSelection{Expression: "main", Source: app.BaseFromExplicitFlag},
+		Generation: 1,
+	})
+	if err != nil {
+		t.Fatal(describeGitError(err))
+	}
+	if target.Editable || target.EditDestination != nil {
+		t.Fatalf("target editability = %#v, want read-only without observed current head", target)
+	}
+}
+
 func TestDiscoverBaseBranchReportsLocalRefAndNoFetch(t *testing.T) {
 	root, gitPath := initializedRepository(t)
 	runGit(t, root, gitPath, "switch", "-c", "feature")

@@ -94,8 +94,11 @@ type RequestProposal struct {
 	ConversationID domain.ProviderConversationID
 	Intent         review.ProposalIntent
 	Context        ProposalTurnContext
-	OperationID    domain.OperationID
-	CorrelationID  CorrelationID
+	// Eligibility is required for pinned branch/commit proposal turns and is
+	// rechecked against the durable workspace/head identity before the provider starts.
+	Eligibility   *ProposalEligibility
+	OperationID   domain.OperationID
+	CorrelationID CorrelationID
 }
 
 // CancelProposal requests cancellation of one active proposal turn. It is

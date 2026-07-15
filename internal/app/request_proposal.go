@@ -755,6 +755,11 @@ func validateProposalAggregateForRequest(aggregate review.ProposalAggregate, com
 	if err := aggregate.Validate(); err != nil || aggregate.Intent.ID != command.Intent.ID || !proposalIntentsEqual(aggregate.Intent, command.Intent) || aggregate.Proposal.ID != command.ProposalID || aggregate.Proposal.ThreadID != command.ThreadID || aggregate.Workspace.SourceThreadID != command.ThreadID {
 		return ErrProposalTurnUnavailable
 	}
+	if aggregate.Intent.ConfirmedAgainst.Head.Kind == repository.SnapshotCommit {
+		if command.Eligibility == nil || command.Eligibility.Validate() != nil || !command.Eligibility.Eligible || command.Eligibility.WorktreeID != aggregate.Workspace.WorktreeID || command.Eligibility.ExpectedHead != aggregate.Intent.ConfirmedAgainst.Head.ObjectID || command.Eligibility.ObservedHead != command.Eligibility.ExpectedHead {
+			return ErrProposalTurnUnavailable
+		}
+	}
 	if aggregate.Workspace.State != review.WorkspaceReady {
 		if aggregate.Workspace.State == review.WorkspaceTurnRunning {
 			return ErrProposalTurnConflict
@@ -1014,7 +1019,11 @@ func proposalTurnProvenance(command RequestProposal, aggregate review.ProposalAg
 	if aggregate.Intent.ConfirmedAgainst.CaptureID != nil {
 		captureID = string(*aggregate.Intent.ConfirmedAgainst.CaptureID)
 	}
-	return DiscussionTurnProvenance{Mode: DiscussionModeProposal, SourceCaptureID: domain.CaptureID(captureID), SourceSnapshotRef: fmt.Sprintf("generation:%d", aggregate.Intent.ConfirmedAgainst.Generation), ContextHash: DiscussionPromptHash(prompt), ManifestHash: baselineHash, CapabilityPolicyVersion: CurrentCapabilityPolicyVersion, ResourcePolicyVersion: CurrentResourcePolicyVersion, EvidenceVersion: CurrentCapabilityEvidenceVersion, PermissionVersion: proposalPermissionVersion(permissions), ProposalID: command.ProposalID, WorkspaceID: aggregate.Workspace.ID, IntentID: aggregate.Intent.ID}
+	provenanceRef := fmt.Sprintf("generation:%d", aggregate.Intent.ConfirmedAgainst.Generation)
+	if aggregate.Intent.ConfirmedAgainst.Head.Kind == repository.SnapshotCommit {
+		provenanceRef = fmt.Sprintf("target:head:%s:base:%s", aggregate.Intent.ConfirmedAgainst.Head.ObjectID, aggregate.Intent.ConfirmedAgainst.Base.ObjectID)
+	}
+	return DiscussionTurnProvenance{Mode: DiscussionModeProposal, SourceCaptureID: domain.CaptureID(captureID), SourceSnapshotRef: provenanceRef, ContextHash: DiscussionPromptHash(prompt), ManifestHash: baselineHash, CapabilityPolicyVersion: CurrentCapabilityPolicyVersion, ResourcePolicyVersion: CurrentResourcePolicyVersion, EvidenceVersion: CurrentCapabilityEvidenceVersion, PermissionVersion: proposalPermissionVersion(permissions), ProposalID: command.ProposalID, WorkspaceID: aggregate.Workspace.ID, IntentID: aggregate.Intent.ID}
 }
 
 func proposalPermissionVersion(policy provider.TurnPermissionPolicy) string {

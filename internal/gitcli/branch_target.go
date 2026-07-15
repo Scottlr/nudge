@@ -127,7 +127,7 @@ func (r *Resolver) ResolveBranchTarget(ctx context.Context, request app.BranchTa
 	if err != nil {
 		return repository.ResolvedTarget{}, err
 	}
-	editable := request.Worktree.CurrentObjectID == "" || request.Worktree.CurrentObjectID == head
+	editable := request.Worktree.CurrentObjectID != "" && request.Worktree.CurrentObjectID == head
 	var destination *domain.WorktreeID
 	if editable {
 		value := request.Worktree.ID
