@@ -66,6 +66,8 @@ func migrationCatalog() ([]migration, error) {
 			owner = "git_proposals"
 		} else if strings.Contains(name, "workspace_creation_evidence") {
 			owner = "git_proposals"
+		} else if strings.Contains(name, "workspace_lifecycle") {
+			owner = "git_proposals"
 		}
 		catalog = append(catalog, migration{
 			Version:  uint64(index + 1),

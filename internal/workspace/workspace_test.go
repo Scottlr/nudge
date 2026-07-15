@@ -1,8 +1,10 @@
 package workspace
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -171,7 +173,7 @@ func (c *workspaceTestCapacity) Reserve(_ context.Context, plan app.CapacityPlan
 	if err != nil {
 		return app.CapacityReservation{}, err
 	}
-	return app.NewCapacityReservation("capacity-marker", plan.OperationID, "", digest, policy.Version)
+	return app.NewCapacityReservation("capacity-marker-"+string(plan.OperationID), plan.OperationID, "", digest, policy.Version)
 }
 
 func (c *workspaceTestCapacity) Recheck(context.Context, app.CapacityReservation, app.CapacityPlan, app.ResourcePolicy, app.RecheckBounds, []app.VolumeEvidence) (app.CapacityCheck, error) {
@@ -185,7 +187,9 @@ func (c *workspaceTestCapacity) Reconcile(context.Context, app.CapacityReservati
 }
 
 type workspaceTestStore struct {
-	evidence WorkspaceCreationEvidence
+	evidence  WorkspaceCreationEvidence
+	workspace review.ProposalWorkspace
+	lifecycle app.ProposalWorkspaceLifecycle
 }
 
 func newWorkspaceTestStore() *workspaceTestStore { return &workspaceTestStore{} }
@@ -220,7 +224,8 @@ func (t *workspaceTestTx) UpdateWorkspaceCreation(_ context.Context, evidence Wo
 	return nil
 }
 
-func (t *workspaceTestTx) CreateWorkspace(context.Context, review.ProposalWorkspace, review.ProposalIntent, review.Proposal) error {
+func (t *workspaceTestTx) CreateWorkspace(_ context.Context, workspace review.ProposalWorkspace, _ review.ProposalIntent, _ review.Proposal) error {
+	t.store.workspace = workspace
 	return nil
 }
 func (t *workspaceTestTx) RecordProposalAttempt(context.Context, review.ProposalAttempt) error {
@@ -258,4 +263,55 @@ func (t *workspaceTestTx) CompleteReconciliation(context.Context, domain.Operati
 }
 func (t *workspaceTestTx) ActivateReconciliation(context.Context, domain.OperationID) error {
 	return nil
+}
+
+func (t *workspaceTestTx) CreateProposalWorkspaceLifecycle(_ context.Context, lifecycle app.ProposalWorkspaceLifecycle) error {
+	t.store.lifecycle = lifecycle
+	return nil
+}
+
+func (t *workspaceTestTx) UpdateProposalWorkspaceLifecycle(_ context.Context, lifecycle app.ProposalWorkspaceLifecycle) error {
+	if t.store.lifecycle.OperationID != lifecycle.OperationID || !t.store.lifecycle.Phase.CanTransitionTo(lifecycle.Phase) {
+		return app.ErrProposalWorkspaceLifecycleConflict
+	}
+	t.store.lifecycle = lifecycle
+	return nil
+}
+
+func (t *workspaceTestTx) UpdateProposalWorkspace(_ context.Context, workspace review.ProposalWorkspace) error {
+	if t.store.workspace.ID != workspace.ID || !t.store.workspace.State.CanTransitionTo(workspace.State) {
+		return app.ErrProposalWorkspaceLifecycleConflict
+	}
+	t.store.workspace = workspace
+	return nil
+}
+
+func (s *workspaceTestStore) LoadProposalWorkspaceLifecycle(_ context.Context, workspaceID domain.WorkspaceID, operationID domain.OperationID) (app.ProposalWorkspaceLifecycle, error) {
+	if s.lifecycle.WorkspaceID != workspaceID || s.lifecycle.OperationID != operationID {
+		return app.ProposalWorkspaceLifecycle{}, app.ErrReviewStoreNotFound
+	}
+	return s.lifecycle, nil
+}
+
+func (s *workspaceTestStore) LoadLatestProposalWorkspaceLifecycle(_ context.Context, workspaceID domain.WorkspaceID) (app.ProposalWorkspaceLifecycle, error) {
+	if s.lifecycle.WorkspaceID != workspaceID {
+		return app.ProposalWorkspaceLifecycle{}, app.ErrReviewStoreNotFound
+	}
+	return s.lifecycle, nil
+}
+
+type workspaceTestSource struct {
+	identity app.WorkspaceSourceIdentity
+	entries  []repository.TreeEntry
+	content  map[repository.RepoPathKey][]byte
+}
+
+func (s workspaceTestSource) Identity() app.WorkspaceSourceIdentity { return s.identity }
+
+func (s workspaceTestSource) List(context.Context) ([]repository.TreeEntry, error) {
+	return append([]repository.TreeEntry(nil), s.entries...), nil
+}
+
+func (s workspaceTestSource) Open(_ context.Context, entry repository.TreeEntry) (io.ReadCloser, error) {
+	return io.NopCloser(bytes.NewReader(s.content[entry.Path.Key()])), nil
 }
