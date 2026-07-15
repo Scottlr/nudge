@@ -110,6 +110,9 @@ func (m *Model) renderRow(row TreeRow) string {
 }
 
 func rowBadge(row TreeRow) string {
+	if row.ReviewOnlyReason != "" {
+		return "[review-only:" + presentation.ProjectTerminalText(row.ReviewOnlyReason, presentation.TerminalTextScalar) + "]"
+	}
 	if row.Conflict {
 		return "[conflict]"
 	}
@@ -158,6 +161,8 @@ func (m *Model) rowStyle(row TreeRow) lipgloss.Style {
 	role := theme.RoleForeground
 	if row.Path.Key() == m.selected && m.focused {
 		role = theme.RoleFocus
+	} else if row.ReviewOnlyReason != "" {
+		role = theme.RoleWarning
 	} else if row.Conflict {
 		role = theme.RoleThreadError
 	} else {

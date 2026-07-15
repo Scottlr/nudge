@@ -436,6 +436,7 @@ func (c LocalCaptureCandidate) FingerprintValue() (string, error) {
 		if entry.Change.NewObjectID != nil {
 			writeCaptureString(h, string(*entry.Change.NewObjectID))
 		}
+		writeCaptureReviewOnly(h, entry.Change.ReviewOnly)
 		writeCaptureUint64(h, boolUint(entry.Change.Staged))
 		writeCaptureUint64(h, boolUint(entry.Change.Unstaged))
 		writeCaptureUint64(h, boolUint(entry.Change.Binary))
@@ -477,6 +478,19 @@ func writeCaptureTextSemantics(h interface{ Write([]byte) (int, error) }, value 
 	writeCaptureUint64(h, boolUint(value.Endings.FinalLF))
 	writeCaptureUint64(h, boolUint(value.Endings.Mixed))
 	writeCaptureUint64(h, boolUint(value.Empty))
+}
+
+func writeCaptureReviewOnly(h interface{ Write([]byte) (int, error) }, value *ReviewOnlyEntryEvidence) {
+	if value == nil {
+		writeCaptureUint64(h, 0)
+		return
+	}
+	writeCaptureUint64(h, 1)
+	writeCaptureString(h, string(value.SpecialKind))
+	writeCaptureString(h, string(value.MetadataLevel))
+	writeCaptureString(h, value.MetadataHash)
+	writeCaptureString(h, value.ReasonCode)
+	writeCaptureString(h, value.EvidenceVersion)
 }
 
 func (c LocalCaptureCandidate) validateForFingerprint() error {

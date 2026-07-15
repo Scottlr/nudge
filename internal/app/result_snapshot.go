@@ -74,25 +74,26 @@ func (r ResultSnapshotReason) Validate() error {
 // unknown entry is retained as bounded evidence but never makes a snapshot
 // ready. Complete regular entries may carry native link/identity evidence.
 type ResultSnapshotEntry struct {
-	Path               []byte                          `json:"path"`
-	Kind               repository.FileKind             `json:"kind"`
-	Mode               uint32                          `json:"mode"`
-	Bytes              uint64                          `json:"bytes"`
-	SHA256             string                          `json:"sha256"`
-	ContentClass       repository.ContentClassV1       `json:"content_class,omitempty"`
-	TextSemantics      *repository.TextByteSemantics   `json:"text_semantics,omitempty"`
-	LinkTarget         []byte                          `json:"link_target,omitempty"`
-	SymlinkEvidence    *repository.SymlinkEvidence     `json:"symlink_evidence,omitempty"`
-	NativeIdentityHash string                          `json:"native_identity_hash,omitempty"`
-	NativeAlias        *repository.NativeAliasEvidence `json:"native_alias,omitempty"`
-	NativePath         *repository.NativePathEvidence  `json:"native_path,omitempty"`
-	Complete           bool                            `json:"complete"`
-	Reason             ResultSnapshotReason            `json:"reason"`
+	Path               []byte                              `json:"path"`
+	Kind               repository.FileKind                 `json:"kind"`
+	Mode               uint32                              `json:"mode"`
+	Bytes              uint64                              `json:"bytes"`
+	SHA256             string                              `json:"sha256"`
+	ContentClass       repository.ContentClassV1           `json:"content_class,omitempty"`
+	TextSemantics      *repository.TextByteSemantics       `json:"text_semantics,omitempty"`
+	LinkTarget         []byte                              `json:"link_target,omitempty"`
+	SymlinkEvidence    *repository.SymlinkEvidence         `json:"symlink_evidence,omitempty"`
+	NativeIdentityHash string                              `json:"native_identity_hash,omitempty"`
+	NativeAlias        *repository.NativeAliasEvidence     `json:"native_alias,omitempty"`
+	NativePath         *repository.NativePathEvidence      `json:"native_path,omitempty"`
+	ReviewOnly         *repository.ReviewOnlyEntryEvidence `json:"review_only,omitempty"`
+	Complete           bool                                `json:"complete"`
+	Reason             ResultSnapshotReason                `json:"reason"`
 }
 
 func (e ResultSnapshotEntry) Validate() error {
 	path, pathErr := repository.NewRepoPath(e.Path)
-	if pathErr != nil || e.Reason.Validate() != nil || e.NativePath != nil && (e.NativePath.Validate() != nil || e.NativePath.RepoPathKey != path.Key()) {
+	if pathErr != nil || e.Reason.Validate() != nil || e.Kind != repository.FileKindUnknown && e.ReviewOnly != nil || e.NativePath != nil && (e.NativePath.Validate() != nil || e.NativePath.RepoPathKey != path.Key()) {
 		return ErrInvalidResultSnapshot
 	}
 	if e.Kind != repository.FileKindUnknown && (repository.ValidateGitMode(e.Mode) != nil || resultModeKind(e.Mode) != e.Kind) {
@@ -115,7 +116,7 @@ func (e ResultSnapshotEntry) Validate() error {
 			return ErrInvalidResultSnapshot
 		}
 	case repository.FileKindUnknown:
-		if e.Mode != 0 || e.Bytes != 0 || e.SHA256 != "" || e.ContentClass != "" || e.TextSemantics != nil || len(e.LinkTarget) != 0 || e.NativeIdentityHash != "" || e.NativeAlias != nil || e.NativePath != nil || e.Complete || e.Reason == ResultReasonNone {
+		if e.Mode != 0 || e.Bytes != 0 || e.SHA256 != "" || e.ContentClass != "" || e.TextSemantics != nil || len(e.LinkTarget) != 0 || e.NativeIdentityHash != "" || e.NativeAlias != nil || e.NativePath != nil || e.Complete || e.Reason == ResultReasonNone || e.ReviewOnly != nil && e.ReviewOnly.Validate() != nil {
 			return ErrInvalidResultSnapshot
 		}
 	default:
@@ -266,7 +267,7 @@ func (e ResultDeltaEntry) Validate() error {
 		if e.Baseline == nil || e.Result == nil || e.ModeTransition.Validate() != nil || e.ModeTransition.OldMode != e.Baseline.Mode || e.ModeTransition.NewMode != e.Result.Mode {
 			return ErrInvalidResultSnapshot
 		}
-	} else if e.Baseline != nil && e.Result != nil && (e.Baseline.Mode != e.Result.Mode || e.Baseline.Kind != e.Result.Kind) {
+	} else if e.Baseline != nil && e.Result != nil && (e.Baseline.Mode != e.Result.Mode || e.Baseline.Kind != e.Result.Kind) && (e.Result.Kind != repository.FileKindUnknown || e.Result.Complete) {
 		return ErrInvalidResultSnapshot
 	}
 	for _, candidate := range e.Candidates {
@@ -323,10 +324,11 @@ func CompareResultManifest(baseline WorkspaceManifest, result ResultManifest) (R
 		entry := ResultDeltaEntry{Path: repository.RepoPath([]byte(string(key))), Complete: result.Complete}
 		if hasBase && hasResult && (baseEntry.Mode != resultEntry.Mode || baseEntry.Kind != resultEntry.Kind) {
 			transition, transitionErr := repository.NewModeTransition(baseEntry.Mode, resultEntry.Mode)
-			if transitionErr != nil {
+			if transitionErr == nil {
+				entry.ModeTransition = &transition
+			} else if resultEntry.Kind != repository.FileKindUnknown || resultEntry.Complete {
 				return ResultDelta{}, ErrInvalidResultSnapshot
 			}
-			entry.ModeTransition = &transition
 		}
 		if hasBase {
 			value := baseEntry
@@ -649,6 +651,10 @@ func cloneResultEntries(entries []ResultSnapshotEntry) []ResultSnapshotEntry {
 			nativePath := *entry.NativePath
 			copyEntries[index].NativePath = &nativePath
 		}
+		if entry.ReviewOnly != nil {
+			evidence := *entry.ReviewOnly
+			copyEntries[index].ReviewOnly = &evidence
+		}
 	}
 	return copyEntries
 }
@@ -694,6 +700,10 @@ func cloneDeltaEntries(entries []ResultDeltaEntry) []ResultDeltaEntry {
 			if result.NativePath != nil {
 				nativePath := *result.NativePath
 				result.NativePath = &nativePath
+			}
+			if result.ReviewOnly != nil {
+				evidence := *result.ReviewOnly
+				result.ReviewOnly = &evidence
 			}
 			copyEntries[index].Result = &result
 			if result.TextSemantics != nil {
@@ -792,6 +802,7 @@ func writeResultEntryHash(h interface{ Write([]byte) (int, error) }, entry Resul
 		writeResultHashUint(h, entry.NativeAlias.LinkCount)
 	}
 	writeResultNativePathHash(h, entry.NativePath)
+	writeResultReviewOnlyHash(h, entry.ReviewOnly)
 	writeResultHashBool(h, entry.Complete)
 	writeResultHashString(h, string(entry.Reason))
 }
@@ -826,6 +837,19 @@ func writeResultNativePathHash(h interface{ Write([]byte) (int, error) }, value 
 	writeResultHashString(h, value.ComparisonKeyHash)
 	writeResultHashString(h, value.ParentChainHash)
 	writeResultHashString(h, string(value.Disposition))
+	writeResultHashString(h, value.ReasonCode)
+	writeResultHashString(h, value.EvidenceVersion)
+}
+
+func writeResultReviewOnlyHash(h interface{ Write([]byte) (int, error) }, value *repository.ReviewOnlyEntryEvidence) {
+	if value == nil {
+		writeResultHashBool(h, false)
+		return
+	}
+	writeResultHashBool(h, true)
+	writeResultHashString(h, string(value.SpecialKind))
+	writeResultHashString(h, string(value.MetadataLevel))
+	writeResultHashString(h, value.MetadataHash)
 	writeResultHashString(h, value.ReasonCode)
 	writeResultHashString(h, value.EvidenceVersion)
 }

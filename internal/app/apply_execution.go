@@ -91,7 +91,7 @@ type ApplyPathEvidence struct {
 }
 
 func (p ApplyPathEvidence) Validate() error {
-	if p.Path.Validate() != nil {
+	if p.Path.Validate() != nil || p.Kind == repository.FileKindGitlink {
 		return ErrApplyVerificationFailed
 	}
 	precondition := repository.PathPrecondition{Path: p.Path, MustExist: p.Exists, Kind: p.Kind, Mode: p.Mode, ContentBytes: p.ContentBytes, ContentHash: p.ContentHash, ContentClass: p.ContentClass, TextSemantics: p.TextSemantics, SymlinkTargetHash: p.SymlinkTargetHash, SymlinkEvidence: p.SymlinkEvidence, NativeAlias: p.NativeAlias, NativePath: p.NativePath}

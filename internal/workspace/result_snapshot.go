@@ -202,7 +202,24 @@ func enumerateResultRoot(ctx context.Context, root string, policy app.ResourcePo
 		seenNative[nativeKey] = len(entries)
 		info, err := os.Lstat(path)
 		if err != nil {
-			return ErrResultRootChanged
+			entry := reviewOnlyResultEntry(rawPath, app.ResultReasonUnsupportedEntry, repository.NewPathOnlyReviewOnlyEntryEvidence())
+			entries = append(entries, entry)
+			reason = firstFreezeReason(reason, app.ResultReasonUnsupportedEntry)
+			if dirEntry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			if specialKind, ok := paths.ClassifySpecialPath(path, info.Mode()); ok {
+				evidence := repository.NewCompleteReviewOnlyEntryEvidence(specialKind, info.Mode(), info.Size(), info.ModTime())
+				entries = append(entries, reviewOnlyResultEntry(rawPath, app.ResultReasonUnsupportedEntry, evidence))
+				reason = firstFreezeReason(reason, app.ResultReasonUnsupportedEntry)
+				if info.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
 		}
 		switch {
 		case info.IsDir() && info.Mode()&os.ModeSymlink == 0:
@@ -364,6 +381,10 @@ func scanResultFile(ctx context.Context, root, nativePath string, rawPath reposi
 
 func unsupportedResultEntry(path repository.RepoPath, reason app.ResultSnapshotReason) app.ResultSnapshotEntry {
 	return app.ResultSnapshotEntry{Path: path.Bytes(), Kind: repository.FileKindUnknown, Complete: false, Reason: reason}
+}
+
+func reviewOnlyResultEntry(path repository.RepoPath, reason app.ResultSnapshotReason, evidence repository.ReviewOnlyEntryEvidence) app.ResultSnapshotEntry {
+	return app.ResultSnapshotEntry{Path: path.Bytes(), Kind: repository.FileKindUnknown, Complete: false, Reason: reason, ReviewOnly: &evidence}
 }
 
 func hasGitAdminComponent(components []string) bool {

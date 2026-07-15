@@ -79,6 +79,21 @@ func TestProposalStateTransitionsAndImmutablePatchBytes(t *testing.T) {
 	}
 }
 
+func TestProposedPatchRejectsGitlinkActionEntries(t *testing.T) {
+	patch := proposalPatchFixture()
+	patch.Files[0].Kind = repository.FileKindGitlink
+	patch.Files[0].Mode = 0o160000
+	if patch.Files[0].Validate() == nil {
+		t.Fatal("Gitlink proposed file was accepted")
+	}
+	patch = proposalPatchFixture()
+	patch.Preconditions[0].Kind = repository.FileKindGitlink
+	patch.Preconditions[0].Mode = 0o160000
+	if patch.Validate() == nil {
+		t.Fatal("Gitlink precondition was accepted")
+	}
+}
+
 func proposalIntentFixture(now time.Time) ProposalIntent {
 	return ProposalIntent{
 		ID:              domain.ProposalID("proposal-1"),
