@@ -23,6 +23,7 @@ import (
 	"github.com/Scottlr/nudge/internal/paths"
 	"github.com/Scottlr/nudge/internal/process"
 	"github.com/Scottlr/nudge/internal/store/sqlite"
+	"github.com/Scottlr/nudge/internal/terminal"
 	"github.com/Scottlr/nudge/internal/theme"
 	"github.com/Scottlr/nudge/internal/tui"
 	"github.com/Scottlr/nudge/internal/workspace"
@@ -46,7 +47,8 @@ func runLocalReview(ctx context.Context, startPath string, noPersist bool, theme
 		return fmt.Errorf("local review: path: %w", err)
 	}
 	startPath = filepath.Clean(abs)
-	environ := processEnvironment(os.Environ())
+	environmentValues := os.Environ()
+	environ := processEnvironment(environmentValues)
 	locations, err := paths.Resolve(environ)
 	if err != nil {
 		return fmt.Errorf("local review: locations: %w", err)
@@ -55,7 +57,7 @@ func runLocalReview(ctx context.Context, startPath string, noPersist bool, theme
 	if err != nil {
 		return fmt.Errorf("local review: configuration: %w", err)
 	}
-	presentationPolicy := theme.RenderPolicy{Color: true, ASCII: !loaded.Config.UI.Unicode, Explicit: true}
+	presentationPolicy := theme.RenderPolicy{ASCII: true, Explicit: true}
 	resolvedTheme, err := theme.Load(runCtx, locations, loaded.Config.UI.Theme, presentationPolicy)
 	if err != nil {
 		return fmt.Errorf("local review: theme: %w", err)
@@ -187,7 +189,17 @@ func runLocalReview(ctx context.Context, startPath string, noPersist bool, theme
 	if err != nil {
 		return fmt.Errorf("local review: start: %w", err)
 	}
-	model := tui.NewModel(nil, tui.WithContext(runCtx), tui.WithLocalReviewStream(stream), tui.WithThemeResolution(resolvedTheme), tui.WithAltScreen(true), tui.WithReportFocus(true))
+	model := tui.NewModel(nil,
+		tui.WithContext(runCtx),
+		tui.WithLocalReviewStream(stream),
+		tui.WithThemeResolution(resolvedTheme),
+		tui.WithTerminalPreferences(terminal.Input{
+			Environment: terminal.NormalizeEnvironment(environmentValues),
+			Preferences: terminal.Preferences{Unicode: loaded.Config.UI.Unicode, ReducedMotion: loaded.Config.UI.ReducedMotion},
+		}),
+		tui.WithAltScreen(true),
+		tui.WithReportFocus(true),
+	)
 	program := tea.NewProgram(model, tea.WithContext(runCtx))
 	_, err = program.Run()
 	return err

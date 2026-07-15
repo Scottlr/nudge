@@ -32,7 +32,7 @@ type TickPlan struct {
 type RenderScheduler struct {
 	mu              sync.Mutex
 	interval        time.Duration
-	visibleAnimated bool
+	visibleAnimated int
 	reducedMotion   bool
 	pending         bool
 	scheduled       bool
@@ -56,27 +56,38 @@ func DefaultRenderScheduler() *RenderScheduler {
 // StartVisibleWork admits animated visible work and returns the one command
 // that should be handed to Bubble Tea, if a tick is needed.
 func (s *RenderScheduler) StartVisibleWork() TickPlan {
-	if s == nil {
-		return TickPlan{}
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.visibleAnimated = true
-	s.pending = true
-	return s.scheduleLocked()
+	return s.SetVisibleAnimatedWork(1)
 }
 
 // StopVisibleWork prevents future ticks and invalidates already-queued ticks.
 func (s *RenderScheduler) StopVisibleWork() {
+	_ = s.SetVisibleAnimatedWork(0)
+}
+
+// SetVisibleAnimatedWork updates the count of visible animated work and
+// returns the one command needed to start a root-owned tick chain.
+func (s *RenderScheduler) SetVisibleAnimatedWork(count int) TickPlan {
 	if s == nil {
-		return
+		return TickPlan{}
+	}
+	if count < 0 {
+		count = 0
 	}
 	s.mu.Lock()
-	s.visibleAnimated = false
-	s.pending = false
-	s.scheduled = false
-	s.epoch++
-	s.mu.Unlock()
+	defer s.mu.Unlock()
+	wasVisible := s.visibleAnimated > 0
+	s.visibleAnimated = count
+	isVisible := count > 0
+	if !isVisible {
+		s.pending = false
+		s.scheduled = false
+		s.epoch++
+		return TickPlan{}
+	}
+	if !wasVisible {
+		s.pending = true
+	}
+	return s.scheduleLocked()
 }
 
 // SetReducedMotion changes the run-scoped animation policy. Turning it off
@@ -96,7 +107,7 @@ func (s *RenderScheduler) SetReducedMotion(reduced bool) TickPlan {
 	if reduced {
 		return TickPlan{}
 	}
-	s.pending = s.visibleAnimated
+	s.pending = s.visibleAnimated > 0
 	return s.scheduleLocked()
 }
 
@@ -124,7 +135,7 @@ func (s *RenderScheduler) AcceptTick(message RenderTickMsg) (bool, TickPlan) {
 		return false, TickPlan{}
 	}
 	s.scheduled = false
-	if !s.visibleAnimated || s.reducedMotion {
+	if s.visibleAnimated <= 0 || s.reducedMotion {
 		return false, TickPlan{}
 	}
 	s.pending = true
@@ -132,7 +143,7 @@ func (s *RenderScheduler) AcceptTick(message RenderTickMsg) (bool, TickPlan) {
 }
 
 func (s *RenderScheduler) scheduleLocked() TickPlan {
-	if !s.visibleAnimated || s.reducedMotion || !s.pending || s.scheduled {
+	if s.visibleAnimated <= 0 || s.reducedMotion || !s.pending || s.scheduled {
 		return TickPlan{}
 	}
 	s.pending = false
@@ -144,4 +155,14 @@ func (s *RenderScheduler) scheduleLocked() TickPlan {
 			return RenderTickMsg{Epoch: epoch}
 		}),
 	}
+}
+
+// VisibleAnimatedWork returns the current visible animated-work count.
+func (s *RenderScheduler) VisibleAnimatedWork() int {
+	if s == nil {
+		return 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.visibleAnimated
 }

@@ -3,6 +3,7 @@ package threads
 import (
 	"github.com/Scottlr/nudge/internal/app"
 	"github.com/Scottlr/nudge/internal/domain"
+	"github.com/Scottlr/nudge/internal/domain/review"
 	"github.com/Scottlr/nudge/internal/theme"
 	"github.com/Scottlr/nudge/internal/tui/viewport"
 )
@@ -80,6 +81,23 @@ func (m *Model) SnapshotRevision() uint64 {
 		return 0
 	}
 	return m.snapshotRevision
+}
+
+// VisibleAnimatedWork counts only streaming or proposal-generating summaries
+// in the currently rendered bounded thread window.
+func (m *Model) VisibleAnimatedWork() int {
+	if m == nil || len(m.items) == 0 {
+		return 0
+	}
+	window := viewport.Window(len(m.items), m.selectedIndex(), m.top, m.renderHeight(), m.overscan)
+	count := 0
+	for index := window.Start; index < window.End; index++ {
+		item := m.items[index]
+		if item.Conversation == review.ConversationStreaming || item.Proposal == review.ProposalGenerating {
+			count++
+		}
+	}
+	return count
 }
 
 // InitialPageRequest asks the root to fetch the first thread page when the

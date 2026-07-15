@@ -8,6 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/Scottlr/nudge/internal/app"
+	"github.com/Scottlr/nudge/internal/terminal"
 	"github.com/Scottlr/nudge/internal/theme"
 	codepane "github.com/Scottlr/nudge/internal/tui/components/code"
 	discussionpane "github.com/Scottlr/nudge/internal/tui/components/discussion"
@@ -48,6 +49,8 @@ type Model struct {
 	overlays       OverlayStack
 	theme          theme.Theme
 	themeHealth    theme.Health
+	terminalInput  terminal.Input
+	terminalPolicy terminal.Policy
 	commands       *CommandRegistry
 	focusTarget    FocusTargetID
 	focusRestore   *FocusTargetID
@@ -156,6 +159,7 @@ func NewModel(client app.ApplicationClient, options ...ModelOption) *Model {
 		themeHealth:    theme.Health{ThemeID: "terminal", SchemaVersion: theme.SchemaVersion, Source: theme.SourceBuiltin},
 		layout:         CalculateLayout(Dimensions{}),
 		scheduler:      DefaultRenderScheduler(),
+		terminalInput:  terminal.Input{Preferences: terminal.Preferences{Unicode: true}},
 	}
 	commands, err := newDefaultCommandRegistry()
 	if err != nil {
@@ -174,6 +178,10 @@ func NewModel(client app.ApplicationClient, options ...ModelOption) *Model {
 	if model.layout.Dimensions != model.dimensions {
 		model.layout = CalculateLayout(model.dimensions)
 	}
+	// Bubble Tea has not delivered ColorProfileMsg yet, so keep direct model
+	// construction on the same conservative unknown-capability policy as the
+	// CLI composition path.
+	model.applyTerminalProfile(model.terminalInput.Profile)
 	model.resizeChildPanes()
 	model.normalizeFocus()
 	model.syncReviewSnapshot()
