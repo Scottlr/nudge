@@ -37,6 +37,7 @@ type PathPrecondition struct {
 	TextSemantics     *TextByteSemantics
 	SymlinkTargetHash string
 	NativeAlias       *NativeAliasEvidence
+	NativePath        *NativePathEvidence
 }
 
 // Validate preserves absent-file semantics and rejects contradictory
@@ -46,7 +47,7 @@ func (p PathPrecondition) Validate() error {
 		return ErrInvalidPathPrecondition
 	}
 	if !p.MustExist {
-		if (p.Kind != "" && p.Kind != FileKindUnknown) || p.Mode != 0 || p.ContentBytes != 0 || p.ContentHash != "" || p.ContentClass != "" || p.TextSemantics != nil || p.SymlinkTargetHash != "" || p.NativeAlias != nil {
+		if (p.Kind != "" && p.Kind != FileKindUnknown) || p.Mode != 0 || p.ContentBytes != 0 || p.ContentHash != "" || p.ContentClass != "" || p.TextSemantics != nil || p.SymlinkTargetHash != "" || p.NativeAlias != nil || p.NativePath != nil {
 			return ErrInvalidPathPrecondition
 		}
 		return nil
@@ -77,6 +78,9 @@ func (p PathPrecondition) Validate() error {
 		if p.Kind != FileKindRegular || p.NativeAlias.Validate() != nil {
 			return ErrInvalidPathPrecondition
 		}
+	}
+	if p.NativePath != nil && (p.NativePath.Validate() != nil || p.NativePath.RepoPathKey != p.Path.Key()) {
+		return ErrInvalidPathPrecondition
 	}
 	return nil
 }

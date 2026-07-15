@@ -86,13 +86,14 @@ type ApplyPathEvidence struct {
 	TextSemantics     *repository.TextByteSemantics
 	SymlinkTargetHash string
 	NativeAlias       *repository.NativeAliasEvidence
+	NativePath        *repository.NativePathEvidence
 }
 
 func (p ApplyPathEvidence) Validate() error {
 	if p.Path.Validate() != nil {
 		return ErrApplyVerificationFailed
 	}
-	precondition := repository.PathPrecondition{Path: p.Path, MustExist: p.Exists, Kind: p.Kind, Mode: p.Mode, ContentBytes: p.ContentBytes, ContentHash: p.ContentHash, ContentClass: p.ContentClass, TextSemantics: p.TextSemantics, SymlinkTargetHash: p.SymlinkTargetHash, NativeAlias: p.NativeAlias}
+	precondition := repository.PathPrecondition{Path: p.Path, MustExist: p.Exists, Kind: p.Kind, Mode: p.Mode, ContentBytes: p.ContentBytes, ContentHash: p.ContentHash, ContentClass: p.ContentClass, TextSemantics: p.TextSemantics, SymlinkTargetHash: p.SymlinkTargetHash, NativeAlias: p.NativeAlias, NativePath: p.NativePath}
 	if precondition.Validate() != nil {
 		return ErrApplyVerificationFailed
 	}
@@ -100,7 +101,7 @@ func (p ApplyPathEvidence) Validate() error {
 }
 
 func (p ApplyPathEvidence) precondition() repository.PathPrecondition {
-	return repository.PathPrecondition{Path: p.Path, MustExist: p.Exists, Kind: p.Kind, Mode: p.Mode, ContentBytes: p.ContentBytes, ContentHash: p.ContentHash, ContentClass: p.ContentClass, TextSemantics: p.TextSemantics, SymlinkTargetHash: p.SymlinkTargetHash, NativeAlias: p.NativeAlias}
+	return repository.PathPrecondition{Path: p.Path, MustExist: p.Exists, Kind: p.Kind, Mode: p.Mode, ContentBytes: p.ContentBytes, ContentHash: p.ContentHash, ContentClass: p.ContentClass, TextSemantics: p.TextSemantics, SymlinkTargetHash: p.SymlinkTargetHash, NativeAlias: p.NativeAlias, NativePath: p.NativePath}
 }
 
 // ApplyVerificationEvidence is the bounded post-mutation or recovery

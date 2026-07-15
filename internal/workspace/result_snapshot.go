@@ -151,6 +151,11 @@ func enumerateResultRoot(ctx context.Context, root string, policy app.ResourcePo
 	entries := make([]app.ResultSnapshotEntry, 0)
 	seenNative := make(map[string]int)
 	reason := app.ResultReasonNone
+	verifiedRoot, rootErr := paths.NewVerifiedRoot(root)
+	if rootErr != nil {
+		return nil, app.ResultReasonRootChanged, rootErr
+	}
+	nativeResolver := paths.NewNativePathResolver()
 	err := filepath.WalkDir(root, func(path string, dirEntry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -231,7 +236,7 @@ func enumerateResultRoot(ctx context.Context, root string, policy app.ResourcePo
 			entries = append(entries, app.ResultSnapshotEntry{Path: rawPath.Bytes(), Kind: repository.FileKindSymlink, Mode: 0o120000, Bytes: uint64(len(linkTarget)), SHA256: hashResultBytes(linkTarget), LinkTarget: linkTarget, Complete: true, Reason: entryReason})
 			reason = firstFreezeReason(reason, entryReason)
 		case info.Mode().IsRegular():
-			entry, entryErr := scanResultFile(ctx, root, nativePath, rawPath, info, policy)
+			entry, entryErr := scanResultFile(ctx, root, nativePath, rawPath, info, policy, nativeResolver, verifiedRoot)
 			if entryErr != nil {
 				if errors.Is(entryErr, app.ErrReviewSnapshotLimit) {
 					return entryErr
@@ -272,7 +277,7 @@ func enumerateResultRoot(ctx context.Context, root string, policy app.ResourcePo
 	return entries, reason, nil
 }
 
-func scanResultFile(ctx context.Context, root, nativePath string, rawPath repository.RepoPath, initial os.FileInfo, policy app.ResourcePolicy) (app.ResultSnapshotEntry, error) {
+func scanResultFile(ctx context.Context, root, nativePath string, rawPath repository.RepoPath, initial os.FileInfo, policy app.ResourcePolicy, nativeResolver *paths.NativePathResolver, verifiedRoot paths.VerifiedRoot) (app.ResultSnapshotEntry, error) {
 	identity, err := paths.NativeFileIdentity(filepath.Join(root, nativePath))
 	if err != nil {
 		return unsupportedResultEntry(rawPath, app.ResultReasonNativeIdentity), nil
@@ -337,6 +342,17 @@ func scanResultFile(ctx context.Context, root, nativePath string, rawPath reposi
 		textSemantics = &semantics
 	}
 	entry := app.ResultSnapshotEntry{Path: rawPath.Bytes(), Kind: repository.FileKindRegular, Mode: 0o100000 | uint32(initial.Mode().Perm()), Bytes: size, SHA256: hex.EncodeToString(hash.Sum(nil)), ContentClass: contentClass, TextSemantics: textSemantics, NativeIdentityHash: identity.FileIdentityHash, NativeAlias: &identity, Complete: true}
+	if nativeResolver != nil {
+		token, evidence, resolveErr := nativeResolver.Resolve(ctx, verifiedRoot, rawPath, repository.NativeReadExisting)
+		if resolveErr != nil {
+			if errors.Is(resolveErr, paths.ErrNativePathReviewOnly) {
+				return app.ResultSnapshotEntry{Path: rawPath.Bytes(), Kind: repository.FileKindUnknown, Complete: false, Reason: app.ResultReasonPathAlias}, nil
+			}
+			return app.ResultSnapshotEntry{}, resolveErr
+		}
+		_ = token.Close()
+		entry.NativePath = &evidence
+	}
 	if identity.LinkCount > 1 {
 		entry.Reason = app.ResultReasonSharedIdentity
 	}

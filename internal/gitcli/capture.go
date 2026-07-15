@@ -18,6 +18,7 @@ import (
 	"github.com/Scottlr/nudge/internal/app"
 	"github.com/Scottlr/nudge/internal/domain"
 	"github.com/Scottlr/nudge/internal/domain/repository"
+	"github.com/Scottlr/nudge/internal/paths"
 	"github.com/Scottlr/nudge/internal/process"
 )
 
@@ -1743,6 +1744,10 @@ func fileKindFromNativeInfo(info os.FileInfo) (repository.FileKind, uint32) {
 
 func captureNativePath(root string, path repository.RepoPath) (string, error) {
 	if err := path.Validate(); err != nil || bytes.IndexByte(path, 0) >= 0 || filepath.IsAbs(string(path)) {
+		return "", &GitError{Code: ErrorNativeIdentityUnavailable}
+	}
+	resolver := paths.NewNativePathResolver()
+	if disposition, _ := resolver.QualifyRepoPath(path); disposition != repository.NativePathSafe {
 		return "", &GitError{Code: ErrorNativeIdentityUnavailable}
 	}
 	for _, component := range strings.Split(string(path), "/") {

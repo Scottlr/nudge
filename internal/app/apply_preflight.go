@@ -588,6 +588,10 @@ func cloneApplyPreconditions(values []repository.PathPrecondition) []repository.
 			alias := *value.NativeAlias
 			result[index].NativeAlias = &alias
 		}
+		if value.NativePath != nil {
+			nativePath := *value.NativePath
+			result[index].NativePath = &nativePath
+		}
 	}
 	return result
 }

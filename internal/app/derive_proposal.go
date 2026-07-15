@@ -477,6 +477,7 @@ func baselinePrecondition(entry ResultDeltaEntry) repository.PathPrecondition {
 		return repository.PathPrecondition{Path: repository.RepoPath(entry.Path.Bytes())}
 	}
 	value := repository.PathPrecondition{Path: repository.RepoPath(entry.Path.Bytes()), MustExist: true, Kind: entry.Baseline.Kind, Mode: entry.Baseline.Mode}
+	value.NativePath = cloneNativePathEvidence(entry.Baseline.NativePath)
 	switch entry.Baseline.Kind {
 	case repository.FileKindRegular:
 		value.ContentHash = entry.Baseline.SHA256
@@ -495,10 +496,28 @@ func preconditionMatchesExpected(actual, expected repository.PathPrecondition) b
 	if actual.Path.Key() != expected.Path.Key() || actual.MustExist != expected.MustExist || actual.Kind != expected.Kind || actual.Mode != expected.Mode || actual.ContentHash != expected.ContentHash || actual.SymlinkTargetHash != expected.SymlinkTargetHash {
 		return false
 	}
+	if !sameNativePathEvidence(actual.NativePath, expected.NativePath) {
+		return false
+	}
 	if expected.ContentClass != "" {
 		return actual.ContentBytes == expected.ContentBytes && actual.ContentClass == expected.ContentClass && sameTextSemantics(actual.TextSemantics, expected.TextSemantics)
 	}
 	return true
+}
+
+func cloneNativePathEvidence(value *repository.NativePathEvidence) *repository.NativePathEvidence {
+	if value == nil {
+		return nil
+	}
+	copyValue := *value
+	return &copyValue
+}
+
+func sameNativePathEvidence(left, right *repository.NativePathEvidence) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
 }
 
 func deriveProposedFiles(files []ProposalReviewFile, snapshot ResultSnapshot) ([]review.ProposedFile, error) {
@@ -658,6 +677,10 @@ func clonePathPrecondition(value repository.PathPrecondition) repository.PathPre
 	if value.NativeAlias != nil {
 		alias := *value.NativeAlias
 		value.NativeAlias = &alias
+	}
+	if value.NativePath != nil {
+		nativePath := *value.NativePath
+		value.NativePath = &nativePath
 	}
 	return value
 }

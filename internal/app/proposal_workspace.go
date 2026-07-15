@@ -103,18 +103,20 @@ func (s WorkspaceSourceIdentity) Validate() error {
 // one baseline/result entry. Path and LinkTarget use []byte so JSON preserves
 // raw repository bytes through SQLite without UTF-8 replacement.
 type WorkspaceManifestEntry struct {
-	Path          []byte                        `json:"path"`
-	Kind          repository.FileKind           `json:"kind"`
-	Mode          uint32                        `json:"mode"`
-	Bytes         uint64                        `json:"bytes"`
-	SHA256        string                        `json:"sha256"`
-	ContentClass  repository.ContentClassV1     `json:"content_class,omitempty"`
-	TextSemantics *repository.TextByteSemantics `json:"text_semantics,omitempty"`
-	LinkTarget    []byte                        `json:"link_target,omitempty"`
+	Path          []byte                         `json:"path"`
+	Kind          repository.FileKind            `json:"kind"`
+	Mode          uint32                         `json:"mode"`
+	Bytes         uint64                         `json:"bytes"`
+	SHA256        string                         `json:"sha256"`
+	ContentClass  repository.ContentClassV1      `json:"content_class,omitempty"`
+	TextSemantics *repository.TextByteSemantics  `json:"text_semantics,omitempty"`
+	LinkTarget    []byte                         `json:"link_target,omitempty"`
+	NativePath    *repository.NativePathEvidence `json:"native_path,omitempty"`
 }
 
 func (e WorkspaceManifestEntry) Validate() error {
-	if _, err := repository.NewRepoPath(e.Path); err != nil || e.Mode == 0 {
+	path, pathErr := repository.NewRepoPath(e.Path)
+	if pathErr != nil || e.Mode == 0 || e.NativePath != nil && (e.NativePath.Validate() != nil || e.NativePath.RepoPathKey != path.Key()) {
 		return ErrInvalidProposalWorkspaceLifecycle
 	}
 	switch e.Kind {
@@ -246,6 +248,10 @@ func cloneWorkspaceManifestEntries(entries []WorkspaceManifestEntry) []Workspace
 		copyEntries[i] = entry
 		copyEntries[i].Path = append([]byte(nil), entry.Path...)
 		copyEntries[i].LinkTarget = append([]byte(nil), entry.LinkTarget...)
+		if entry.NativePath != nil {
+			nativePath := *entry.NativePath
+			copyEntries[i].NativePath = &nativePath
+		}
 		if entry.TextSemantics != nil {
 			semantics := *entry.TextSemantics
 			copyEntries[i].TextSemantics = &semantics
@@ -266,8 +272,26 @@ func workspaceManifestHash(version uint32, entries []WorkspaceManifestEntry) str
 		writeWorkspaceHashString(h, string(entry.ContentClass))
 		writeWorkspaceTextSemanticsHash(h, entry.TextSemantics)
 		writeWorkspaceHashBytes(h, entry.LinkTarget)
+		writeWorkspaceNativePathHash(h, entry.NativePath)
 	}
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+func writeWorkspaceNativePathHash(h interface{ Write([]byte) (int, error) }, value *repository.NativePathEvidence) {
+	if value == nil {
+		writeWorkspaceHashBool(h, false)
+		return
+	}
+	writeWorkspaceHashBool(h, true)
+	writeWorkspaceHashBytes(h, []byte(string(value.RepoPathKey)))
+	writeWorkspaceHashString(h, value.RootIdentity)
+	writeWorkspaceHashString(h, value.Platform)
+	writeWorkspaceHashString(h, value.FilesystemClass)
+	writeWorkspaceHashString(h, value.ComparisonKeyHash)
+	writeWorkspaceHashString(h, value.ParentChainHash)
+	writeWorkspaceHashString(h, string(value.Disposition))
+	writeWorkspaceHashString(h, value.ReasonCode)
+	writeWorkspaceHashString(h, value.EvidenceVersion)
 }
 
 func writeWorkspaceTextSemanticsHash(h interface{ Write([]byte) (int, error) }, value *repository.TextByteSemantics) {
