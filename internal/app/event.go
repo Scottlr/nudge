@@ -140,6 +140,51 @@ type ThreadReadChanged struct {
 	Read             bool
 }
 
+// TargetReconciled reports the authoritative generation linked to one
+// verified apply operation. Thread and provider identities remain stable.
+type TargetReconciled struct {
+	Revision           uint64
+	OperationID        domain.OperationID
+	CorrelationID      CorrelationID
+	TargetGeneration   repository.TargetGeneration
+	SessionID          domain.ReviewSessionID
+	PreviousGeneration repository.TargetGeneration
+	Provenance         ApplyReconciliationProvenance
+}
+
+// ProposalValidityProgress reports bounded staged validity work. Until the
+// completion event, proposal approval remains fenced by the pending epoch.
+type ProposalValidityProgress struct {
+	Revision               uint64
+	OperationID            domain.OperationID
+	CorrelationID          CorrelationID
+	TargetGeneration       repository.TargetGeneration
+	ProcessedProposals     Count
+	ProcessedPreconditions Count
+	EvidenceBytes          ByteSize
+	CoalescingKey          string
+}
+
+// ProposalValidityEpochCompleted reports the small transaction that makes a
+// complete validity sweep visible to approval queries.
+type ProposalValidityEpochCompleted struct {
+	Revision         uint64
+	OperationID      domain.OperationID
+	CorrelationID    CorrelationID
+	TargetGeneration repository.TargetGeneration
+	Epoch            uint64
+}
+
+// WorkspaceBaselineAdvanced reports the accepted post-apply capture that is
+// now the isolated workspace baseline.
+type WorkspaceBaselineAdvanced struct {
+	Revision         uint64
+	OperationID      domain.OperationID
+	CorrelationID    CorrelationID
+	TargetGeneration repository.TargetGeneration
+	WorkspaceID      domain.WorkspaceID
+}
+
 // ThreadReadStateChanged is the descriptive alias for ThreadReadChanged.
 type ThreadReadStateChanged = ThreadReadChanged
 
@@ -169,6 +214,10 @@ func (ThreadActivated) isEvent()                  {}
 func (MessageAppended) isEvent()                  {}
 func (ThreadResolutionChanged) isEvent()          {}
 func (ThreadReadChanged) isEvent()                {}
+func (TargetReconciled) isEvent()                 {}
+func (ProposalValidityProgress) isEvent()         {}
+func (ProposalValidityEpochCompleted) isEvent()   {}
+func (WorkspaceBaselineAdvanced) isEvent()        {}
 func (ProviderConversationAttached) isEvent()     {}
 func (ProviderTurnStateChanged) isEvent()         {}
 func (RuntimeApprovalDecisionRequested) isEvent() {}
@@ -306,6 +355,42 @@ func (e ThreadReadChanged) eventMetadata() EventMetadata {
 }
 
 func (e ThreadReadChanged) withRevision(revision uint64) Event {
+	e.Revision = revision
+	return e
+}
+
+func (e TargetReconciled) eventMetadata() EventMetadata {
+	return EventMetadata{Revision: e.Revision, OperationID: e.OperationID, CorrelationID: e.CorrelationID, TargetGeneration: e.TargetGeneration}
+}
+
+func (e TargetReconciled) withRevision(revision uint64) Event {
+	e.Revision = revision
+	return e
+}
+
+func (e ProposalValidityProgress) eventMetadata() EventMetadata {
+	return EventMetadata{Revision: e.Revision, OperationID: e.OperationID, CorrelationID: e.CorrelationID, TargetGeneration: e.TargetGeneration, CoalescingKey: e.CoalescingKey, Coalescible: e.CoalescingKey != ""}
+}
+
+func (e ProposalValidityProgress) withRevision(revision uint64) Event {
+	e.Revision = revision
+	return e
+}
+
+func (e ProposalValidityEpochCompleted) eventMetadata() EventMetadata {
+	return EventMetadata{Revision: e.Revision, OperationID: e.OperationID, CorrelationID: e.CorrelationID, TargetGeneration: e.TargetGeneration}
+}
+
+func (e ProposalValidityEpochCompleted) withRevision(revision uint64) Event {
+	e.Revision = revision
+	return e
+}
+
+func (e WorkspaceBaselineAdvanced) eventMetadata() EventMetadata {
+	return EventMetadata{Revision: e.Revision, OperationID: e.OperationID, CorrelationID: e.CorrelationID, TargetGeneration: e.TargetGeneration}
+}
+
+func (e WorkspaceBaselineAdvanced) withRevision(revision uint64) Event {
 	e.Revision = revision
 	return e
 }

@@ -110,6 +110,11 @@ func (s *ProposalApplyService) ApproveProposal(ctx context.Context, command Appr
 	if !ok || !approvalMatchesVersion(command, version) || aggregate.Proposal.CurrentVersion == nil || *aggregate.Proposal.CurrentVersion != command.Version {
 		return ProposalApplyCommit{}, ErrProposalApprovalConflict
 	}
+	if gate, ok := s.proposals.(ProposalValidityApprovalGate); ok && (version.Status == review.ProposalVersionDeriving || version.Status == review.ProposalVersionReady || version.Status == review.ProposalVersionApplying) {
+		if err := gate.CheckProposalApprovalValidity(ctx, command.ProposalID, command.Version, version.Destination); err != nil {
+			return ProposalApplyCommit{}, err
+		}
+	}
 	thread, err := s.store.LoadThread(ctx, command.ThreadID)
 	if err != nil {
 		return ProposalApplyCommit{}, err
