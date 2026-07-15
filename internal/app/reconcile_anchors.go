@@ -154,7 +154,7 @@ func firstCandidates(input review.ReconcileInput, content review.CapturedFile, c
 		if !matches(start, selected) {
 			continue
 		}
-		candidates = append(candidates, review.AnchorCandidate{Path: append([]byte(nil), content.Path...), Side: content.Side, StartLine: start, EndLine: start + count - 1, Tier: tier, Reason: reason})
+		candidates = append(candidates, makeAnchorCandidate(input.Anchor, content, input.Transition.ToGeneration, start, start+count-1, tier, reason))
 	}
 	retained, overflow := capCandidates(candidates)
 	return retained, len(candidates) > 0, overflow
@@ -185,7 +185,7 @@ func candidateAt(input review.ReconcileInput, content review.CapturedFile, start
 	if !selectionMatches(input.Anchor, selected) {
 		return review.AnchorCandidate{}, false
 	}
-	return review.AnchorCandidate{Path: append([]byte(nil), content.Path...), Side: content.Side, StartLine: start, EndLine: start + count - 1, Tier: tier, Reason: reason}, true
+	return makeAnchorCandidate(input.Anchor, content, input.Transition.ToGeneration, start, start+count-1, tier, reason), true
 }
 
 func outcomeFromCandidates(input review.ReconcileInput, content review.CapturedFile, candidates []review.AnchorCandidate, overflow bool, reason string) (review.ReconcileOutcome, error) {
@@ -386,7 +386,35 @@ func lineDiffCandidate(input review.ReconcileInput, content review.CapturedFile,
 	if !contextMatches(input.Anchor, content.Lines, first.newLine, first.newLine+count-1) {
 		return nil, false
 	}
-	return []review.AnchorCandidate{{Path: append([]byte(nil), path...), Side: content.Side, StartLine: first.newLine, EndLine: first.newLine + count - 1, Tier: review.EvidenceTierLineDiff, Reason: "versioned_line_diff"}}, true
+	return []review.AnchorCandidate{makeAnchorCandidate(input.Anchor, content, input.Transition.ToGeneration, first.newLine, first.newLine+count-1, review.EvidenceTierLineDiff, "versioned_line_diff")}, true
+}
+
+func makeAnchorCandidate(anchor review.CodeAnchor, content review.CapturedFile, generation repository.TargetGeneration, start, end int, tier review.EvidenceTier, reason string) review.AnchorCandidate {
+	selected := ""
+	if start > 0 && end >= start && end <= len(content.Lines) {
+		selected = strings.Join(content.Lines[start-1:end], "\n")
+	}
+	return review.AnchorCandidate{
+		Generation:         generation,
+		SourcePath:         append([]byte(nil), anchor.Path...),
+		Path:               append([]byte(nil), content.Path...),
+		Side:               content.Side,
+		StartLine:          start,
+		EndLine:            end,
+		ContentFingerprint: candidateContentFingerprint(content),
+		SelectedText:       selected,
+		BeforeContext:      append([]string(nil), contextLines(content.Lines, start, -1)...),
+		AfterContext:       append([]string(nil), contextLines(content.Lines, end, 1)...),
+		Tier:               tier,
+		Reason:             reason,
+	}
+}
+
+func candidateContentFingerprint(content review.CapturedFile) string {
+	if content.ContentIdentity != "" {
+		return content.ContentIdentity
+	}
+	return review.FingerprintCapturedContent(content.Lines)
 }
 
 type linePair struct{ oldLine, newLine int }

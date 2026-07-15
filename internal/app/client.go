@@ -41,12 +41,13 @@ type ResultClient interface {
 
 // ClientOptions configures bounded runtime queues and reducer dependencies.
 type ClientOptions struct {
-	Clock         Clock
-	IDs           IDSource
-	TreeSearcher  TreeSearcher
-	LargeContent  LargeContentQueryPort
-	CommandBuffer int
-	EventBuffer   int
+	Clock              Clock
+	IDs                IDSource
+	TreeSearcher       TreeSearcher
+	LargeContent       LargeContentQueryPort
+	AnchorReattachment *AnchorReattachmentService
+	CommandBuffer      int
+	EventBuffer        int
 }
 
 // Query is a sealed read-only application query.
@@ -106,7 +107,7 @@ func NewClient(options ClientOptions) (*Client, error) {
 	if eventBuffer <= 0 {
 		eventBuffer = defaultEventBuffer
 	}
-	reducer := NewReducer(ReducerConfig{Clock: options.Clock, IDs: options.IDs})
+	reducer := NewReducer(ReducerConfig{Clock: options.Clock, IDs: options.IDs, AnchorReattachment: options.AnchorReattachment})
 	client := &Client{
 		reducer:      reducer,
 		searcher:     options.TreeSearcher,

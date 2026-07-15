@@ -5,6 +5,7 @@ import (
 
 	"github.com/Scottlr/nudge/internal/app"
 	"github.com/Scottlr/nudge/internal/domain"
+	reattachpane "github.com/Scottlr/nudge/internal/tui/reattach"
 )
 
 // SnapshotMsg carries one immutable application projection to the root.
@@ -72,6 +73,10 @@ type InvalidateRenderMsg struct{}
 type ApplicationIntentMsg struct {
 	Command app.Command
 }
+
+// ShowAnchorReattachmentMsg opens the manual anchor projection with one
+// immutable candidate set.
+type ShowAnchorReattachmentMsg struct{ Projection reattachpane.Projection }
 
 // DispatchResultMsg reports the bounded result of one application command.
 type DispatchResultMsg struct {

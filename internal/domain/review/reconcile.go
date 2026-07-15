@@ -55,20 +55,51 @@ const (
 // AnchorCandidate is one bounded, displayable possible destination for an
 // anchor that could not be selected with confidence.
 type AnchorCandidate struct {
-	Path      repository.RepoPath
-	Side      repository.DiffSide
-	StartLine int
-	EndLine   int
-	Tier      EvidenceTier
-	Reason    string
+	Generation         repository.TargetGeneration
+	SourcePath         repository.RepoPath
+	Path               repository.RepoPath
+	Side               repository.DiffSide
+	StartLine          int
+	EndLine            int
+	ContentFingerprint string
+	SelectedText       string
+	BeforeContext      []string
+	AfterContext       []string
+	Tier               EvidenceTier
+	Reason             string
 }
 
 func (c AnchorCandidate) Validate() error {
-	if err := c.Path.Validate(); err != nil || (c.Side != repository.DiffBase && c.Side != repository.DiffHead) || c.StartLine <= 0 || c.EndLine < c.StartLine || !validEvidenceTier(c.Tier) || !validMetadata(c.Reason) {
+	if c.Generation == 0 || (c.Side != repository.DiffBase && c.Side != repository.DiffHead) || c.StartLine <= 0 || c.EndLine < c.StartLine || !validEvidenceTier(c.Tier) || !validMetadata(c.Reason) || !validFingerprintText(c.ContentFingerprint) || !validContent(c.SelectedText) {
+		return ErrInvalidReconcileOutcome
+	}
+	if err := c.Path.Validate(); err != nil {
+		return ErrInvalidReconcileOutcome
+	}
+	if len(c.SourcePath) > 0 {
+		if err := c.SourcePath.Validate(); err != nil {
+			return ErrInvalidReconcileOutcome
+		}
+	}
+	if len([]byte(c.SelectedText)) > MaxAnchorCandidateEvidenceBytes {
+		return ErrInvalidReconcileOutcome
+	}
+	contextBytes := 0
+	for _, line := range append(append([]string(nil), c.BeforeContext...), c.AfterContext...) {
+		if !validContent(line) {
+			return ErrInvalidReconcileOutcome
+		}
+		contextBytes += len([]byte(line))
+	}
+	if contextBytes > MaxAnchorCandidateEvidenceBytes {
 		return ErrInvalidReconcileOutcome
 	}
 	return nil
 }
+
+// MaxAnchorCandidateEvidenceBytes bounds the display and persistence evidence
+// carried by one manual-reattachment candidate.
+const MaxAnchorCandidateEvidenceBytes = 256 << 10
 
 // CapturedFile is immutable, capture-owned text for exactly one path and
 // diff side. Lines contain original text without line terminators.

@@ -249,6 +249,9 @@ func (t *workspaceTestTx) SaveCaptureGeneration(context.Context, app.CaptureGene
 func (t *workspaceTestTx) SaveAcceptedTargetGeneration(context.Context, app.AcceptedTargetGeneration) error {
 	return nil
 }
+func (t *workspaceTestTx) AppendAnchorVersion(context.Context, app.AnchorVersionWrite) (app.AnchorVersionRecord, error) {
+	return app.AnchorVersionRecord{}, nil
+}
 func (t *workspaceTestTx) CreateReconciliation(context.Context, app.ReconciliationOperation) error {
 	return nil
 }

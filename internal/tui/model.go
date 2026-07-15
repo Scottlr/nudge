@@ -14,6 +14,7 @@ import (
 	discussionpane "github.com/Scottlr/nudge/internal/tui/components/discussion"
 	threadpane "github.com/Scottlr/nudge/internal/tui/components/threads"
 	treepane "github.com/Scottlr/nudge/internal/tui/components/tree"
+	reattachpane "github.com/Scottlr/nudge/internal/tui/reattach"
 )
 
 // Pane identifies one product surface without carrying its workflow data.
@@ -41,6 +42,7 @@ type Model struct {
 	codePane        *codepane.Model
 	threadPane      *threadpane.Model
 	discussionPane  *discussionpane.Model
+	reattachPane    *reattachpane.Model
 	dimensions      Dimensions
 	layout          Layout
 	focus           Pane
@@ -63,9 +65,10 @@ type Model struct {
 	reportFocus bool
 	lastError   string
 
-	snapshotClosed bool
-	eventsClosed   bool
-	sessionGuard   *app.SessionWriteGuard
+	snapshotClosed  bool
+	eventsClosed    bool
+	sessionGuard    *app.SessionWriteGuard
+	reattachPending bool
 }
 
 // ModelOption configures frontend state without changing application policy.
@@ -165,6 +168,7 @@ func NewModel(client app.ApplicationClient, options ...ModelOption) *Model {
 		codePane:       codepane.NewModel(),
 		threadPane:     threadpane.NewModel(),
 		discussionPane: discussionpane.NewModel(),
+		reattachPane:   reattachpane.NewModel("reviewer"),
 		theme:          theme.BuiltinTerminalDefault(),
 		themeHealth:    theme.Health{ThemeID: "terminal", SchemaVersion: theme.SchemaVersion, Source: theme.SourceBuiltin},
 		layout:         CalculateLayout(Dimensions{}),
@@ -229,6 +233,24 @@ func (m *Model) Snapshot() app.AppSnapshot {
 		return app.AppSnapshot{}
 	}
 	return m.snapshot.Clone()
+}
+
+// ShowAnchorReattachment opens the bounded manual-reattachment projection.
+// The supplied evidence is immutable and remains subject to application-side
+// generation and previous-anchor validation at confirmation time.
+func (m *Model) ShowAnchorReattachment(projection reattachpane.Projection) {
+	if m == nil || m.reattachPane == nil {
+		return
+	}
+	m.reattachPane.Update(reattachpane.SetProjectionMsg{Projection: projection})
+	m.reattachPane.Update(reattachpane.SetFocusMsg{Focused: true})
+	m.reattachPending = false
+	m.resizeChildPanes()
+}
+
+// AnchorReattachmentOpen reports whether the modal projection owns input.
+func (m *Model) AnchorReattachmentOpen() bool {
+	return m != nil && m.reattachPane != nil && m.reattachPane.Projection().Validate() == nil
 }
 
 // CurrentLayout returns the current pure layout result.
@@ -297,5 +319,8 @@ func (m *Model) applyTheme(value theme.Theme) {
 	}
 	if m.discussionPane != nil {
 		m.discussionPane.SetTheme(value)
+	}
+	if m.reattachPane != nil {
+		m.reattachPane.SetTheme(value)
 	}
 }

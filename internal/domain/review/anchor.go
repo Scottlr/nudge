@@ -18,6 +18,26 @@ type RelocationMetadata struct {
 	ReconciledAt      time.Time
 }
 
+// AnchorVersionMethod identifies the evidence-producing operation that
+// created one append-only anchor history row.
+type AnchorVersionMethod string
+
+const (
+	AnchorVersionMethodLegacy     AnchorVersionMethod = "legacy"
+	AnchorVersionMethodInitial    AnchorVersionMethod = "initial"
+	AnchorVersionMethodReconciled AnchorVersionMethod = "reconciled"
+	AnchorVersionMethodManual     AnchorVersionMethod = "manual"
+)
+
+func (m AnchorVersionMethod) Validate() error {
+	switch m {
+	case AnchorVersionMethodLegacy, AnchorVersionMethodInitial, AnchorVersionMethodReconciled, AnchorVersionMethodManual:
+		return nil
+	default:
+		return ErrInvalidCodeAnchor
+	}
+}
+
 // CodeAnchor is durable, snapshot-bound evidence for one selected code range.
 // Path bytes remain repository identity and are never interpreted as native
 // paths by this package.

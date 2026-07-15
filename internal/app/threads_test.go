@@ -298,6 +298,16 @@ func (t *threadTestTx) SaveCaptureGeneration(context.Context, CaptureGeneration,
 func (t *threadTestTx) SaveAcceptedTargetGeneration(context.Context, AcceptedTargetGeneration) error {
 	return nil
 }
+func (t *threadTestTx) AppendAnchorVersion(_ context.Context, write AnchorVersionWrite) (AnchorVersionRecord, error) {
+	thread, ok := t.threads[write.ThreadID]
+	if !ok || thread.SessionID != t.sessionID {
+		return AnchorVersionRecord{}, ErrReviewStoreNotFound
+	}
+	thread.Anchor = write.Anchor
+	thread.UpdatedAt = write.CreatedAt
+	t.threads[thread.ID] = thread
+	return AnchorVersionRecord{ThreadID: write.ThreadID, Version: 2, Anchor: write.Anchor, Method: write.Method, PreviousVersion: 1, Candidate: candidatePointer(write.Candidate), Actor: write.Actor, CreatedAt: write.CreatedAt}, nil
+}
 func (t *threadTestTx) CreateReconciliation(context.Context, ReconciliationOperation) error {
 	return nil
 }

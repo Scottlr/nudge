@@ -33,6 +33,9 @@ func (m *Model) render() string {
 		return "Waiting for terminal size"
 	}
 	m.syncCommandHints()
+	if m.AnchorReattachmentOpen() {
+		return m.reattachPane.View()
+	}
 	if overlay, ok := m.overlays.Top(); ok {
 		return m.renderOverlay(overlay)
 	}

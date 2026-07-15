@@ -457,6 +457,7 @@ type ReviewStoreTx interface {
 	SaveProviderTurn(ctx context.Context, record ProviderTurnRecord) error
 	SaveCaptureGeneration(ctx context.Context, generation CaptureGeneration, manifest CaptureManifest) error
 	SaveAcceptedTargetGeneration(ctx context.Context, generation AcceptedTargetGeneration) error
+	AppendAnchorVersion(ctx context.Context, write AnchorVersionWrite) (AnchorVersionRecord, error)
 	CreateReconciliation(ctx context.Context, operation ReconciliationOperation) error
 	UpdateReconciliation(ctx context.Context, operation ReconciliationOperation) error
 	StageReconciliationResult(ctx context.Context, result ReconciliationAnchorResult) error

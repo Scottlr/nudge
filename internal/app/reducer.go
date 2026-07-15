@@ -16,19 +16,21 @@ import (
 // ReducerConfig supplies the owned clock and identity source used by a
 // reducer. Nil dependencies use the production implementations.
 type ReducerConfig struct {
-	Clock   Clock
-	IDs     IDSource
-	Threads *ThreadService
+	Clock              Clock
+	IDs                IDSource
+	Threads            *ThreadService
+	AnchorReattachment *AnchorReattachmentService
 }
 
 // Reducer is the single mutable-state owner for the application runtime. It
 // is intentionally not safe for concurrent use; Client serializes all calls.
 type Reducer struct {
-	state   State
-	clock   Clock
-	ids     IDSource
-	threads *ThreadService
-	closed  bool
+	state              State
+	clock              Clock
+	ids                IDSource
+	threads            *ThreadService
+	anchorReattachment *AnchorReattachmentService
+	closed             bool
 }
 
 // Commit is the reducer's complete externally visible result for one input.
@@ -57,7 +59,7 @@ func NewReducer(config ReducerConfig) *Reducer {
 	if ids == nil {
 		ids = RandomIDSource{}
 	}
-	return &Reducer{state: NewState(), clock: clock, ids: ids, threads: config.Threads}
+	return &Reducer{state: NewState(), clock: clock, ids: ids, threads: config.Threads, anchorReattachment: config.AnchorReattachment}
 }
 
 // State returns a detached copy for reducer-owned tests and composition code.
@@ -237,6 +239,15 @@ func (r *Reducer) handleCommand(command Command) (ReducerResponse, error) {
 			return ReducerResponse{}, err
 		}
 		return r.commitThread(commit)
+	case ReattachAnchor:
+		if r.anchorReattachment == nil {
+			return ReducerResponse{}, ErrAnchorReattachmentUnavailable
+		}
+		commit, err := r.anchorReattachment.ReattachAnchor(context.Background(), value)
+		if err != nil {
+			return ReducerResponse{}, err
+		}
+		return r.commitThread(ThreadCommit{Guard: commit.Guard, Thread: commit.Thread, Events: commit.Events})
 	default:
 		return ReducerResponse{}, ErrInvalidReducerInput
 	}
