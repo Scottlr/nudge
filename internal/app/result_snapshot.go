@@ -82,6 +82,7 @@ type ResultSnapshotEntry struct {
 	ContentClass       repository.ContentClassV1       `json:"content_class,omitempty"`
 	TextSemantics      *repository.TextByteSemantics   `json:"text_semantics,omitempty"`
 	LinkTarget         []byte                          `json:"link_target,omitempty"`
+	SymlinkEvidence    *repository.SymlinkEvidence     `json:"symlink_evidence,omitempty"`
 	NativeIdentityHash string                          `json:"native_identity_hash,omitempty"`
 	NativeAlias        *repository.NativeAliasEvidence `json:"native_alias,omitempty"`
 	NativePath         *repository.NativePathEvidence  `json:"native_path,omitempty"`
@@ -110,7 +111,7 @@ func (e ResultSnapshotEntry) Validate() error {
 			return ErrInvalidResultSnapshot
 		}
 	case repository.FileKindSymlink:
-		if e.Mode == 0 || len(e.LinkTarget) == 0 || e.Bytes != uint64(len(e.LinkTarget)) || !validResultHash(e.SHA256) || e.ContentClass != "" || e.TextSemantics != nil || e.NativeIdentityHash != "" || e.NativeAlias != nil || !e.Complete {
+		if e.Mode == 0 || len(e.LinkTarget) == 0 || e.Bytes != uint64(len(e.LinkTarget)) || !validResultHash(e.SHA256) || e.ContentClass != "" || e.TextSemantics != nil || e.NativeIdentityHash != "" || e.NativeAlias != nil || !e.Complete || e.SymlinkEvidence != nil && (e.SymlinkEvidence.Validate() != nil || e.SymlinkEvidence.PathKey != path.Key() || e.SymlinkEvidence.TargetHash != e.SHA256 || e.SymlinkEvidence.TargetLength != e.Bytes) {
 			return ErrInvalidResultSnapshot
 		}
 	case repository.FileKindUnknown:
@@ -632,6 +633,10 @@ func cloneResultEntries(entries []ResultSnapshotEntry) []ResultSnapshotEntry {
 		copyEntries[index] = entry
 		copyEntries[index].Path = append([]byte(nil), entry.Path...)
 		copyEntries[index].LinkTarget = append([]byte(nil), entry.LinkTarget...)
+		if entry.SymlinkEvidence != nil {
+			evidence := *entry.SymlinkEvidence
+			copyEntries[index].SymlinkEvidence = &evidence
+		}
 		if entry.TextSemantics != nil {
 			semantics := *entry.TextSemantics
 			copyEntries[index].TextSemantics = &semantics
@@ -660,6 +665,10 @@ func cloneDeltaEntries(entries []ResultDeltaEntry) []ResultDeltaEntry {
 		if entry.Baseline != nil {
 			base := *entry.Baseline
 			base.Path = append([]byte(nil), base.Path...)
+			if base.SymlinkEvidence != nil {
+				evidence := *base.SymlinkEvidence
+				base.SymlinkEvidence = &evidence
+			}
 			if base.TextSemantics != nil {
 				semantics := *base.TextSemantics
 				base.TextSemantics = &semantics
@@ -674,6 +683,10 @@ func cloneDeltaEntries(entries []ResultDeltaEntry) []ResultDeltaEntry {
 			result := *entry.Result
 			result.Path = append([]byte(nil), result.Path...)
 			result.LinkTarget = append([]byte(nil), result.LinkTarget...)
+			if result.SymlinkEvidence != nil {
+				evidence := *result.SymlinkEvidence
+				result.SymlinkEvidence = &evidence
+			}
 			if result.NativeAlias != nil {
 				alias := *result.NativeAlias
 				result.NativeAlias = &alias
@@ -725,6 +738,7 @@ func resultDeltaHash(delta ResultDelta) string {
 			writeResultHashString(h, string(entry.Baseline.ContentClass))
 			writeResultTextSemanticsHash(h, entry.Baseline.TextSemantics)
 			writeResultHashBytes(h, entry.Baseline.LinkTarget)
+			writeResultSymlinkHash(h, entry.Baseline.SymlinkEvidence)
 			writeResultNativePathHash(h, entry.Baseline.NativePath)
 		}
 		if entry.ModeTransition == nil {
@@ -766,6 +780,7 @@ func writeResultEntryHash(h interface{ Write([]byte) (int, error) }, entry Resul
 	writeResultHashString(h, string(entry.ContentClass))
 	writeResultTextSemanticsHash(h, entry.TextSemantics)
 	writeResultHashBytes(h, entry.LinkTarget)
+	writeResultSymlinkHash(h, entry.SymlinkEvidence)
 	writeResultHashString(h, entry.NativeIdentityHash)
 	if entry.NativeAlias == nil {
 		writeResultHashBool(h, false)
@@ -779,6 +794,23 @@ func writeResultEntryHash(h interface{ Write([]byte) (int, error) }, entry Resul
 	writeResultNativePathHash(h, entry.NativePath)
 	writeResultHashBool(h, entry.Complete)
 	writeResultHashString(h, string(entry.Reason))
+}
+
+func writeResultSymlinkHash(h interface{ Write([]byte) (int, error) }, value *repository.SymlinkEvidence) {
+	if value == nil {
+		writeResultHashBool(h, false)
+		return
+	}
+	writeResultHashBool(h, true)
+	writeResultHashBytes(h, []byte(string(value.PathKey)))
+	writeResultHashString(h, value.TargetHash)
+	writeResultHashUint(h, value.TargetLength)
+	writeResultHashString(h, string(value.TargetClass))
+	writeResultHashString(h, value.RootIdentity)
+	writeResultHashString(h, value.ParentChainHash)
+	writeResultHashString(h, value.Platform)
+	writeResultHashString(h, value.PrimitiveVersion)
+	writeResultHashString(h, value.ReasonCode)
 }
 
 func writeResultNativePathHash(h interface{ Write([]byte) (int, error) }, value *repository.NativePathEvidence) {

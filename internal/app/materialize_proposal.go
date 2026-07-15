@@ -27,6 +27,7 @@ type ProposalBaselineRequest struct {
 	Policy           CapabilityPolicyV1
 	ResourcePolicy   ResourcePolicy
 	ModeEvidence     map[repository.RepoPathKey]ModeCapabilityEvidence
+	SymlinkEvidence  map[repository.RepoPathKey]SymlinkCapabilityEvidence
 }
 
 // ProposalBaseline is the complete independently verified baseline evidence
@@ -56,7 +57,7 @@ func (r ProposalBaselineRequest) Validate() error {
 		return ErrProposalBaselineUnsupported
 	}
 	for _, entry := range candidate.Entries {
-		if err := validateProposalBaselineChange(entry.Change); err != nil {
+		if err := validateProposalBaselineChange(entry.Change, r.SymlinkEvidence); err != nil {
 			return err
 		}
 		if entry.Change.ModeTransition != nil && entry.Change.ModeTransition.IsExecutableChange() {
@@ -91,7 +92,7 @@ func (b ProposalBaseline) Validate() error {
 	return nil
 }
 
-func validateProposalBaselineChange(change repository.ChangedFile) error {
+func validateProposalBaselineChange(change repository.ChangedFile, symlinkEvidence map[repository.RepoPathKey]SymlinkCapabilityEvidence) error {
 	if err := change.Validate(); err != nil {
 		return ErrInvalidProposalBaseline
 	}
@@ -104,13 +105,28 @@ func validateProposalBaselineChange(change repository.ChangedFile) error {
 		return ErrProposalBaselineUnsupported
 	}
 	for _, side := range []struct {
+		path repository.RepoPath
 		kind repository.FileKind
 		mode uint32
 	}{
-		{kind: change.OldFileKind, mode: change.OldMode},
-		{kind: change.NewFileKind, mode: change.NewMode},
+		{path: pathOrEmpty(change.OldPath), kind: change.OldFileKind, mode: change.OldMode},
+		{path: pathOrEmpty(change.NewPath), kind: change.NewFileKind, mode: change.NewMode},
 	} {
 		if side.kind == "" || side.kind == repository.FileKindUnknown {
+			continue
+		}
+		if side.kind == repository.FileKindSymlink {
+			if side.path == nil {
+				return ErrProposalBaselineUnsupported
+			}
+			evidence, ok := symlinkEvidence[side.path.Key()]
+			requiredChange := change.Kind
+			if requiredChange == repository.ChangeUntracked {
+				requiredChange = repository.ChangeAdded
+			}
+			if !ok || evidence.Validate() != nil || !evidence.Supported(requiredChange) {
+				return ErrProposalBaselineUnsupported
+			}
 			continue
 		}
 		if side.kind != repository.FileKindRegular || side.mode&0o111 != 0 && (change.ModeTransition == nil || !change.ModeTransition.IsExecutableChange()) {
@@ -121,6 +137,13 @@ func validateProposalBaselineChange(change repository.ChangedFile) error {
 		return ErrProposalBaselineUnsupported
 	}
 	return nil
+}
+
+func pathOrEmpty(path *repository.RepoPath) repository.RepoPath {
+	if path == nil {
+		return nil
+	}
+	return *path
 }
 
 func changePaths(change repository.ChangedFile) []repository.RepoPath {

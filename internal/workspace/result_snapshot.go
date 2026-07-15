@@ -220,7 +220,7 @@ func enumerateResultRoot(ctx context.Context, root string, policy app.ResourcePo
 			}
 			afterInfo, statErr := os.Lstat(path)
 			afterTarget, targetErr := os.Readlink(path)
-			if statErr != nil || targetErr != nil || !os.SameFile(info, afterInfo) || afterTarget != target {
+			if statErr != nil || targetErr != nil || !sameSymlinkObservation(info, afterInfo) || afterTarget != target {
 				entries = append(entries, unsupportedResultEntry(rawPath, app.ResultReasonResultRace))
 				reason = firstFreezeReason(reason, app.ResultReasonResultRace)
 				return nil
@@ -229,11 +229,14 @@ func enumerateResultRoot(ctx context.Context, root string, policy app.ResourcePo
 			if app.ByteSize(len(linkTarget)) > policy.Symlink.TrackedBlobBytes {
 				return app.ErrReviewSnapshotLimit
 			}
-			entryReason := app.ResultReasonUnsupportedEntry
-			if symlinkEscapes(root, path, target) {
-				entryReason = app.ResultReasonPathAlias
+			evidence, evidenceErr := nativeResolver.QualifySymlinkTarget(verifiedRoot, rawPath, linkTarget)
+			if evidenceErr != nil {
+				entries = append(entries, unsupportedResultEntry(rawPath, app.ResultReasonNativeIdentity))
+				reason = firstFreezeReason(reason, app.ResultReasonNativeIdentity)
+				return nil
 			}
-			entries = append(entries, app.ResultSnapshotEntry{Path: rawPath.Bytes(), Kind: repository.FileKindSymlink, Mode: 0o120000, Bytes: uint64(len(linkTarget)), SHA256: hashResultBytes(linkTarget), LinkTarget: linkTarget, Complete: true, Reason: entryReason})
+			entryReason := symlinkResultReason(evidence.TargetClass)
+			entries = append(entries, app.ResultSnapshotEntry{Path: rawPath.Bytes(), Kind: repository.FileKindSymlink, Mode: 0o120000, Bytes: uint64(len(linkTarget)), SHA256: hashResultBytes(linkTarget), LinkTarget: linkTarget, SymlinkEvidence: &evidence, Complete: true, Reason: entryReason})
 			reason = firstFreezeReason(reason, entryReason)
 		case info.Mode().IsRegular():
 			entry, entryErr := scanResultFile(ctx, root, nativePath, rawPath, info, policy, nativeResolver, verifiedRoot)
@@ -372,12 +375,30 @@ func hasGitAdminComponent(components []string) bool {
 	return false
 }
 
-func symlinkEscapes(root, path, target string) bool {
-	if filepath.IsAbs(target) || filepath.VolumeName(target) != "" {
+func symlinkResultReason(class repository.SymlinkTargetClass) app.ResultSnapshotReason {
+	switch class {
+	case repository.SymlinkRelativeContained:
+		return app.ResultReasonNone
+	case repository.SymlinkAbsolute, repository.SymlinkLexicallyEscaping:
+		return app.ResultReasonPathAlias
+	case repository.SymlinkGitAdminAlias:
+		return app.ResultReasonGitAdminPath
+	default:
+		return app.ResultReasonUnsupportedEntry
+	}
+}
+
+func sameSymlinkObservation(before, after os.FileInfo) bool {
+	if before == nil || after == nil || before.Mode()&os.ModeSymlink == 0 || after.Mode()&os.ModeSymlink == 0 {
+		return false
+	}
+	if os.SameFile(before, after) {
 		return true
 	}
-	resolved := filepath.Clean(filepath.Join(filepath.Dir(path), target))
-	return !containedPath(root, resolved)
+	// Some platforms do not expose a stable file-id for lstat results. The
+	// exact no-follow target comparison above remains mandatory; this metadata
+	// fallback keeps the observer conservative without following the referent.
+	return before.Mode() == after.Mode() && before.Size() == after.Size() && before.ModTime().Equal(after.ModTime())
 }
 
 func hashNativeIdentity(identity repository.NativeIdentity) string {

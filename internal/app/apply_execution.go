@@ -85,6 +85,7 @@ type ApplyPathEvidence struct {
 	ContentClass      repository.ContentClassV1
 	TextSemantics     *repository.TextByteSemantics
 	SymlinkTargetHash string
+	SymlinkEvidence   *repository.SymlinkEvidence
 	NativeAlias       *repository.NativeAliasEvidence
 	NativePath        *repository.NativePathEvidence
 }
@@ -93,7 +94,7 @@ func (p ApplyPathEvidence) Validate() error {
 	if p.Path.Validate() != nil {
 		return ErrApplyVerificationFailed
 	}
-	precondition := repository.PathPrecondition{Path: p.Path, MustExist: p.Exists, Kind: p.Kind, Mode: p.Mode, ContentBytes: p.ContentBytes, ContentHash: p.ContentHash, ContentClass: p.ContentClass, TextSemantics: p.TextSemantics, SymlinkTargetHash: p.SymlinkTargetHash, NativeAlias: p.NativeAlias, NativePath: p.NativePath}
+	precondition := repository.PathPrecondition{Path: p.Path, MustExist: p.Exists, Kind: p.Kind, Mode: p.Mode, ContentBytes: p.ContentBytes, ContentHash: p.ContentHash, ContentClass: p.ContentClass, TextSemantics: p.TextSemantics, SymlinkTargetHash: p.SymlinkTargetHash, SymlinkEvidence: p.SymlinkEvidence, NativeAlias: p.NativeAlias, NativePath: p.NativePath}
 	if precondition.Validate() != nil {
 		return ErrApplyVerificationFailed
 	}
@@ -101,7 +102,7 @@ func (p ApplyPathEvidence) Validate() error {
 }
 
 func (p ApplyPathEvidence) precondition() repository.PathPrecondition {
-	return repository.PathPrecondition{Path: p.Path, MustExist: p.Exists, Kind: p.Kind, Mode: p.Mode, ContentBytes: p.ContentBytes, ContentHash: p.ContentHash, ContentClass: p.ContentClass, TextSemantics: p.TextSemantics, SymlinkTargetHash: p.SymlinkTargetHash, NativeAlias: p.NativeAlias, NativePath: p.NativePath}
+	return repository.PathPrecondition{Path: p.Path, MustExist: p.Exists, Kind: p.Kind, Mode: p.Mode, ContentBytes: p.ContentBytes, ContentHash: p.ContentHash, ContentClass: p.ContentClass, TextSemantics: p.TextSemantics, SymlinkTargetHash: p.SymlinkTargetHash, SymlinkEvidence: p.SymlinkEvidence, NativeAlias: p.NativeAlias, NativePath: p.NativePath}
 }
 
 // ApplyVerificationEvidence is the bounded post-mutation or recovery
@@ -538,7 +539,7 @@ func classifyApplyVerification(operation ApplyOperation, patch review.ProposedPa
 func applyResultPathsMatch(actual map[repository.RepoPathKey]ApplyPathEvidence, files []review.ProposedFile) bool {
 	expected := make(map[repository.RepoPathKey]applyExpectedPath, len(files))
 	for _, file := range files {
-		expected[file.Path.Key()] = applyExpectedPath{exists: !file.Deleted, kind: file.Kind, mode: file.Mode, contentBytes: file.ContentBytes, contentHash: file.ContentHash, contentClass: file.ContentClass, textSemantics: file.TextSemantics}
+		expected[file.Path.Key()] = applyExpectedPath{exists: !file.Deleted, kind: file.Kind, mode: file.Mode, contentBytes: file.ContentBytes, contentHash: file.ContentHash, contentClass: file.ContentClass, textSemantics: file.TextSemantics, symlinkEvidence: file.SymlinkEvidence}
 		if file.OldPath != nil && !bytes.Equal(file.OldPath.Bytes(), file.Path.Bytes()) {
 			if file.Copied {
 				expected[(*file.OldPath).Key()] = applyExpectedPath{exists: true, kind: file.OldKind, mode: file.OldMode, contentBytes: file.OldContentBytes, contentHash: file.OldContentHash, contentClass: file.OldContentClass, textSemantics: file.OldTextSemantics}
@@ -562,7 +563,7 @@ func applyResultPathsMatch(actual map[repository.RepoPathKey]ApplyPathEvidence, 
 		if want.kind == repository.FileKindSymlink {
 			observedHash = observed.SymlinkTargetHash
 		}
-		if observed.Kind != want.kind || observed.Mode != want.mode || want.contentClass != "" && (observed.ContentBytes != want.contentBytes || observed.ContentClass != want.contentClass || want.textSemantics != nil && (observed.TextSemantics == nil || *observed.TextSemantics != *want.textSemantics)) || want.contentHash != "" && observedHash != want.contentHash {
+		if observed.Kind != want.kind || observed.Mode != want.mode || want.contentClass != "" && (observed.ContentBytes != want.contentBytes || observed.ContentClass != want.contentClass || want.textSemantics != nil && (observed.TextSemantics == nil || *observed.TextSemantics != *want.textSemantics)) || want.contentHash != "" && observedHash != want.contentHash || want.symlinkEvidence != nil && !sameSymlinkEvidence(observed.SymlinkEvidence, want.symlinkEvidence) {
 			return false
 		}
 	}
@@ -570,13 +571,14 @@ func applyResultPathsMatch(actual map[repository.RepoPathKey]ApplyPathEvidence, 
 }
 
 type applyExpectedPath struct {
-	exists        bool
-	kind          repository.FileKind
-	mode          uint32
-	contentBytes  uint64
-	contentHash   string
-	contentClass  repository.ContentClassV1
-	textSemantics *repository.TextByteSemantics
+	exists          bool
+	kind            repository.FileKind
+	mode            uint32
+	contentBytes    uint64
+	contentHash     string
+	contentClass    repository.ContentClassV1
+	textSemantics   *repository.TextByteSemantics
+	symlinkEvidence *repository.SymlinkEvidence
 }
 
 func applyBaselinePathsMatch(actual map[repository.RepoPathKey]ApplyPathEvidence, expected []repository.PathPrecondition) bool {

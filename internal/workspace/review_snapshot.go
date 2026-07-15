@@ -761,6 +761,14 @@ func (m *ReviewSnapshotManager) writeCaptureSymlink(ctx context.Context, root st
 	if err := m.checkFreeSpace(ctx, root, app.ByteSize(len(data))); err != nil {
 		return "", 0, err
 	}
+	verifiedRoot, rootErr := paths.NewVerifiedRoot(root)
+	if rootErr != nil {
+		return "", 0, app.ErrReviewSnapshotUnsafe
+	}
+	evidence, evidenceErr := paths.NewNativePathResolver().QualifySymlinkTarget(verifiedRoot, repository.RepoPath(entry.path), data)
+	if evidenceErr != nil || !evidence.IsActionable() {
+		return "", 0, app.ErrReviewSnapshotUnsafe
+	}
 	if err := os.Symlink(string(data), filepath.Join(root, entry.nativePath)); err != nil {
 		return "", 0, fmt.Errorf("%w: symlink", app.ErrReviewSnapshotUnsafe)
 	}
@@ -782,6 +790,14 @@ func (m *ReviewSnapshotManager) writeBaseSymlink(ctx context.Context, root strin
 	}
 	if err := m.checkFreeSpace(ctx, root, app.ByteSize(len(data))); err != nil {
 		return "", 0, err
+	}
+	verifiedRoot, rootErr := paths.NewVerifiedRoot(root)
+	if rootErr != nil {
+		return "", 0, app.ErrReviewSnapshotUnsafe
+	}
+	evidence, evidenceErr := paths.NewNativePathResolver().QualifySymlinkTarget(verifiedRoot, repository.RepoPath(entry.path), data)
+	if evidenceErr != nil || !evidence.IsActionable() {
+		return "", 0, app.ErrReviewSnapshotUnsafe
 	}
 	if err := os.Symlink(string(data), filepath.Join(root, entry.nativePath)); err != nil {
 		return "", 0, fmt.Errorf("%w: symlink", app.ErrReviewSnapshotUnsafe)

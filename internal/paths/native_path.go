@@ -107,35 +107,39 @@ func (r VerifiedRoot) Validate() error {
 type NativeLeafOperationKind string
 
 const (
-	NativeLeafInspect  NativeLeafOperationKind = "inspect"
-	NativeLeafRead     NativeLeafOperationKind = "read"
-	NativeLeafCreate   NativeLeafOperationKind = "create"
-	NativeLeafReplace  NativeLeafOperationKind = "replace"
-	NativeLeafDelete   NativeLeafOperationKind = "delete"
-	NativeLeafReadlink NativeLeafOperationKind = "readlink"
-	NativeLeafSymlink  NativeLeafOperationKind = "symlink"
+	NativeLeafInspect        NativeLeafOperationKind = "inspect"
+	NativeLeafRead           NativeLeafOperationKind = "read"
+	NativeLeafCreate         NativeLeafOperationKind = "create"
+	NativeLeafReplace        NativeLeafOperationKind = "replace"
+	NativeLeafDelete         NativeLeafOperationKind = "delete"
+	NativeLeafReadlink       NativeLeafOperationKind = "readlink"
+	NativeLeafSymlink        NativeLeafOperationKind = "symlink"
+	NativeLeafReplaceSymlink NativeLeafOperationKind = "replace_symlink"
 )
 
 // NativeLeafResult carries bounded data from typed read operations. It is
 // caller-owned and never stored in a token or evidence value.
 type NativeLeafResult struct {
-	Data   []byte
-	Target string
+	Data            []byte
+	Target          string
+	SymlinkEvidence *repository.SymlinkEvidence
 }
 
 // NativeLeafOperation describes one typed no-follow leaf request.
 type NativeLeafOperation struct {
-	Kind     NativeLeafOperationKind
-	Data     []byte
-	Mode     os.FileMode
-	Target   string
-	MaxBytes int64
-	Result   *NativeLeafResult
+	Kind            NativeLeafOperationKind
+	Data            []byte
+	Mode            os.FileMode
+	Target          string
+	MaxBytes        int64
+	ExpectedKind    repository.FileKind
+	SymlinkEvidence *repository.SymlinkEvidence
+	Result          *NativeLeafResult
 }
 
 func (o NativeLeafOperation) validate() error {
 	switch o.Kind {
-	case NativeLeafInspect, NativeLeafRead, NativeLeafCreate, NativeLeafReplace, NativeLeafDelete, NativeLeafReadlink, NativeLeafSymlink:
+	case NativeLeafInspect, NativeLeafRead, NativeLeafCreate, NativeLeafReplace, NativeLeafDelete, NativeLeafReadlink, NativeLeafSymlink, NativeLeafReplaceSymlink:
 	default:
 		return ErrNativePathOperation
 	}
@@ -151,7 +155,10 @@ func (o NativeLeafOperation) validate() error {
 	if (o.Kind == NativeLeafCreate || o.Kind == NativeLeafReplace) && o.Mode.Perm() == 0 {
 		return ErrNativePathOperation
 	}
-	if o.Kind == NativeLeafSymlink && o.Target == "" {
+	if (o.Kind == NativeLeafSymlink || o.Kind == NativeLeafReplaceSymlink) && (o.Target == "" || len(o.Target) > repository.SymlinkNativeActionMax || strings.IndexByte(o.Target, 0) >= 0 || o.SymlinkEvidence == nil) {
+		return ErrNativePathOperation
+	}
+	if o.ExpectedKind != "" && o.ExpectedKind != repository.FileKindRegular && o.ExpectedKind != repository.FileKindSymlink {
 		return ErrNativePathOperation
 	}
 	return nil
@@ -264,6 +271,27 @@ func (r *NativePathResolver) QualifyRepoPath(path repository.RepoPath) (reposito
 		}
 	}
 	return repository.NativePathSafe, ""
+}
+
+// QualifySymlinkTarget classifies an exact link target against the held root
+// and parent chain without following the referent. Unsafe targets remain
+// representable evidence but are never actionable.
+func (r *NativePathResolver) QualifySymlinkTarget(root VerifiedRoot, path repository.RepoPath, target []byte) (repository.SymlinkEvidence, error) {
+	if r == nil || root.Validate() != nil || path.Validate() != nil {
+		return repository.SymlinkEvidence{}, ErrProtectedPath
+	}
+	nativePath, err := nativeRelativePath(path)
+	if err != nil {
+		return repository.SymlinkEvidence{}, err
+	}
+	parents, parentFile, err := observeParentChain(root.Path, filepath.Dir(filepath.Join(root.Path, nativePath)))
+	if parentFile != nil {
+		_ = parentFile.Close()
+	}
+	if err != nil {
+		return repository.SymlinkEvidence{}, err
+	}
+	return repository.NewSymlinkEvidence(path, target, rootIdentityHash(root.Identity), parentObservationHash(parents), r.platform, repository.SymlinkPrimitiveVersion)
 }
 
 // Resolve qualifies and binds one path to a verified root. A review-only path
@@ -389,20 +417,84 @@ func (r *NativePathResolver) ExecuteLeaf(ctx context.Context, token NativePathTo
 		if statErr == nil && info.IsDir() {
 			return NativePathEvidence{}, ErrNativePathOperation
 		}
+		if statErr == nil && operation.ExpectedKind == repository.FileKindSymlink && info.Mode()&os.ModeSymlink == 0 {
+			return NativePathEvidence{}, ErrNativePathOperation
+		}
 		if statErr == nil {
 			err = os.Remove(path)
 		} else {
 			err = statErr
 		}
 	case NativeLeafReadlink:
-		operation.Result.Target, err = os.Readlink(path)
+		var info os.FileInfo
+		info, err = os.Lstat(path)
+		if err == nil && info.Mode()&os.ModeSymlink == 0 {
+			err = ErrNativePathOperation
+		}
+		if err == nil {
+			operation.Result.Target, err = os.Readlink(path)
+		}
+		if err == nil && operation.MaxBytes > 0 && int64(len(operation.Result.Target)) > operation.MaxBytes {
+			err = io.ErrShortBuffer
+		}
+		if err == nil {
+			value, evidenceErr := r.symlinkEvidence(token, []byte(operation.Result.Target))
+			if evidenceErr != nil {
+				err = evidenceErr
+			} else {
+				operation.Result.SymlinkEvidence = &value
+			}
+		}
 	case NativeLeafSymlink:
-		err = os.Symlink(operation.Target, path)
+		err = r.createSymlink(token, operation, false)
+	case NativeLeafReplaceSymlink:
+		err = r.createSymlink(token, operation, true)
 	}
 	if err != nil {
 		return NativePathEvidence{}, err
 	}
 	return expected, nil
+}
+
+func (r *NativePathResolver) symlinkEvidence(token NativePathToken, target []byte) (repository.SymlinkEvidence, error) {
+	if token.state == nil {
+		return repository.SymlinkEvidence{}, ErrNativePathStale
+	}
+	return repository.NewSymlinkEvidence(token.state.path, target, rootIdentityHash(token.state.root.Identity), parentObservationHash(token.state.parents), r.platform, repository.SymlinkPrimitiveVersion)
+}
+
+func (r *NativePathResolver) createSymlink(token NativePathToken, operation NativeLeafOperation, replace bool) error {
+	if token.state == nil || operation.SymlinkEvidence == nil {
+		return ErrNativePathOperation
+	}
+	if operation.SymlinkEvidence.Validate() != nil || !operation.SymlinkEvidence.IsActionable() {
+		return ErrNativePathReviewOnly
+	}
+	actual, err := r.symlinkEvidence(token, []byte(operation.Target))
+	if err != nil || actual != *operation.SymlinkEvidence {
+		return ErrNativePathStale
+	}
+	if replace {
+		info, statErr := os.Lstat(token.state.nativePath)
+		if statErr != nil || info.Mode()&os.ModeSymlink == 0 {
+			return ErrNativePathOperation
+		}
+		if err := os.Remove(token.state.nativePath); err != nil {
+			return err
+		}
+	}
+	if err := os.Symlink(operation.Target, token.state.nativePath); err != nil {
+		return err
+	}
+	info, err := os.Lstat(token.state.nativePath)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		return ErrNativePathStale
+	}
+	readback, err := os.Readlink(token.state.nativePath)
+	if err != nil || readback != operation.Target {
+		return ErrNativePathStale
+	}
+	return nil
 }
 
 func nativeRelativePath(path repository.RepoPath) (string, error) {

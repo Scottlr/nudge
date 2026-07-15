@@ -592,6 +592,10 @@ func cloneApplyPreconditions(values []repository.PathPrecondition) []repository.
 			nativePath := *value.NativePath
 			result[index].NativePath = &nativePath
 		}
+		if value.SymlinkEvidence != nil {
+			evidence := *value.SymlinkEvidence
+			result[index].SymlinkEvidence = &evidence
+		}
 	}
 	return result
 }

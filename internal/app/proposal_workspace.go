@@ -103,15 +103,16 @@ func (s WorkspaceSourceIdentity) Validate() error {
 // one baseline/result entry. Path and LinkTarget use []byte so JSON preserves
 // raw repository bytes through SQLite without UTF-8 replacement.
 type WorkspaceManifestEntry struct {
-	Path          []byte                         `json:"path"`
-	Kind          repository.FileKind            `json:"kind"`
-	Mode          uint32                         `json:"mode"`
-	Bytes         uint64                         `json:"bytes"`
-	SHA256        string                         `json:"sha256"`
-	ContentClass  repository.ContentClassV1      `json:"content_class,omitempty"`
-	TextSemantics *repository.TextByteSemantics  `json:"text_semantics,omitempty"`
-	LinkTarget    []byte                         `json:"link_target,omitempty"`
-	NativePath    *repository.NativePathEvidence `json:"native_path,omitempty"`
+	Path            []byte                         `json:"path"`
+	Kind            repository.FileKind            `json:"kind"`
+	Mode            uint32                         `json:"mode"`
+	Bytes           uint64                         `json:"bytes"`
+	SHA256          string                         `json:"sha256"`
+	ContentClass    repository.ContentClassV1      `json:"content_class,omitempty"`
+	TextSemantics   *repository.TextByteSemantics  `json:"text_semantics,omitempty"`
+	LinkTarget      []byte                         `json:"link_target,omitempty"`
+	SymlinkEvidence *repository.SymlinkEvidence    `json:"symlink_evidence,omitempty"`
+	NativePath      *repository.NativePathEvidence `json:"native_path,omitempty"`
 }
 
 func (e WorkspaceManifestEntry) Validate() error {
@@ -129,7 +130,7 @@ func (e WorkspaceManifestEntry) Validate() error {
 			return ErrInvalidProposalWorkspaceLifecycle
 		}
 	case repository.FileKindSymlink:
-		if len(e.LinkTarget) == 0 || e.Bytes != uint64(len(e.LinkTarget)) || !validWorkspaceHash(e.SHA256) || len(e.LinkTarget) > 32<<20 || e.ContentClass != "" || e.TextSemantics != nil {
+		if len(e.LinkTarget) == 0 || e.Bytes != uint64(len(e.LinkTarget)) || !validWorkspaceHash(e.SHA256) || len(e.LinkTarget) > 32<<20 || e.ContentClass != "" || e.TextSemantics != nil || e.SymlinkEvidence != nil && (e.SymlinkEvidence.Validate() != nil || e.SymlinkEvidence.PathKey != path.Key() || e.SymlinkEvidence.TargetHash != e.SHA256 || e.SymlinkEvidence.TargetLength != e.Bytes) {
 			return ErrInvalidProposalWorkspaceLifecycle
 		}
 	default:
@@ -261,6 +262,10 @@ func cloneWorkspaceManifestEntries(entries []WorkspaceManifestEntry) []Workspace
 		copyEntries[i] = entry
 		copyEntries[i].Path = append([]byte(nil), entry.Path...)
 		copyEntries[i].LinkTarget = append([]byte(nil), entry.LinkTarget...)
+		if entry.SymlinkEvidence != nil {
+			evidence := *entry.SymlinkEvidence
+			copyEntries[i].SymlinkEvidence = &evidence
+		}
 		if entry.NativePath != nil {
 			nativePath := *entry.NativePath
 			copyEntries[i].NativePath = &nativePath
@@ -285,9 +290,27 @@ func workspaceManifestHash(version uint32, entries []WorkspaceManifestEntry) str
 		writeWorkspaceHashString(h, string(entry.ContentClass))
 		writeWorkspaceTextSemanticsHash(h, entry.TextSemantics)
 		writeWorkspaceHashBytes(h, entry.LinkTarget)
+		writeWorkspaceSymlinkHash(h, entry.SymlinkEvidence)
 		writeWorkspaceNativePathHash(h, entry.NativePath)
 	}
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+func writeWorkspaceSymlinkHash(h interface{ Write([]byte) (int, error) }, value *repository.SymlinkEvidence) {
+	if value == nil {
+		writeWorkspaceHashBool(h, false)
+		return
+	}
+	writeWorkspaceHashBool(h, true)
+	writeWorkspaceHashBytes(h, []byte(string(value.PathKey)))
+	writeWorkspaceHashString(h, value.TargetHash)
+	writeWorkspaceHashUint(h, value.TargetLength)
+	writeWorkspaceHashString(h, string(value.TargetClass))
+	writeWorkspaceHashString(h, value.RootIdentity)
+	writeWorkspaceHashString(h, value.ParentChainHash)
+	writeWorkspaceHashString(h, value.Platform)
+	writeWorkspaceHashString(h, value.PrimitiveVersion)
+	writeWorkspaceHashString(h, value.ReasonCode)
 }
 
 func writeWorkspaceNativePathHash(h interface{ Write([]byte) (int, error) }, value *repository.NativePathEvidence) {
