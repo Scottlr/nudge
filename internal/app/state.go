@@ -5,6 +5,7 @@ import (
 
 	"github.com/Scottlr/nudge/internal/domain"
 	"github.com/Scottlr/nudge/internal/domain/repository"
+	"github.com/Scottlr/nudge/internal/provider"
 )
 
 // State is the canonical application state. Only Reducer.Handle may mutate
@@ -58,19 +59,48 @@ const (
 	ProviderConnecting   ProviderConnectionState = "connecting"
 	ProviderConnected    ProviderConnectionState = "connected"
 	ProviderUnavailable  ProviderConnectionState = "unavailable"
+	ProviderMissing      ProviderConnectionState = "missing"
+	ProviderIncompatible ProviderConnectionState = "incompatible"
+	ProviderAuthRequired ProviderConnectionState = "auth_required"
+	ProviderRestarting   ProviderConnectionState = "restarting"
 )
+
+// ProviderAccountState describes account availability without credentials.
+type ProviderAccountState string
+
+const (
+	ProviderAccountUnknown       ProviderAccountState = "unknown"
+	ProviderAccountAuthenticated ProviderAccountState = "authenticated"
+	ProviderAccountAuthRequired  ProviderAccountState = "auth_required"
+	ProviderAccountUnavailable   ProviderAccountState = "unavailable"
+)
+
+// ProviderAccountStatus is the safe account projection shown by the app.
+type ProviderAccountStatus struct {
+	State        ProviderAccountState
+	AuthMode     string
+	PlanType     string
+	RequiresAuth bool
+}
 
 // ProviderStatus is the frontend-neutral provider summary.
 type ProviderStatus struct {
-	Connection ProviderConnectionState
-	Message    string
+	Connection   ProviderConnectionState
+	Message      string
+	Capabilities provider.ProviderCapabilities
+	Account      ProviderAccountStatus
+	Disclosure   ProviderDataDisclosureGate
 }
 
 // NewState returns an empty canonical state with initialized collections.
 func NewState() State {
 	return State{
 		Operations: make(map[domain.OperationID]OperationState),
-		Provider:   ProviderStatus{Connection: ProviderDisconnected},
+		Provider: ProviderStatus{
+			Connection: ProviderDisconnected,
+			Account:    ProviderAccountStatus{State: ProviderAccountUnknown},
+			Disclosure: NewProviderDataDisclosureGate(),
+		},
 	}
 }
 
