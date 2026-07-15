@@ -305,6 +305,32 @@ func (f ProposedFile) Validate() error {
 	return nil
 }
 
+// ProposedPatchArtifactReference identifies the independently adopted T111
+// patch and review index without copying patch bytes into the proposal row.
+type ProposedPatchArtifactReference struct {
+	ArtifactID              string
+	SpoolID                 string
+	ManifestHash            string
+	PatchFormatVersion      uint32
+	RenamePolicyVersion     uint32
+	ConversionPolicyVersion uint32
+	PatchSHA256             string
+	PatchBytes              uint64
+	IndexHash               string
+	FileCount               uint64
+	HunkCount               uint64
+	RowCount                uint64
+	BinaryFiles             uint64
+}
+
+// Validate checks the immutable artifact identity and bounded review summary.
+func (r ProposedPatchArtifactReference) Validate() error {
+	if r.ArtifactID == "" || r.SpoolID == "" || !validSHA256(r.ManifestHash) || r.PatchFormatVersion == 0 || r.RenamePolicyVersion == 0 || r.ConversionPolicyVersion == 0 || !validSHA256(r.PatchSHA256) || r.PatchBytes == 0 || !validSHA256(r.IndexHash) || r.FileCount == 0 || r.BinaryFiles > r.FileCount {
+		return ErrInvalidProposal
+	}
+	return nil
+}
+
 // ProposedPatch is the immutable, displayable patch artifact derived from an
 // attempt's baseline and result snapshots.
 type ProposedPatch struct {
@@ -322,6 +348,7 @@ type ProposedPatch struct {
 	PatchFormat             string
 	PatchBytes              []byte
 	PatchSHA256             string
+	Artifact                ProposedPatchArtifactReference
 	Files                   []ProposedFile
 	Preconditions           []repository.PathPrecondition
 	Scope                   ProposalScope
@@ -342,11 +369,21 @@ func NewProposedPatch(patch ProposedPatch) (ProposedPatch, error) {
 }
 
 func (p ProposedPatch) Validate() error {
-	if p.ProposalID == "" || p.WorkspaceID == "" || p.ThreadID == "" || p.AttemptID == "" || p.SourceGeneration.Validate() != nil || p.Baseline.Validate() != nil || p.Result.Validate() != nil || p.Destination.Validate() != nil || p.Version == 0 || !utf8.ValidString(p.PatchFormat) || p.PatchFormat == "" || len(p.PatchBytes) == 0 || !validSHA256(p.PatchSHA256) || p.Scope.Validate() != nil || !utf8.ValidString(p.ScopeReason) || !utf8.ValidString(p.StatusReason) || p.Status.Validate() != nil || p.CreatedAt.IsZero() {
+	if p.ProposalID == "" || p.WorkspaceID == "" || p.ThreadID == "" || p.AttemptID == "" || p.SourceGeneration.Validate() != nil || p.Baseline.Validate() != nil || p.Result.Validate() != nil || p.Destination.Validate() != nil || p.Version == 0 || !utf8.ValidString(p.PatchFormat) || p.PatchFormat == "" || !validSHA256(p.PatchSHA256) || p.Scope.Validate() != nil || !utf8.ValidString(p.ScopeReason) || !utf8.ValidString(p.StatusReason) || p.Status.Validate() != nil || p.CreatedAt.IsZero() {
 		return ErrInvalidProposal
 	}
-	digest := sha256.Sum256(p.PatchBytes)
-	if !equalHexDigest(p.PatchSHA256, digest[:]) || p.Baseline.ID == p.Result.ID {
+	if p.Baseline.ID == p.Result.ID {
+		return ErrInvalidProposal
+	}
+	if p.Artifact == (ProposedPatchArtifactReference{}) {
+		if len(p.PatchBytes) == 0 {
+			return ErrInvalidProposal
+		}
+		digest := sha256.Sum256(p.PatchBytes)
+		if !equalHexDigest(p.PatchSHA256, digest[:]) {
+			return ErrInvalidProposal
+		}
+	} else if p.Artifact.Validate() != nil || len(p.PatchBytes) != 0 || p.Artifact.PatchSHA256 != p.PatchSHA256 || p.Artifact.PatchBytes == 0 {
 		return ErrInvalidProposal
 	}
 	if len(p.Files) == 0 || len(p.Files) > MaxProposalFiles {

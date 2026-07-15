@@ -2,8 +2,6 @@ package sqlite
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"strings"
 	"testing"
@@ -158,8 +156,6 @@ func TestProposalWorkspaceAndVersionRoundTrip(t *testing.T) {
 		t.Fatalf("loaded proposal patch artifact = %#v err=%v", loadedArtifact, err)
 	}
 
-	data := []byte{0x00, 0xff, 0x01}
-	digest := sha256.Sum256(data)
 	path := repository.RepoPath("internal/example.go")
 	oldPath := repository.RepoPath("internal/example.go")
 	patch := review.ProposedPatch{
@@ -168,18 +164,23 @@ func TestProposalWorkspaceAndVersionRoundTrip(t *testing.T) {
 		ThreadID:         thread.ID,
 		AttemptID:        attempt.ID,
 		SourceGeneration: intent.ConfirmedAgainst,
-		Baseline:         review.SnapshotIdentity{ID: domain.ReviewSnapshotID("baseline-1"), Ref: repository.SnapshotRef{Kind: repository.SnapshotEmpty}, ManifestHash: strings.Repeat("a", 64)},
-		Result:           review.SnapshotIdentity{ID: domain.ReviewSnapshotID("result-1"), Ref: repository.SnapshotRef{Kind: repository.SnapshotWorkingTree, WorktreeID: worktree.ID, Fingerprint: "result"}, ManifestHash: strings.Repeat("b", 64)},
+		Baseline:         snapshot.Baseline,
+		Result:           snapshot.Result,
 		Destination:      review.DestinationConstraints{TargetKind: repository.TargetLocal, WorktreeID: worktree.ID, ExpectedWorkingTreeFingerprint: "destination"},
 		Version:          1,
-		PatchFormat:      "git-binary-safe",
-		PatchBytes:       data,
-		PatchSHA256:      hex.EncodeToString(digest[:]),
-		Files:            []review.ProposedFile{{Path: path, OldPath: &oldPath, OldKind: repository.FileKindRegular, Kind: repository.FileKindRegular, OldMode: 0o100644, Mode: 0o100644, Binary: true}},
-		Preconditions:    []repository.PathPrecondition{{Path: path, MustExist: true, Kind: repository.FileKindRegular, Mode: 0o100644, ContentHash: strings.Repeat("c", 64)}},
-		Scope:            review.ProposalScopeFocused,
-		Status:           review.ProposalVersionReady,
-		CreatedAt:        now.Add(time.Minute),
+		PatchFormat:      "git-binary-v1",
+		PatchSHA256:      patchArtifact.PatchSHA256,
+		Artifact: review.ProposedPatchArtifactReference{
+			ArtifactID: patchArtifact.ID, SpoolID: patchArtifact.Published.Identity.SpoolID, ManifestHash: patchArtifact.Published.Identity.ManifestHash,
+			PatchFormatVersion: patchArtifact.PatchFormatVersion, RenamePolicyVersion: patchArtifact.RenamePolicyVersion, ConversionPolicyVersion: patchArtifact.ConversionPolicyVersion,
+			PatchSHA256: patchArtifact.PatchSHA256, PatchBytes: uint64(patchArtifact.Published.Identity.Bytes), IndexHash: patchArtifact.Index.Hash,
+			FileCount: uint64(patchArtifact.Summary.FileCount), HunkCount: uint64(patchArtifact.Summary.HunkCount), RowCount: uint64(patchArtifact.Summary.RowCount), BinaryFiles: uint64(patchArtifact.Summary.BinaryFiles),
+		},
+		Files:         []review.ProposedFile{{Path: path, OldPath: &oldPath, OldKind: repository.FileKindRegular, Kind: repository.FileKindRegular, OldMode: 0o100644, Mode: 0o100644, Binary: true}},
+		Preconditions: []repository.PathPrecondition{{Path: path, MustExist: true, Kind: repository.FileKindRegular, Mode: 0o100644, ContentHash: strings.Repeat("c", 64)}},
+		Scope:         review.ProposalScopeFocused,
+		Status:        review.ProposalVersionReady,
+		CreatedAt:     now.Add(time.Minute),
 	}
 	guard, err = withProposalTx(ctx, store, guard, func(tx app.ProposalWorkspaceStoreTx) error { return tx.PublishProposal(ctx, patch) })
 	if err != nil {
@@ -189,7 +190,7 @@ func TestProposalWorkspaceAndVersionRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load published aggregate: %v", err)
 	}
-	if len(aggregate.Versions) != 1 || string(aggregate.Versions[0].PatchBytes) != string(data) || aggregate.Attempts[0].Outcome != review.ProposalAttemptVersionPublished {
+	if len(aggregate.Versions) != 1 || len(aggregate.Versions[0].PatchBytes) != 0 || aggregate.Versions[0].Artifact.ArtifactID != patchArtifact.ID || aggregate.Attempts[0].Outcome != review.ProposalAttemptVersionPublished {
 		t.Fatalf("published aggregate = %#v", aggregate)
 	}
 
