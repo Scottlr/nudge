@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Scottlr/nudge/internal/app"
+	"github.com/Scottlr/nudge/internal/diff"
 	"github.com/Scottlr/nudge/internal/domain"
 	"github.com/Scottlr/nudge/internal/domain/repository"
 	"github.com/Scottlr/nudge/internal/domain/review"
@@ -122,6 +123,39 @@ func TestProposalWorkspaceAndVersionRoundTrip(t *testing.T) {
 	loadedByAttempt, err := store.LoadResultSnapshotForAttempt(ctx, attempt.ID)
 	if err != nil || loadedByAttempt.ID != snapshot.ID {
 		t.Fatalf("loaded result snapshot by attempt = %#v err=%v", loadedByAttempt, err)
+	}
+	patchPath := repository.RepoPath("internal/example.go")
+	patchFile := repository.ChangedFile{NewPath: &patchPath, Kind: repository.ChangeAdded, NewFileKind: repository.FileKindRegular, NewMode: 0o100644}
+	patchIndex, err := app.NewProposalReviewIndex(diff.PatchIndexIdentity{Version: diff.PatchIndexVersion, SourceID: "patch-spool-1", Size: 1, SHA256: strings.Repeat("a", 64), FileCount: 1}, []diff.PatchIndexEntry{{Version: diff.PatchIndexVersion, SourceID: "patch-spool-1", Index: 0, Offset: 0, Length: 1, HeaderLength: 1, File: patchFile, SHA256: strings.Repeat("b", 64)}})
+	if err != nil {
+		t.Fatalf("proposal patch index: %v", err)
+	}
+	spoolLimits, err := app.DefaultSpoolLimits(app.DefaultResourcePolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	patchArtifact, err := app.NewProposalPatchArtifact(app.ProposalPatchArtifact{
+		SessionID: session.ID, ProposalID: intent.ID, WorkspaceID: workspace.ID, AttemptID: attempt.ID, ThreadID: thread.ID,
+		Baseline: snapshot.Baseline, Result: snapshot.Result, BaselineSnapshotID: snapshot.Baseline.ID, ResultSnapshotID: snapshot.ID, PatchFormatVersion: 1, RenamePolicyVersion: 1, ConversionPolicyVersion: 1, ConversionFingerprint: strings.Repeat("c", 64), ResourcePolicyVersion: app.DefaultResourcePolicy().Version,
+		Published: app.PublishedArtifact{Identity: app.ArtifactIdentity{SpoolID: "patch-spool-1", ManifestHash: strings.Repeat("d", 64), Bytes: 1, Entries: 1, Complete: true, VerifiedAt: now}, Target: app.PublishTarget{OwnerKind: app.OwnerProposal, RelativePath: "patch"}, Limits: spoolLimits}, PatchSHA256: strings.Repeat("a", 64),
+		Index: patchIndex, Summary: app.ProposalPatchSummary{FileCount: 1, PatchBytes: 1}, CreatedAt: now,
+	})
+	if err != nil {
+		t.Fatalf("new proposal patch artifact: %v", err)
+	}
+	guard, err = withProposalTx(ctx, store, guard, func(tx app.ProposalWorkspaceStoreTx) error {
+		artifactTx, ok := tx.(app.ProposalPatchArtifactStoreTx)
+		if !ok {
+			return errors.New("proposal patch artifact transaction extension unavailable")
+		}
+		return artifactTx.AdoptProposalPatchArtifact(ctx, patchArtifact)
+	})
+	if err != nil {
+		t.Fatalf("adopt proposal patch artifact: %v", err)
+	}
+	loadedArtifact, err := store.LoadProposalPatchArtifact(ctx, patchArtifact.ID)
+	if err != nil || loadedArtifact.ID != patchArtifact.ID || loadedArtifact.Index.Hash != patchIndex.Hash {
+		t.Fatalf("loaded proposal patch artifact = %#v err=%v", loadedArtifact, err)
 	}
 
 	data := []byte{0x00, 0xff, 0x01}

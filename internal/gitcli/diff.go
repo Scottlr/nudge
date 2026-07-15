@@ -2,6 +2,7 @@ package gitcli
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"io"
 
@@ -26,14 +27,31 @@ func NewPublishedPatchSource(ctx context.Context, manifest app.CaptureManifest, 
 	if ctx == nil || reader == nil || manifest.Validate() != nil || manifest.Patch.Identity.Bytes == 0 || manifest.Candidate.Patch.ContentSHA256 == "" {
 		return nil, app.ErrCaptureCorrupt
 	}
-	return &PublishedPatchSource{
-		ctx:      ctx,
-		reader:   reader,
-		target:   manifest.Patch.Target,
-		expected: app.StreamIdentity{Bytes: app.ByteSize(manifest.Candidate.Patch.Bytes), SHA256: manifest.Candidate.Patch.ContentSHA256},
-		id:       string(manifest.CaptureID) + ":" + manifest.Patch.Identity.ManifestHash,
-		size:     int64(manifest.Candidate.Patch.Bytes),
-	}, nil
+	return newPublishedPatchSource(ctx, reader, manifest.Patch.Target, app.StreamIdentity{Bytes: app.ByteSize(manifest.Candidate.Patch.Bytes), SHA256: manifest.Candidate.Patch.ContentSHA256}, string(manifest.CaptureID)+":"+manifest.Patch.Identity.ManifestHash)
+}
+
+// NewPublishedProposalPatchSource binds a published T111 patch to the
+// identity-checked artifact reader without exposing its protected path.
+func NewPublishedProposalPatchSource(ctx context.Context, published app.PublishedArtifact, patch app.StreamIdentity, reader app.PublishedArtifactReader) (*PublishedPatchSource, error) {
+	if ctx == nil || reader == nil || published.Identity.Validate() != nil || published.Identity.Bytes == 0 || published.Target.OwnerKind != app.OwnerProposal || patch.Bytes != published.Identity.Bytes || !validPatchSHA256(patch.SHA256) {
+		return nil, app.ErrInvalidProposalPatchArtifact
+	}
+	return newPublishedPatchSource(ctx, reader, published.Target, patch, published.Identity.SpoolID+":"+patch.SHA256)
+}
+
+func validPatchSHA256(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
+}
+
+func newPublishedPatchSource(ctx context.Context, reader app.PublishedArtifactReader, target app.PublishTarget, expected app.StreamIdentity, id string) (*PublishedPatchSource, error) {
+	if ctx == nil || reader == nil || expected.Bytes == 0 || expected.SHA256 == "" || id == "" {
+		return nil, app.ErrInvalidArtifactSpool
+	}
+	return &PublishedPatchSource{ctx: ctx, reader: reader, target: target, expected: expected, id: id, size: int64(expected.Bytes)}, nil
 }
 
 // ID returns the stable capture-bound source identity.
