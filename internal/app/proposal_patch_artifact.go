@@ -102,19 +102,20 @@ func (h ProposalReviewHunk) Validate(fileOffset, fileLength int64) error {
 
 // ProposalReviewFile is one complete file section in the immutable patch.
 type ProposalReviewFile struct {
-	Ordinal      int
-	File         repository.ChangedFile
-	Offset       int64
-	Length       int64
-	HeaderLength int64
-	Binary       bool
-	BinaryOffset int64
-	SHA256       string
-	Hunks        []ProposalReviewHunk
+	Ordinal        int
+	File           repository.ChangedFile
+	Offset         int64
+	Length         int64
+	HeaderLength   int64
+	Binary         bool
+	BinaryComplete bool
+	BinaryOffset   int64
+	SHA256         string
+	Hunks          []ProposalReviewHunk
 }
 
 func (f ProposalReviewFile) Validate(sourceID string, sourceSize int64) error {
-	if f.Ordinal < 0 || f.File.Validate() != nil || f.Offset < 0 || f.Length <= 0 || f.Offset > sourceSize || f.Length > sourceSize-f.Offset || f.HeaderLength <= 0 || f.HeaderLength > f.Length || !validSHA256(f.SHA256) || f.Binary != f.File.Binary || (f.Binary && (f.BinaryOffset < f.Offset || f.BinaryOffset-f.Offset >= f.Length)) || (!f.Binary && f.BinaryOffset != 0) {
+	if f.Ordinal < 0 || f.File.Validate() != nil || f.Offset < 0 || f.Length <= 0 || f.Offset > sourceSize || f.Length > sourceSize-f.Offset || f.HeaderLength <= 0 || f.HeaderLength > f.Length || !validSHA256(f.SHA256) || f.Binary != f.File.Binary || f.BinaryComplete && !f.Binary || (f.Binary && (f.BinaryOffset < f.Offset || f.BinaryOffset-f.Offset >= f.Length)) || (!f.Binary && f.BinaryOffset != 0) {
 		return ErrInvalidProposalPatchArtifact
 	}
 	for _, hunk := range f.Hunks {
@@ -357,7 +358,7 @@ func proposalReviewIndex(identity diff.PatchIndexIdentity, entries []diff.PatchI
 		for hunkIndex, hunk := range entry.Hunks {
 			hunks[hunkIndex] = ProposalReviewHunk{ID: hunk.ID, Offset: hunk.Offset, Length: hunk.Length, BaseStart: hunk.BaseStart, BaseCount: hunk.BaseCount, HeadStart: hunk.HeadStart, HeadCount: hunk.HeadCount, Rows: hunk.Rows, SHA256: hunk.SHA256}
 		}
-		files[index] = ProposalReviewFile{Ordinal: index, File: entry.File, Offset: entry.Offset, Length: entry.Length, HeaderLength: entry.HeaderLength, Binary: entry.Binary, BinaryOffset: entry.BinaryOffset, SHA256: entry.SHA256, Hunks: hunks}
+		files[index] = ProposalReviewFile{Ordinal: index, File: entry.File, Offset: entry.Offset, Length: entry.Length, HeaderLength: entry.HeaderLength, Binary: entry.Binary, BinaryComplete: entry.BinaryComplete, BinaryOffset: entry.BinaryOffset, SHA256: entry.SHA256, Hunks: hunks}
 	}
 	return ProposalReviewIndex{Version: ProposalReviewIndexVersion, SourceID: identity.SourceID, Size: identity.Size, PatchSHA256: identity.SHA256, Files: files, HunkCount: identity.HunkCount, RowCount: identity.RowCount, Hash: proposalReviewIndexHash(ProposalReviewIndex{Version: ProposalReviewIndexVersion, SourceID: identity.SourceID, Size: identity.Size, PatchSHA256: identity.SHA256, Files: files, HunkCount: identity.HunkCount, RowCount: identity.RowCount, Complete: true}), Complete: true}
 }
@@ -376,6 +377,12 @@ func crossCheckProposalPatch(baseline WorkspaceManifest, delta ResultDelta, entr
 			return ErrInvalidProposalPatchArtifact
 		}
 		file := entry.File
+		if file.Binary && !entry.BinaryComplete {
+			return ErrProposalPatchArtifactNotReady
+		}
+		if file.Binary && !binaryPatchClassesReady(byPath, file) {
+			return ErrProposalPatchArtifactNotReady
+		}
 		if file.OldPath != nil && file.NewPath != nil && (file.Kind == repository.ChangeRenamed || file.Kind == repository.ChangeCopied) {
 			if !renamePatchMatchesDelta(delta, file, renamePolicyVersion) {
 				return ErrInvalidProposalPatchArtifact
@@ -408,6 +415,35 @@ func crossCheckProposalPatch(baseline WorkspaceManifest, delta ResultDelta, entr
 		return ErrInvalidProposalPatchArtifact
 	}
 	return nil
+}
+
+func binaryPatchClassesReady(delta map[repository.RepoPathKey]ResultDeltaEntry, file repository.ChangedFile) bool {
+	if file.OldPath != nil && file.OldFileKind != repository.FileKindRegular || file.NewPath != nil && file.NewFileKind != repository.FileKindRegular {
+		return false
+	}
+	check := func(path *repository.RepoPath, baseline bool, kind repository.FileKind) bool {
+		if path == nil || kind != repository.FileKindRegular {
+			return true
+		}
+		entry, ok := delta[path.Key()]
+		if !ok {
+			return false
+		}
+		var class repository.ContentClassV1
+		if baseline {
+			if entry.Baseline == nil {
+				return false
+			}
+			class = entry.Baseline.ContentClass
+		} else {
+			if entry.Result == nil {
+				return false
+			}
+			class = entry.Result.ContentClass
+		}
+		return class.IsByteOriented()
+	}
+	return file.ContentClass.IsByteOriented() && check(file.OldPath, true, file.OldFileKind) && check(file.NewPath, false, file.NewFileKind)
 }
 
 func consumePatchSide(delta map[repository.RepoPathKey]ResultDeltaEntry, consumed map[repository.RepoPathKey]struct{}, path repository.RepoPath, old bool, kind repository.FileKind, mode uint32) bool {
@@ -485,6 +521,7 @@ func proposalReviewIndexHash(index ProposalReviewIndex) string {
 		writeArtifactHashUint(h, uint64(file.Length))
 		writeArtifactHashUint(h, uint64(file.HeaderLength))
 		writeArtifactHashUint(h, boolUint(file.Binary))
+		writeArtifactHashUint(h, boolUint(file.BinaryComplete))
 		writeArtifactHashUint(h, uint64(file.BinaryOffset))
 		writeArtifactHashString(h, file.SHA256)
 		for _, hunk := range file.Hunks {
@@ -519,6 +556,7 @@ func writeChangedFileHash(h interface{ Write([]byte) (int, error) }, file reposi
 	writeArtifactHashString(h, string(file.NewFileKind))
 	writeArtifactHashUint(h, uint64(file.OldMode))
 	writeArtifactHashUint(h, uint64(file.NewMode))
+	writeArtifactHashString(h, string(file.ContentClass))
 	writeArtifactHashBool(h, file.Binary)
 	if file.Rename == nil {
 		writeArtifactHashUint(h, 0)

@@ -95,7 +95,35 @@ type DisplayedContent struct {
 	Status   ContentStatus
 	BasePath *repository.RepoPath
 	HeadPath *repository.RepoPath
+	Binary   *BinaryContentMetadata
 	Reason   string
+}
+
+// BinaryContentMetadata is the bounded, non-text projection of one binary
+// change. It contains identities and patch-range evidence, never file bytes.
+type BinaryContentMetadata struct {
+	BasePresent   bool
+	BaseBytes     uint64
+	BaseHash      string
+	HeadPresent   bool
+	HeadBytes     uint64
+	HeadHash      string
+	Change        string
+	Patch         *repository.PatchByteRange
+	PatchComplete bool
+}
+
+func (m BinaryContentMetadata) Validate() error {
+	if !m.BasePresent && (m.BaseBytes != 0 || m.BaseHash != "") || !m.HeadPresent && (m.HeadBytes != 0 || m.HeadHash != "") || !validIdentity(m.Change) {
+		return ErrInvalidDisplayedContent
+	}
+	if m.BasePresent && !validDisplayedHash(m.BaseHash) || m.HeadPresent && !validDisplayedHash(m.HeadHash) {
+		return ErrInvalidDisplayedContent
+	}
+	if m.Patch != nil && m.Patch.Validate() != nil {
+		return ErrInvalidDisplayedContent
+	}
+	return nil
 }
 
 // Validate checks the content envelope without reading bytes or rows.
@@ -104,6 +132,9 @@ func (c DisplayedContent) Validate() error {
 		return ErrInvalidDisplayedContent
 	}
 	if c.BasePath != nil && c.BasePath.Validate() != nil || c.HeadPath != nil && c.HeadPath.Validate() != nil {
+		return ErrInvalidDisplayedContent
+	}
+	if c.Binary != nil && c.Binary.Validate() != nil {
 		return ErrInvalidDisplayedContent
 	}
 	if c.Status == ContentReady {
@@ -313,6 +344,10 @@ func validIdentity(value string) bool {
 func validDisplayedHex(value string) bool {
 	_, err := hex.DecodeString(value)
 	return err == nil
+}
+
+func validDisplayedHash(value string) bool {
+	return len(value) == sha256.Size*2 && validDisplayedHex(value)
 }
 
 func validContentStatus(status ContentStatus) bool {

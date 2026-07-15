@@ -290,29 +290,36 @@ func (d DestinationConstraints) Validate() error {
 // ProposedFile is complete, path-identity-preserving file metadata for one
 // immutable proposal version.
 type ProposedFile struct {
-	Path           repository.RepoPath
-	OldPath        *repository.RepoPath
-	OldKind        repository.FileKind
-	Kind           repository.FileKind
-	OldMode        uint32
-	Mode           uint32
-	ContentHash    string
-	OldContentHash string
-	Added          bool
-	Deleted        bool
-	Copied         bool
-	TypeChanged    bool
-	Binary         bool
+	Path            repository.RepoPath
+	OldPath         *repository.RepoPath
+	OldKind         repository.FileKind
+	Kind            repository.FileKind
+	OldMode         uint32
+	Mode            uint32
+	ContentBytes    uint64
+	ContentHash     string
+	OldContentBytes uint64
+	OldContentHash  string
+	ContentClass    repository.ContentClassV1
+	OldContentClass repository.ContentClassV1
+	Added           bool
+	Deleted         bool
+	Copied          bool
+	TypeChanged     bool
+	Binary          bool
 }
 
 func (f ProposedFile) Validate() error {
-	if f.Path.Validate() != nil || f.Added && f.Deleted || f.Deleted && (f.Mode != 0 || f.Kind != repository.FileKindUnknown) || !f.Deleted && (!validFileKind(f.Kind) || f.Kind == repository.FileKindUnknown || f.Mode == 0) || (f.OldPath != nil && f.OldPath.Validate() != nil) || (f.OldPath == nil && (f.OldKind != "" || f.OldMode != 0 || f.OldContentHash != "")) || (f.OldPath != nil && (!validFileKind(f.OldKind) || f.OldKind == repository.FileKindUnknown || f.OldMode == 0)) || (f.ContentHash != "" && !validSHA256(f.ContentHash)) || (f.OldContentHash != "" && !validSHA256(f.OldContentHash)) {
+	if f.Path.Validate() != nil || f.Added && f.Deleted || f.Deleted && (f.Mode != 0 || f.Kind != repository.FileKindUnknown || f.ContentBytes != 0 || f.ContentClass != "") || !f.Deleted && (!validFileKind(f.Kind) || f.Kind == repository.FileKindUnknown || f.Mode == 0) || (f.OldPath != nil && f.OldPath.Validate() != nil) || (f.OldPath == nil && (f.OldKind != "" || f.OldMode != 0 || f.OldContentBytes != 0 || f.OldContentHash != "" || f.OldContentClass != "")) || (f.OldPath != nil && (!validFileKind(f.OldKind) || f.OldKind == repository.FileKindUnknown || f.OldMode == 0)) || (f.ContentHash != "" && !validSHA256(f.ContentHash)) || (f.OldContentHash != "" && !validSHA256(f.OldContentHash)) || f.ContentClass != "" && f.ContentClass.Validate() != nil || f.OldContentClass != "" && f.OldContentClass.Validate() != nil {
 		return ErrInvalidProposal
 	}
 	if f.Added && f.OldPath != nil || f.Deleted && f.OldPath != nil {
 		return ErrInvalidProposal
 	}
 	if f.Copied && (f.OldPath == nil || f.Added || f.Deleted || f.TypeChanged || f.OldContentHash == "") {
+		return ErrInvalidProposal
+	}
+	if f.ContentClass != "" && f.ContentClass.IsByteOriented() && !f.Binary || f.OldContentClass != "" && f.OldContentClass.IsByteOriented() && !f.Binary {
 		return ErrInvalidProposal
 	}
 	return nil

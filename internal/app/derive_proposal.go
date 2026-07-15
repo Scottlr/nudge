@@ -480,6 +480,10 @@ func baselinePrecondition(entry ResultDeltaEntry) repository.PathPrecondition {
 	switch entry.Baseline.Kind {
 	case repository.FileKindRegular:
 		value.ContentHash = entry.Baseline.SHA256
+		if entry.Baseline.ContentClass != "" {
+			value.ContentBytes = entry.Baseline.Bytes
+			value.ContentClass = entry.Baseline.ContentClass
+		}
 	case repository.FileKindSymlink:
 		value.SymlinkTargetHash = hashBytes(entry.Baseline.LinkTarget)
 	}
@@ -487,7 +491,13 @@ func baselinePrecondition(entry ResultDeltaEntry) repository.PathPrecondition {
 }
 
 func preconditionMatchesExpected(actual, expected repository.PathPrecondition) bool {
-	return actual.Path.Key() == expected.Path.Key() && actual.MustExist == expected.MustExist && actual.Kind == expected.Kind && actual.Mode == expected.Mode && actual.ContentHash == expected.ContentHash && actual.SymlinkTargetHash == expected.SymlinkTargetHash
+	if actual.Path.Key() != expected.Path.Key() || actual.MustExist != expected.MustExist || actual.Kind != expected.Kind || actual.Mode != expected.Mode || actual.ContentHash != expected.ContentHash || actual.SymlinkTargetHash != expected.SymlinkTargetHash {
+		return false
+	}
+	if expected.ContentClass != "" {
+		return actual.ContentBytes == expected.ContentBytes && actual.ContentClass == expected.ContentClass
+	}
+	return true
 }
 
 func deriveProposedFiles(files []ProposalReviewFile, snapshot ResultSnapshot) ([]review.ProposedFile, error) {
@@ -508,7 +518,9 @@ func deriveProposedFiles(files []ProposalReviewFile, snapshot ResultSnapshot) ([
 			value.Kind = file.NewFileKind
 			value.Mode = file.NewMode
 			if entry := byPath[file.NewPath.Key()]; entry.Result != nil {
+				value.ContentBytes = entry.Result.Bytes
 				value.ContentHash = entry.Result.SHA256
+				value.ContentClass = entry.Result.ContentClass
 			}
 		case file.OldPath != nil:
 			value.Path = repository.RepoPath(file.OldPath.Bytes())
@@ -521,11 +533,19 @@ func deriveProposedFiles(files []ProposalReviewFile, snapshot ResultSnapshot) ([
 			value.OldPath = &oldPath
 			value.OldKind = file.OldFileKind
 			value.OldMode = file.OldMode
+			if oldEntry, ok := byPath[file.OldPath.Key()]; ok && oldEntry.Baseline != nil {
+				value.OldContentBytes = oldEntry.Baseline.Bytes
+				value.OldContentClass = oldEntry.Baseline.ContentClass
+			}
 			if file.Kind == repository.ChangeCopied {
 				if oldEntry, ok := byPath[file.OldPath.Key()]; ok && oldEntry.Result != nil {
+					value.OldContentBytes = oldEntry.Result.Bytes
 					value.OldContentHash = oldEntry.Result.SHA256
+					value.OldContentClass = oldEntry.Result.ContentClass
 				} else if oldEntry, ok := byPath[file.OldPath.Key()]; ok && oldEntry.Baseline != nil {
+					value.OldContentBytes = oldEntry.Baseline.Bytes
 					value.OldContentHash = oldEntry.Baseline.SHA256
+					value.OldContentClass = oldEntry.Baseline.ContentClass
 				}
 			}
 		}
@@ -545,6 +565,9 @@ func deriveProposedFiles(files []ProposalReviewFile, snapshot ResultSnapshot) ([
 			value.OldPath = nil
 			value.OldKind = repository.FileKindUnknown
 			value.OldMode = 0
+			value.OldContentBytes = 0
+			value.OldContentHash = ""
+			value.OldContentClass = ""
 		}
 		if value.Validate() != nil {
 			return nil, ErrProposalPublicationInvalid

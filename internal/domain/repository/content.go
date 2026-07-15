@@ -10,20 +10,42 @@ var (
 // FileContent is snapshot-bound file data. Bytes remain bytes until a
 // presentation layer explicitly decodes them.
 type FileContent struct {
-	Snapshot    SnapshotRef
-	Path        RepoPath
-	Kind        FileKind
-	Mode        uint32
-	Bytes       []byte
-	ContentHash string
-	Binary      bool
-	Truncated   bool
-	LimitReason string
+	Snapshot     SnapshotRef
+	Path         RepoPath
+	Kind         FileKind
+	Mode         uint32
+	Bytes        []byte
+	ByteLength   uint64
+	ContentHash  string
+	ContentClass ContentClassV1
+	MetadataOnly bool
+	Binary       bool
+	Truncated    bool
+	LimitReason  string
 }
 
 // Validate checks content identity and bounded-read metadata.
 func (c FileContent) Validate() error {
 	if c.Snapshot.Validate() != nil || c.Path.Validate() != nil || !c.Kind.valid() || c.Kind == FileKindDirectory || c.Mode == 0 || !validContentHash(c.ContentHash) {
+		return ErrInvalidFileContent
+	}
+	if c.MetadataOnly && c.ContentClass == "" {
+		return ErrInvalidFileContent
+	}
+	if c.ContentClass != "" {
+		if c.ContentClass.Validate() != nil || c.ContentClass.IsByteOriented() != c.Binary {
+			return ErrInvalidFileContent
+		}
+		if c.MetadataOnly && !c.ContentClass.IsByteOriented() {
+			return ErrInvalidFileContent
+		}
+		if c.ByteLength < uint64(len(c.Bytes)) {
+			return ErrInvalidFileContent
+		}
+	} else if c.ByteLength != 0 && c.ByteLength < uint64(len(c.Bytes)) {
+		return ErrInvalidFileContent
+	}
+	if !c.MetadataOnly && !c.Truncated && c.ByteLength != 0 && c.ByteLength != uint64(len(c.Bytes)) {
 		return ErrInvalidFileContent
 	}
 	if c.Truncated {

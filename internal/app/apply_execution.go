@@ -80,7 +80,9 @@ type ApplyPathEvidence struct {
 	Exists            bool
 	Kind              repository.FileKind
 	Mode              uint32
+	ContentBytes      uint64
 	ContentHash       string
+	ContentClass      repository.ContentClassV1
 	SymlinkTargetHash string
 	NativeAlias       *repository.NativeAliasEvidence
 }
@@ -89,7 +91,7 @@ func (p ApplyPathEvidence) Validate() error {
 	if p.Path.Validate() != nil {
 		return ErrApplyVerificationFailed
 	}
-	precondition := repository.PathPrecondition{Path: p.Path, MustExist: p.Exists, Kind: p.Kind, Mode: p.Mode, ContentHash: p.ContentHash, SymlinkTargetHash: p.SymlinkTargetHash, NativeAlias: p.NativeAlias}
+	precondition := repository.PathPrecondition{Path: p.Path, MustExist: p.Exists, Kind: p.Kind, Mode: p.Mode, ContentBytes: p.ContentBytes, ContentHash: p.ContentHash, ContentClass: p.ContentClass, SymlinkTargetHash: p.SymlinkTargetHash, NativeAlias: p.NativeAlias}
 	if precondition.Validate() != nil {
 		return ErrApplyVerificationFailed
 	}
@@ -97,7 +99,7 @@ func (p ApplyPathEvidence) Validate() error {
 }
 
 func (p ApplyPathEvidence) precondition() repository.PathPrecondition {
-	return repository.PathPrecondition{Path: p.Path, MustExist: p.Exists, Kind: p.Kind, Mode: p.Mode, ContentHash: p.ContentHash, SymlinkTargetHash: p.SymlinkTargetHash, NativeAlias: p.NativeAlias}
+	return repository.PathPrecondition{Path: p.Path, MustExist: p.Exists, Kind: p.Kind, Mode: p.Mode, ContentBytes: p.ContentBytes, ContentHash: p.ContentHash, ContentClass: p.ContentClass, SymlinkTargetHash: p.SymlinkTargetHash, NativeAlias: p.NativeAlias}
 }
 
 // ApplyVerificationEvidence is the bounded post-mutation or recovery
@@ -534,10 +536,10 @@ func classifyApplyVerification(operation ApplyOperation, patch review.ProposedPa
 func applyResultPathsMatch(actual map[repository.RepoPathKey]ApplyPathEvidence, files []review.ProposedFile) bool {
 	expected := make(map[repository.RepoPathKey]applyExpectedPath, len(files))
 	for _, file := range files {
-		expected[file.Path.Key()] = applyExpectedPath{exists: !file.Deleted, kind: file.Kind, mode: file.Mode, contentHash: file.ContentHash}
+		expected[file.Path.Key()] = applyExpectedPath{exists: !file.Deleted, kind: file.Kind, mode: file.Mode, contentBytes: file.ContentBytes, contentHash: file.ContentHash, contentClass: file.ContentClass}
 		if file.OldPath != nil && !bytes.Equal(file.OldPath.Bytes(), file.Path.Bytes()) {
 			if file.Copied {
-				expected[(*file.OldPath).Key()] = applyExpectedPath{exists: true, kind: file.OldKind, mode: file.OldMode, contentHash: file.OldContentHash}
+				expected[(*file.OldPath).Key()] = applyExpectedPath{exists: true, kind: file.OldKind, mode: file.OldMode, contentBytes: file.OldContentBytes, contentHash: file.OldContentHash, contentClass: file.OldContentClass}
 			} else {
 				expected[(*file.OldPath).Key()] = applyExpectedPath{}
 			}
@@ -558,7 +560,7 @@ func applyResultPathsMatch(actual map[repository.RepoPathKey]ApplyPathEvidence, 
 		if want.kind == repository.FileKindSymlink {
 			observedHash = observed.SymlinkTargetHash
 		}
-		if observed.Kind != want.kind || observed.Mode != want.mode || want.contentHash != "" && observedHash != want.contentHash {
+		if observed.Kind != want.kind || observed.Mode != want.mode || want.contentClass != "" && (observed.ContentBytes != want.contentBytes || observed.ContentClass != want.contentClass) || want.contentHash != "" && observedHash != want.contentHash {
 			return false
 		}
 	}
@@ -566,10 +568,12 @@ func applyResultPathsMatch(actual map[repository.RepoPathKey]ApplyPathEvidence, 
 }
 
 type applyExpectedPath struct {
-	exists      bool
-	kind        repository.FileKind
-	mode        uint32
-	contentHash string
+	exists       bool
+	kind         repository.FileKind
+	mode         uint32
+	contentBytes uint64
+	contentHash  string
+	contentClass repository.ContentClassV1
 }
 
 func applyBaselinePathsMatch(actual map[repository.RepoPathKey]ApplyPathEvidence, expected []repository.PathPrecondition) bool {

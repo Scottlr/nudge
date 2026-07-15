@@ -31,7 +31,9 @@ type PathPrecondition struct {
 	MustExist         bool
 	Kind              FileKind
 	Mode              uint32
+	ContentBytes      uint64
 	ContentHash       string
+	ContentClass      ContentClassV1
 	SymlinkTargetHash string
 	NativeAlias       *NativeAliasEvidence
 }
@@ -43,7 +45,7 @@ func (p PathPrecondition) Validate() error {
 		return ErrInvalidPathPrecondition
 	}
 	if !p.MustExist {
-		if (p.Kind != "" && p.Kind != FileKindUnknown) || p.Mode != 0 || p.ContentHash != "" || p.SymlinkTargetHash != "" || p.NativeAlias != nil {
+		if (p.Kind != "" && p.Kind != FileKindUnknown) || p.Mode != 0 || p.ContentBytes != 0 || p.ContentHash != "" || p.ContentClass != "" || p.SymlinkTargetHash != "" || p.NativeAlias != nil {
 			return ErrInvalidPathPrecondition
 		}
 		return nil
@@ -51,7 +53,7 @@ func (p PathPrecondition) Validate() error {
 	if !p.Kind.valid() || p.Kind == FileKindUnknown {
 		return ErrInvalidPathPrecondition
 	}
-	if p.Mode == 0 || (p.ContentHash != "" && !validContentHash(p.ContentHash)) || (p.SymlinkTargetHash != "" && !validContentHash(p.SymlinkTargetHash)) {
+	if p.Mode == 0 || (p.ContentHash != "" && !validContentHash(p.ContentHash)) || (p.ContentClass != "" && p.ContentClass.Validate() != nil) || (p.SymlinkTargetHash != "" && !validContentHash(p.SymlinkTargetHash)) {
 		return ErrInvalidPathPrecondition
 	}
 	if p.Kind == FileKindSymlink {
@@ -62,6 +64,9 @@ func (p PathPrecondition) Validate() error {
 		return ErrInvalidPathPrecondition
 	}
 	if p.Kind == FileKindRegular && p.ContentHash == "" {
+		return ErrInvalidPathPrecondition
+	}
+	if p.Kind != FileKindRegular && (p.ContentBytes != 0 || p.ContentClass != "") {
 		return ErrInvalidPathPrecondition
 	}
 	if p.NativeAlias != nil {
