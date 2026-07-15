@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -19,7 +20,7 @@ func TestReviewSnapshotStoreRoundTripAndLeaseClosure(t *testing.T) {
 	}
 	defer store.Close()
 	now := time.Unix(20, 0).UTC()
-	snapshot := app.ReviewSnapshot{ID: "snapshot-1", CaptureID: "capture-1", RepositoryID: "repository-1", WorktreeID: "worktree-1", Root: "C:\\nudge\\published\\snapshot-1", MarkerNonce: strings.Repeat("a", 64), ManifestHash: strings.Repeat("b", 64), PolicyVersion: app.CurrentResourcePolicyVersion, EvidenceVersion: app.CurrentCapabilityEvidenceVersion, State: app.ReviewSnapshotReady, CreatedAt: now}
+	snapshot := app.ReviewSnapshot{ID: "snapshot-1", CaptureID: "capture-1", RepositoryID: "repository-1", WorktreeID: "worktree-1", Root: filepath.Join(t.TempDir(), "published", "snapshot-1"), MarkerNonce: strings.Repeat("a", 64), ManifestHash: strings.Repeat("b", 64), PolicyVersion: app.CurrentResourcePolicyVersion, EvidenceVersion: app.CurrentCapabilityEvidenceVersion, State: app.ReviewSnapshotReady, CreatedAt: now}
 	if err := store.SaveReviewSnapshot(ctx, snapshot); err != nil {
 		t.Fatal(err)
 	}
