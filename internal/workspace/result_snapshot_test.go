@@ -127,18 +127,18 @@ func TestFreezeResultRequiresQuiescence(t *testing.T) {
 
 func testFreezeHandle(t *testing.T, baseline, admin, result, destination string) WorkspaceHandle {
 	t.Helper()
-	resultIdentity, err := paths.NativeDirectoryIdentity(result)
-	if err != nil {
-		t.Fatalf("result identity: %v", err)
-	}
 	root := func(kind RootKind, path string) RootIdentity {
+		canonical, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			t.Fatalf("%s canonical path: %v", kind, err)
+		}
 		identity, err := paths.NativeDirectoryIdentity(path)
 		if err != nil {
 			t.Fatalf("%s identity: %v", kind, err)
 		}
-		return RootIdentity{Kind: kind, Path: path, CanonicalPath: path, NativeIdentity: identity}
+		return RootIdentity{Kind: kind, Path: canonical, CanonicalPath: canonical, NativeIdentity: identity}
 	}
-	return WorkspaceHandle{WorkspaceID: "workspace-1", RepositoryID: "repository-1", WorktreeID: "worktree-1", ThreadID: "thread-1", OperationID: "operation-1", Nonce: strings.Repeat("a", 64), IsolationVersion: 1, Roots: newWorkspaceRoots(RootSet{Baseline: root(RootBaseline, baseline), Admin: root(RootAdmin, admin), Result: RootIdentity{Kind: RootResult, Path: result, CanonicalPath: result, NativeIdentity: resultIdentity}, Destination: root(RootDestination, destination)})}
+	return WorkspaceHandle{WorkspaceID: "workspace-1", RepositoryID: "repository-1", WorktreeID: "worktree-1", ThreadID: "thread-1", OperationID: "operation-1", Nonce: strings.Repeat("a", 64), IsolationVersion: 1, Roots: newWorkspaceRoots(RootSet{Baseline: root(RootBaseline, baseline), Admin: root(RootAdmin, admin), Result: root(RootResult, result), Destination: root(RootDestination, destination)})}
 }
 
 func workspaceManifestEntry(t *testing.T, path, value string, mode uint32) app.WorkspaceManifestEntry {
