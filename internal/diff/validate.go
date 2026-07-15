@@ -166,17 +166,18 @@ func (h PatchHunkIndex) Validate() error {
 
 // PatchIndexEntry stores one complete file section and its hunk windows.
 type PatchIndexEntry struct {
-	Version      uint32
-	SourceID     string
-	Index        int
-	Offset       int64
-	Length       int64
-	HeaderLength int64
-	File         repository.ChangedFile
-	Binary       bool
-	BinaryOffset int64
-	SHA256       string
-	Hunks        []PatchHunkIndex
+	Version        uint32
+	SourceID       string
+	Index          int
+	Offset         int64
+	Length         int64
+	HeaderLength   int64
+	File           repository.ChangedFile
+	Binary         bool
+	BinaryComplete bool
+	BinaryOffset   int64
+	SHA256         string
+	Hunks          []PatchHunkIndex
 }
 
 // Validate checks the index record without opening the patch bytes.
@@ -185,6 +186,9 @@ func (e PatchIndexEntry) Validate() error {
 		return ErrPatchMalformed
 	}
 	if e.Binary != e.File.Binary {
+		return ErrPatchMalformed
+	}
+	if e.BinaryComplete && !e.Binary {
 		return ErrPatchMalformed
 	}
 	if e.Binary {

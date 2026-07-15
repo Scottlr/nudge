@@ -103,12 +103,13 @@ func (s WorkspaceSourceIdentity) Validate() error {
 // one baseline/result entry. Path and LinkTarget use []byte so JSON preserves
 // raw repository bytes through SQLite without UTF-8 replacement.
 type WorkspaceManifestEntry struct {
-	Path       []byte              `json:"path"`
-	Kind       repository.FileKind `json:"kind"`
-	Mode       uint32              `json:"mode"`
-	Bytes      uint64              `json:"bytes"`
-	SHA256     string              `json:"sha256"`
-	LinkTarget []byte              `json:"link_target,omitempty"`
+	Path         []byte                    `json:"path"`
+	Kind         repository.FileKind       `json:"kind"`
+	Mode         uint32                    `json:"mode"`
+	Bytes        uint64                    `json:"bytes"`
+	SHA256       string                    `json:"sha256"`
+	ContentClass repository.ContentClassV1 `json:"content_class,omitempty"`
+	LinkTarget   []byte                    `json:"link_target,omitempty"`
 }
 
 func (e WorkspaceManifestEntry) Validate() error {
@@ -117,15 +118,15 @@ func (e WorkspaceManifestEntry) Validate() error {
 	}
 	switch e.Kind {
 	case repository.FileKindDirectory:
-		if e.Bytes != 0 || e.SHA256 != "" || len(e.LinkTarget) != 0 {
+		if e.Bytes != 0 || e.SHA256 != "" || e.ContentClass != "" || len(e.LinkTarget) != 0 {
 			return ErrInvalidProposalWorkspaceLifecycle
 		}
 	case repository.FileKindRegular:
-		if !validWorkspaceHash(e.SHA256) || len(e.LinkTarget) != 0 {
+		if !validWorkspaceHash(e.SHA256) || len(e.LinkTarget) != 0 || e.ContentClass != "" && e.ContentClass.Validate() != nil {
 			return ErrInvalidProposalWorkspaceLifecycle
 		}
 	case repository.FileKindSymlink:
-		if len(e.LinkTarget) == 0 || e.Bytes != uint64(len(e.LinkTarget)) || !validWorkspaceHash(e.SHA256) || len(e.LinkTarget) > 32<<20 {
+		if len(e.LinkTarget) == 0 || e.Bytes != uint64(len(e.LinkTarget)) || !validWorkspaceHash(e.SHA256) || len(e.LinkTarget) > 32<<20 || e.ContentClass != "" {
 			return ErrInvalidProposalWorkspaceLifecycle
 		}
 	default:
@@ -257,6 +258,7 @@ func workspaceManifestHash(version uint32, entries []WorkspaceManifestEntry) str
 		writeWorkspaceHashUint(h, uint64(entry.Mode))
 		writeWorkspaceHashUint(h, entry.Bytes)
 		writeWorkspaceHashString(h, entry.SHA256)
+		writeWorkspaceHashString(h, string(entry.ContentClass))
 		writeWorkspaceHashBytes(h, entry.LinkTarget)
 	}
 	return hex.EncodeToString(h.Sum(nil))

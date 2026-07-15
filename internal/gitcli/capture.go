@@ -449,11 +449,12 @@ type captureStatusRecord struct {
 }
 
 type captureBlobRecord struct {
-	entryKey string
-	side     repository.CaptureBlobSide
-	path     repository.RepoPath
-	relative string
-	identity app.StreamIdentity
+	entryKey     string
+	side         repository.CaptureBlobSide
+	path         repository.RepoPath
+	relative     string
+	identity     app.StreamIdentity
+	contentClass repository.ContentClassV1
 }
 
 type indexReadEvidence struct {
@@ -1458,30 +1459,30 @@ func (a *LocalCaptureAdapter) captureEntryBlobs(ctx context.Context, builder *Co
 	for _, entry := range entries {
 		entryKey := captureEntryPath(entry.entry)
 		if entry.untracked {
-			identity, token, relative, err := a.writeWorkingBlob(ctx, root, *entry.entry.Change.NewPath, spool, counter)
+			identity, contentClass, token, relative, err := a.writeWorkingBlob(ctx, root, *entry.entry.Change.NewPath, spool, counter)
 			if err != nil {
 				return nil, "", err
 			}
 			counter++
-			records = append(records, captureBlobRecord{entryKey: entryKey, side: repository.CaptureBlobWorkingTree, path: *entry.entry.Change.NewPath, relative: relative, identity: identity})
+			records = append(records, captureBlobRecord{entryKey: entryKey, side: repository.CaptureBlobWorkingTree, path: *entry.entry.Change.NewPath, relative: relative, identity: identity, contentClass: contentClass})
 			_, _ = filesystemHash.Write([]byte(token))
 			continue
 		}
 		if entry.baseID != nil && entry.entry.Change.OldPath != nil && capturableFileKind(entry.entry.Change.OldFileKind) {
-			identity, relative, err := a.writeGitBlob(ctx, builder, *entry.baseID, spool, counter)
+			identity, contentClass, relative, err := a.writeGitBlob(ctx, builder, *entry.baseID, spool, counter)
 			if err != nil {
 				return nil, "", err
 			}
 			counter++
-			records = append(records, captureBlobRecord{entryKey: entryKey, side: repository.CaptureBlobBase, path: *entry.entry.Change.OldPath, relative: relative, identity: identity})
+			records = append(records, captureBlobRecord{entryKey: entryKey, side: repository.CaptureBlobBase, path: *entry.entry.Change.OldPath, relative: relative, identity: identity, contentClass: contentClass})
 		}
 		if entry.indexID != nil && entry.entry.Change.NewPath != nil && capturableFileKind(entry.entry.Change.NewFileKind) {
-			identity, relative, err := a.writeGitBlob(ctx, builder, *entry.indexID, spool, counter)
+			identity, contentClass, relative, err := a.writeGitBlob(ctx, builder, *entry.indexID, spool, counter)
 			if err != nil {
 				return nil, "", err
 			}
 			counter++
-			records = append(records, captureBlobRecord{entryKey: entryKey, side: repository.CaptureBlobIndex, path: *entry.entry.Change.NewPath, relative: relative, identity: identity})
+			records = append(records, captureBlobRecord{entryKey: entryKey, side: repository.CaptureBlobIndex, path: *entry.entry.Change.NewPath, relative: relative, identity: identity, contentClass: contentClass})
 		}
 		for stageIndex, stageID := range entry.stageIDs {
 			stagePath := entry.entry.Change.NewPath
@@ -1491,7 +1492,7 @@ func (a *LocalCaptureAdapter) captureEntryBlobs(ctx context.Context, builder *Co
 			if stageID == nil || stagePath == nil || !capturableFileKind(fileKindFromGitMode(entry.stageModes[stageIndex])) {
 				continue
 			}
-			identity, relative, err := a.writeGitBlob(ctx, builder, *stageID, spool, counter)
+			identity, contentClass, relative, err := a.writeGitBlob(ctx, builder, *stageID, spool, counter)
 			if err != nil {
 				return nil, "", err
 			}
@@ -1502,15 +1503,15 @@ func (a *LocalCaptureAdapter) captureEntryBlobs(ctx context.Context, builder *Co
 			} else if stageIndex == 2 {
 				side = repository.CaptureBlobStage3
 			}
-			records = append(records, captureBlobRecord{entryKey: entryKey, side: side, path: *stagePath, relative: relative, identity: identity})
+			records = append(records, captureBlobRecord{entryKey: entryKey, side: side, path: *stagePath, relative: relative, identity: identity, contentClass: contentClass})
 		}
 		if entry.entry.Change.NewPath != nil && capturableFileKind(entry.entry.Change.NewFileKind) {
-			identity, token, relative, err := a.writeWorkingBlob(ctx, root, *entry.entry.Change.NewPath, spool, counter)
+			identity, contentClass, token, relative, err := a.writeWorkingBlob(ctx, root, *entry.entry.Change.NewPath, spool, counter)
 			if err != nil {
 				return nil, "", err
 			}
 			counter++
-			records = append(records, captureBlobRecord{entryKey: entryKey, side: repository.CaptureBlobWorkingTree, path: *entry.entry.Change.NewPath, relative: relative, identity: identity})
+			records = append(records, captureBlobRecord{entryKey: entryKey, side: repository.CaptureBlobWorkingTree, path: *entry.entry.Change.NewPath, relative: relative, identity: identity, contentClass: contentClass})
 			_, _ = filesystemHash.Write([]byte(token))
 		}
 	}
@@ -1521,66 +1522,81 @@ func capturableFileKind(kind repository.FileKind) bool {
 	return kind == repository.FileKindRegular || kind == repository.FileKindSymlink
 }
 
-func (a *LocalCaptureAdapter) writeGitBlob(ctx context.Context, builder *CommandBuilder, objectID repository.ObjectID, spool app.ArtifactSpoolHandle, counter int) (app.StreamIdentity, string, error) {
+func (a *LocalCaptureAdapter) writeGitBlob(ctx context.Context, builder *CommandBuilder, objectID repository.ObjectID, spool app.ArtifactSpoolHandle, counter int) (app.StreamIdentity, repository.ContentClassV1, string, error) {
 	relative := fmt.Sprintf("blob-%08d", counter)
 	file, err := spool.CreateFile(ctx, relative)
 	if err != nil {
-		return app.StreamIdentity{}, "", err
+		return app.StreamIdentity{}, "", "", err
 	}
-	writer := &captureHashWriter{writer: file, hash: sha256.New()}
+	writer := &captureHashWriter{writer: file, hash: sha256.New(), classifier: repository.NewContentClassifierV1(false)}
 	_, runErr := builder.RunStream(ctx, writer, "cat-file", "blob", string(objectID))
 	closeErr := file.Close()
 	if runErr != nil {
-		return app.StreamIdentity{}, "", classifyCaptureError(runErr)
+		return app.StreamIdentity{}, "", "", classifyCaptureError(runErr)
 	}
 	if closeErr != nil {
-		return app.StreamIdentity{}, "", closeErr
+		return app.StreamIdentity{}, "", "", closeErr
 	}
 	identity := app.StreamIdentity{Bytes: app.ByteSize(writer.bytes), SHA256: hex.EncodeToString(writer.hash.Sum(nil))}
-	return identity, relative, nil
+	return identity, writer.classifier.Classify(), relative, nil
 }
 
-func (a *LocalCaptureAdapter) writeWorkingBlob(ctx context.Context, root string, path repository.RepoPath, spool app.ArtifactSpoolHandle, counter int) (app.StreamIdentity, string, string, error) {
+func (a *LocalCaptureAdapter) writeWorkingBlob(ctx context.Context, root string, path repository.RepoPath, spool app.ArtifactSpoolHandle, counter int) (app.StreamIdentity, repository.ContentClassV1, string, string, error) {
 	native, err := captureNativePath(root, path)
 	if err != nil {
-		return app.StreamIdentity{}, "", "", err
+		return app.StreamIdentity{}, "", "", "", err
 	}
 	before, err := os.Lstat(native)
 	if err != nil {
-		return app.StreamIdentity{}, "", "", &GitError{Code: ErrorLocalCaptureMutation, Cause: err}
+		return app.StreamIdentity{}, "", "", "", &GitError{Code: ErrorLocalCaptureMutation, Cause: err}
 	}
 	kind, mode := fileKindFromNativeInfo(before)
 	if !capturableFileKind(kind) {
-		return app.StreamIdentity{}, "", "", &GitError{Code: ErrorLocalCaptureIncomplete, Cause: errors.New("unsupported working-tree kind")}
+		return app.StreamIdentity{}, "", "", "", &GitError{Code: ErrorLocalCaptureIncomplete, Cause: errors.New("unsupported working-tree kind")}
 	}
 	relative := fmt.Sprintf("blob-%08d", counter)
 	var identity app.StreamIdentity
+	contentClass := repository.ContentClassV1("")
 	var beforeTarget string
 	if kind == repository.FileKindSymlink {
 		target, readErr := os.Readlink(native)
 		if readErr != nil {
-			return app.StreamIdentity{}, "", "", &GitError{Code: ErrorPermission, Cause: readErr}
+			return app.StreamIdentity{}, "", "", "", &GitError{Code: ErrorPermission, Cause: readErr}
 		}
 		if uint64(len(target)) > uint64(a.policy.Input.RepoPathBytes) {
-			return app.StreamIdentity{}, "", "", &GitError{Code: ErrorLocalCaptureLimit}
+			return app.StreamIdentity{}, "", "", "", &GitError{Code: ErrorLocalCaptureLimit}
 		}
 		beforeTarget = target
 		identity, err = spool.WriteFrom(ctx, relative, strings.NewReader(target))
 		if err != nil {
-			return app.StreamIdentity{}, "", "", classifyCaptureError(err)
+			return app.StreamIdentity{}, "", "", "", classifyCaptureError(err)
 		}
 	} else {
 		file, openErr := os.Open(native)
 		if openErr != nil {
-			return app.StreamIdentity{}, "", "", &GitError{Code: ErrorPermission, Cause: openErr}
+			return app.StreamIdentity{}, "", "", "", &GitError{Code: ErrorPermission, Cause: openErr}
 		}
-		identity, err = spool.WriteFrom(ctx, relative, file)
+		spooled, createErr := spool.CreateFile(ctx, relative)
+		if createErr != nil {
+			_ = file.Close()
+			return app.StreamIdentity{}, "", "", "", createErr
+		}
+		writer := &captureHashWriter{writer: spooled, hash: sha256.New(), classifier: repository.NewContentClassifierV1(false)}
+		_, err = io.CopyBuffer(writer, file, make([]byte, 32*1024))
+		closeSpoolErr := spooled.Close()
 		closeErr := file.Close()
+		if err == nil {
+			err = closeSpoolErr
+		}
 		if err == nil {
 			err = closeErr
 		}
+		if err == nil {
+			identity = app.StreamIdentity{Bytes: app.ByteSize(writer.bytes), SHA256: hex.EncodeToString(writer.hash.Sum(nil))}
+			contentClass = writer.classifier.Classify()
+		}
 		if err != nil {
-			return app.StreamIdentity{}, "", "", classifyCaptureError(err)
+			return app.StreamIdentity{}, "", "", "", classifyCaptureError(err)
 		}
 	}
 	after, statErr := os.Lstat(native)
@@ -1588,19 +1604,19 @@ func (a *LocalCaptureAdapter) writeWorkingBlob(ctx context.Context, root string,
 		if statErr == nil {
 			statErr = errors.New("working-tree identity changed")
 		}
-		return app.StreamIdentity{}, "", "", &GitError{Code: ErrorLocalCaptureMutation, Cause: statErr}
+		return app.StreamIdentity{}, "", "", "", &GitError{Code: ErrorLocalCaptureMutation, Cause: statErr}
 	}
 	if kind == repository.FileKindSymlink {
 		afterTarget, afterErr := os.Readlink(native)
 		if afterErr != nil {
-			return app.StreamIdentity{}, "", "", &GitError{Code: ErrorPermission, Cause: afterErr}
+			return app.StreamIdentity{}, "", "", "", &GitError{Code: ErrorPermission, Cause: afterErr}
 		}
 		if beforeTarget == "" || afterTarget != beforeTarget {
-			return app.StreamIdentity{}, "", "", &GitError{Code: ErrorLocalCaptureMutation, Cause: errors.New("symlink target changed")}
+			return app.StreamIdentity{}, "", "", "", &GitError{Code: ErrorLocalCaptureMutation, Cause: errors.New("symlink target changed")}
 		}
 	}
 	token := digestParts([]byte(string(path)), []byte(string(kind)), []byte(strconv.FormatUint(uint64(mode), 10)), []byte(identity.SHA256), []byte(strconv.FormatUint(uint64(identity.Bytes), 10)))
-	return identity, token, relative, nil
+	return identity, contentClass, token, relative, nil
 }
 
 func (a *LocalCaptureAdapter) revalidateWorkingBlobs(root string, records []captureBlobRecord) error {
@@ -1750,9 +1766,16 @@ func attachBlobRefs(entries []captureStatusRecord, records []captureBlobRecord, 
 	for _, record := range entries {
 		entry := record.entry
 		for _, blob := range byPath[captureEntryPath(entry)] {
+			if blob.contentClass != "" && (blob.side == repository.CaptureBlobWorkingTree || blob.side == repository.CaptureBlobIndex || blob.side == repository.CaptureBlobBase) {
+				if blob.side == repository.CaptureBlobWorkingTree || blob.side == repository.CaptureBlobIndex || entry.Change.NewPath == nil {
+					entry.Change.ContentClass = blob.contentClass
+					entry.Change.Binary = blob.contentClass.IsByteOriented()
+				}
+			}
 			entry.Blobs = append(entry.Blobs, repository.CaptureBlobRef{
-				Side: blob.side,
-				Path: blob.path,
+				Side:         blob.side,
+				Path:         blob.path,
+				ContentClass: blob.contentClass,
 				Artifact: repository.CaptureArtifact{
 					Kind:          repository.CaptureArtifactBlobs,
 					SpoolID:       aggregate.SpoolID,
@@ -1787,7 +1810,8 @@ type captureHashWriter struct {
 		Write([]byte) (int, error)
 		Sum([]byte) []byte
 	}
-	bytes int64
+	bytes      int64
+	classifier *repository.ContentClassifierV1
 }
 
 func (w *captureHashWriter) Write(value []byte) (int, error) {
@@ -1803,6 +1827,9 @@ func (w *captureHashWriter) Write(value []byte) (int, error) {
 			err = errors.New("capture stream byte overflow")
 		} else {
 			w.bytes += int64(written)
+		}
+		if w.classifier != nil {
+			_, _ = w.classifier.Write(value[:written])
 		}
 	}
 	if err == nil && written != len(value) {

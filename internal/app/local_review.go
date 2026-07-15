@@ -115,6 +115,14 @@ func (s LocalReviewSnapshot) Clone() LocalReviewSnapshot {
 			path := repository.RepoPath(s.Displayed.HeadPath.Bytes())
 			value.HeadPath = &path
 		}
+		if s.Displayed.Binary != nil {
+			metadata := *s.Displayed.Binary
+			if s.Displayed.Binary.Patch != nil {
+				patch := *s.Displayed.Binary.Patch
+				metadata.Patch = &patch
+			}
+			value.Binary = &metadata
+		}
 		result.Displayed = &value
 	}
 	if s.DisplayedPage != nil {
@@ -394,26 +402,18 @@ func (r *LocalReview) run(ctx context.Context, startPath string, stream chan<- L
 		fail(LocalReviewLoadingFile, "load file diff", err, repositoryState, &target, adoption.Generation.CaptureID, page, changes)
 		return
 	}
-	var content *repository.FileContent
-	contentPath, contentSnapshot := active.NewPath, target.Head
-	if contentPath == nil {
-		contentPath, contentSnapshot = active.OldPath, target.Base
+	baseContent, headContent, content, contentPath, loadErr := loadDiffContents(ctx, r.source.Content, adoption.Generation.CaptureID, target, active, diffValue)
+	if loadErr != nil {
+		fail(LocalReviewLoadingFile, "load file content", loadErr, repositoryState, &target, adoption.Generation.CaptureID, page, changes)
+		return
 	}
-	if contentPath != nil && contentSnapshot.Validate() == nil {
-		loaded, loadErr := r.source.Content.LoadFile(ctx, adoption.Generation.CaptureID, contentSnapshot, *contentPath)
-		if loadErr != nil {
-			fail(LocalReviewLoadingFile, "load file content", loadErr, repositoryState, &target, adoption.Generation.CaptureID, page, changes)
-			return
-		}
-		content = &loaded
-	}
-	displayed, displayedPage, displayedErr := displayedDiff(target, adoption.Generation.CaptureID, active, diffValue, content)
+	displayed, displayedPage, displayedErr := displayedDiffWithSides(target, adoption.Generation.CaptureID, active, diffValue, baseContent, headContent)
 	if displayedErr != nil {
 		fail(LocalReviewLoadingFile, "build displayed diff", displayedErr, repositoryState, &target, adoption.Generation.CaptureID, page, changes)
 		return
 	}
 	var highlighted *highlight.HighlightedFile
-	if content != nil && contentPath != nil {
+	if content != nil && contentPath != nil && !content.Binary {
 		value, highlightErr := r.source.Highlighter.Highlight(ctx, *content, string(contentPath.Bytes()), "github")
 		if highlightErr != nil {
 			fail(LocalReviewLoadingFile, "highlight file", highlightErr, repositoryState, &target, adoption.Generation.CaptureID, page, changes)
@@ -487,26 +487,18 @@ func (r *LocalReview) runBranch(ctx context.Context, _ chan<- LocalReviewSnapsho
 		fail(LocalReviewLoadingFile, "load branch diff", err, repositoryState, &target, "", page, changes)
 		return
 	}
-	var content *repository.FileContent
-	contentPath, contentSnapshot := active.NewPath, target.Head
-	if contentPath == nil {
-		contentPath, contentSnapshot = active.OldPath, target.Base
+	baseContent, headContent, content, contentPath, loadErr := loadDiffContents(ctx, r.source.Content, "", target, active, diffValue)
+	if loadErr != nil {
+		fail(LocalReviewLoadingFile, "load branch file", loadErr, repositoryState, &target, "", page, changes)
+		return
 	}
-	if contentPath != nil && contentSnapshot.Validate() == nil {
-		loaded, loadErr := r.source.Content.LoadFile(ctx, "", contentSnapshot, *contentPath)
-		if loadErr != nil {
-			fail(LocalReviewLoadingFile, "load branch file", loadErr, repositoryState, &target, "", page, changes)
-			return
-		}
-		content = &loaded
-	}
-	displayed, displayedPage, err := displayedDiff(target, "", active, diffValue, content)
+	displayed, displayedPage, err := displayedDiffWithSides(target, "", active, diffValue, baseContent, headContent)
 	if err != nil {
 		fail(LocalReviewLoadingFile, "build branch diff", err, repositoryState, &target, "", page, changes)
 		return
 	}
 	var highlighted *highlight.HighlightedFile
-	if content != nil && contentPath != nil {
+	if content != nil && contentPath != nil && !content.Binary {
 		value, highlightErr := r.source.Highlighter.Highlight(ctx, *content, string(contentPath.Bytes()), "github")
 		if highlightErr != nil {
 			fail(LocalReviewLoadingFile, "highlight branch file", highlightErr, repositoryState, &target, "", page, changes)
@@ -576,26 +568,18 @@ func (r *LocalReview) runCommit(ctx context.Context, _ chan<- LocalReviewSnapsho
 		fail(LocalReviewLoadingFile, "load commit diff", err, repositoryState, &target, "", page, changes)
 		return
 	}
-	var content *repository.FileContent
-	contentPath, contentSnapshot := active.NewPath, target.Head
-	if contentPath == nil {
-		contentPath, contentSnapshot = active.OldPath, target.Base
+	baseContent, headContent, content, contentPath, loadErr := loadDiffContents(ctx, r.source.Content, "", target, active, diffValue)
+	if loadErr != nil {
+		fail(LocalReviewLoadingFile, "load commit file", loadErr, repositoryState, &target, "", page, changes)
+		return
 	}
-	if contentPath != nil && contentSnapshot.Validate() == nil {
-		loaded, loadErr := r.source.Content.LoadFile(ctx, "", contentSnapshot, *contentPath)
-		if loadErr != nil {
-			fail(LocalReviewLoadingFile, "load commit file", loadErr, repositoryState, &target, "", page, changes)
-			return
-		}
-		content = &loaded
-	}
-	displayed, displayedPage, err := displayedDiff(target, "", active, diffValue, content)
+	displayed, displayedPage, err := displayedDiffWithSides(target, "", active, diffValue, baseContent, headContent)
 	if err != nil {
 		fail(LocalReviewLoadingFile, "build commit diff", err, repositoryState, &target, "", page, changes)
 		return
 	}
 	var highlighted *highlight.HighlightedFile
-	if content != nil && contentPath != nil {
+	if content != nil && contentPath != nil && !content.Binary {
 		value, highlightErr := r.source.Highlighter.Highlight(ctx, *content, string(contentPath.Bytes()), "github")
 		if highlightErr != nil {
 			fail(LocalReviewLoadingFile, "highlight commit file", highlightErr, repositoryState, &target, "", page, changes)
@@ -632,7 +616,82 @@ func changePath(file repository.ChangedFile) string {
 	return ""
 }
 
+func loadDiffContents(ctx context.Context, loader ContentLoader, captureID domain.CaptureID, target repository.ResolvedTarget, file repository.ChangedFile, diffValue repository.FileDiff) (base, head, selected *repository.FileContent, selectedPath *repository.RepoPath, err error) {
+	if loader == nil {
+		return nil, nil, nil, nil, errors.New("content loader unavailable")
+	}
+	binary := file.Binary || diffValue.File.Binary || file.ContentClass.IsByteOriented() || diffValue.File.ContentClass.IsByteOriented()
+	load := func(path *repository.RepoPath, snapshot repository.SnapshotRef) (*repository.FileContent, error) {
+		if path == nil || snapshot.Validate() != nil {
+			return nil, nil
+		}
+		value, loadErr := loader.LoadFile(ctx, captureID, snapshot, *path)
+		if loadErr != nil {
+			return nil, loadErr
+		}
+		return &value, nil
+	}
+	if binary {
+		base, err = load(file.OldPath, target.Base)
+		if err != nil {
+			return nil, nil, nil, nil, err
+		}
+		head, err = load(file.NewPath, target.Head)
+		if err != nil {
+			return nil, nil, nil, nil, err
+		}
+	} else if file.NewPath != nil {
+		head, err = load(file.NewPath, target.Head)
+		if err != nil {
+			return nil, nil, nil, nil, err
+		}
+	} else {
+		base, err = load(file.OldPath, target.Base)
+		if err != nil {
+			return nil, nil, nil, nil, err
+		}
+	}
+	if binary {
+		class := diffValue.File.ContentClass
+		if class == "" {
+			class = file.ContentClass
+		}
+		if class == "" {
+			class = repository.ContentClassRegularBinary
+		}
+		for _, value := range []*repository.FileContent{base, head} {
+			if value == nil {
+				continue
+			}
+			value.ContentClass = class
+			value.Binary = class.IsByteOriented()
+			value.MetadataOnly = true
+			value.Bytes = nil
+			if value.Validate() != nil {
+				return nil, nil, nil, nil, repository.ErrInvalidFileContent
+			}
+		}
+	}
+	selectedPath = file.NewPath
+	selected = head
+	if selected == nil {
+		selectedPath = file.OldPath
+		selected = base
+	}
+	return base, head, selected, selectedPath, nil
+}
+
 func displayedDiff(target repository.ResolvedTarget, captureID domain.CaptureID, file repository.ChangedFile, diffValue repository.FileDiff, content *repository.FileContent) (DisplayedContent, DisplayedContentPage, error) {
+	var baseContent, headContent *repository.FileContent
+	if file.NewPath == nil {
+		baseContent = content
+	} else {
+		headContent = content
+	}
+	return displayedDiffWithSides(target, captureID, file, diffValue, baseContent, headContent)
+}
+
+func displayedDiffWithSides(target repository.ResolvedTarget, captureID domain.CaptureID, file repository.ChangedFile, diffValue repository.FileDiff, baseContent, headContent *repository.FileContent) (DisplayedContent, DisplayedContentPage, error) {
 	encoded, err := json.Marshal(diffValue)
 	if err != nil {
 		return DisplayedContent{}, DisplayedContentPage{}, err
@@ -643,11 +702,16 @@ func displayedDiff(target repository.ResolvedTarget, captureID domain.CaptureID,
 	if err != nil {
 		return DisplayedContent{}, DisplayedContentPage{}, err
 	}
+	content := headContent
+	if content == nil {
+		content = baseContent
+	}
+	binary := file.Binary || diffValue.File.Binary || file.ContentClass.IsByteOriented() || diffValue.File.ContentClass.IsByteOriented()
 	status := ContentReady
 	reason := ""
 	if file.Conflict != nil {
 		status, reason = ContentUnmerged, "unmerged_index"
-	} else if file.Binary {
+	} else if binary {
 		status, reason = ContentBinary, "binary"
 	} else if content == nil {
 		status, reason = ContentError, "content_unavailable"
@@ -658,6 +722,9 @@ func displayedDiff(target repository.ResolvedTarget, captureID domain.CaptureID,
 		}
 	}
 	displayed := DisplayedContent{ID: contentID, Mode: DisplayUnifiedDiff, Status: status, Reason: reason}
+	if binary {
+		displayed.Binary = binaryContentMetadata(file, diffValue, baseContent, headContent)
+	}
 	if file.OldPath != nil {
 		path := repository.RepoPath(file.OldPath.Bytes())
 		displayed.BasePath = &path
@@ -699,6 +766,26 @@ func displayedDiff(target repository.ResolvedTarget, captureID domain.CaptureID,
 		return DisplayedContent{}, DisplayedContentPage{}, err
 	}
 	return displayed, page, nil
+}
+
+func binaryContentMetadata(file repository.ChangedFile, diffValue repository.FileDiff, baseContent, headContent *repository.FileContent) *BinaryContentMetadata {
+	metadata := &BinaryContentMetadata{Change: string(file.Kind)}
+	if baseContent != nil {
+		metadata.BasePresent = true
+		metadata.BaseBytes = baseContent.ByteLength
+		metadata.BaseHash = baseContent.ContentHash
+	}
+	if headContent != nil {
+		metadata.HeadPresent = true
+		metadata.HeadBytes = headContent.ByteLength
+		metadata.HeadHash = headContent.ContentHash
+	}
+	if diffValue.BinaryPatch != nil {
+		patch := *diffValue.BinaryPatch
+		metadata.Patch = &patch
+		metadata.PatchComplete = diffValue.BinaryComplete
+	}
+	return metadata
 }
 
 func placeholderForStatus(status ContentStatus) PlaceholderKind {

@@ -11,6 +11,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/Scottlr/nudge/internal/domain/repository"
 )
@@ -154,7 +155,8 @@ func ParseFileDiff(ctx context.Context, source PatchSource, entry PatchIndexEntr
 			return repository.FileDiff{}, err
 		}
 		result := repository.FileDiff{
-			File: entry.File,
+			File:           entry.File,
+			BinaryComplete: entry.BinaryComplete,
 			BinaryPatch: &repository.PatchByteRange{
 				ArtifactID: repository.PatchArtifactID(source.ID()),
 				Offset:     binaryOffset,
@@ -328,6 +330,7 @@ type sectionBuilder struct {
 	newObject         *repository.ObjectID
 	binary            bool
 	binaryStart       int64
+	binaryComplete    bool
 	metadataBytes     int64
 	hunk              *hunkBuilder
 	hunks             []PatchHunkIndex
@@ -413,6 +416,7 @@ func (b *sectionBuilder) consume(line patchLine, limits PatchParseLimits) error 
 	if bytes.Equal(text, []byte("GIT binary patch")) {
 		b.binary = true
 		b.binaryStart = line.Offset
+		b.binaryComplete = true
 		return nil
 	}
 	if bytes.HasPrefix(text, []byte("Binary files ")) {
@@ -686,16 +690,17 @@ func (b *sectionBuilder) finish(end int64, source PatchSource, data []byte, limi
 		binaryOffset = b.binaryOffset(end)
 	}
 	return PatchIndexEntry{
-		Version:      PatchIndexVersion,
-		SourceID:     sourceID(source, "section"),
-		Offset:       b.start,
-		Length:       end - b.start,
-		HeaderLength: b.headerLen,
-		File:         file,
-		Binary:       b.binary,
-		BinaryOffset: binaryOffset,
-		SHA256:       sectionHash,
-		Hunks:        append([]PatchHunkIndex(nil), b.hunks...),
+		Version:        PatchIndexVersion,
+		SourceID:       sourceID(source, "section"),
+		Offset:         b.start,
+		Length:         end - b.start,
+		HeaderLength:   b.headerLen,
+		File:           file,
+		Binary:         b.binary,
+		BinaryOffset:   binaryOffset,
+		BinaryComplete: b.binaryComplete,
+		SHA256:         sectionHash,
+		Hunks:          append([]PatchHunkIndex(nil), b.hunks...),
 	}, nil
 }
 
@@ -708,7 +713,7 @@ func (b *sectionBuilder) binaryOffset(end int64) int64 {
 
 func (b *sectionBuilder) fileDiff(sourceID string, source PatchSource, end int64, ctx context.Context) repository.FileDiff {
 	file, _ := b.changedFile()
-	result := repository.FileDiff{File: file, Hunks: append([]repository.DiffHunk(nil), b.diffHunks...)}
+	result := repository.FileDiff{File: file, Hunks: append([]repository.DiffHunk(nil), b.diffHunks...), BinaryComplete: b.binaryComplete}
 	if b.binary {
 		offset := b.binaryOffset(end)
 		length := end - offset
@@ -769,6 +774,27 @@ func (b *sectionBuilder) changedFile() (repository.ChangedFile, error) {
 		OldMode: oldMode, NewMode: newMode,
 		OldObjectID: b.oldObject, NewObjectID: b.newObject,
 		Binary: b.binary,
+	}
+	if b.binary && (oldKind == repository.FileKindRegular || newKind == repository.FileKindRegular) {
+		file.ContentClass = repository.ContentClassRegularBinary
+	} else if (oldKind == repository.FileKindRegular || newKind == repository.FileKindRegular) && len(b.diffHunks) != 0 {
+		file.ContentClass = repository.ContentClassRegularTextUTF8
+		opaque := false
+		for _, hunk := range b.diffHunks {
+			for _, line := range hunk.Lines {
+				if bytes.IndexByte([]byte(line.Text), 0) >= 0 || !utf8.ValidString(line.Text) {
+					file.ContentClass = repository.ContentClassOpaqueBytes
+					opaque = true
+				}
+			}
+		}
+		if opaque {
+			b.binary = true
+			b.binaryStart = b.start
+			b.diffHunks = nil
+			b.hunks = nil
+			file.Binary = true
+		}
 	}
 	if kind == repository.ChangeRenamed || kind == repository.ChangeCopied {
 		if !b.similaritySet {

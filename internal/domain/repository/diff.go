@@ -177,9 +177,10 @@ func validHunkRange(start, count int) bool {
 
 // FileDiff is a structured diff for one changed file.
 type FileDiff struct {
-	File        ChangedFile
-	Hunks       []DiffHunk
-	BinaryPatch *PatchByteRange
+	File           ChangedFile
+	Hunks          []DiffHunk
+	BinaryPatch    *PatchByteRange
+	BinaryComplete bool
 }
 
 // Validate keeps binary bytes and textual hunks on separate representations.
@@ -191,6 +192,9 @@ func (d FileDiff) Validate() error {
 		if !d.File.Binary || len(d.Hunks) != 0 || d.BinaryPatch.Validate() != nil {
 			return ErrInvalidDiff
 		}
+	}
+	if d.BinaryComplete && !d.File.Binary {
+		return ErrInvalidDiff
 	}
 	if d.File.Binary && len(d.Hunks) != 0 {
 		return ErrInvalidDiff

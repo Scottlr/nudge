@@ -79,6 +79,7 @@ type ResultSnapshotEntry struct {
 	Mode               uint32                          `json:"mode"`
 	Bytes              uint64                          `json:"bytes"`
 	SHA256             string                          `json:"sha256"`
+	ContentClass       repository.ContentClassV1       `json:"content_class,omitempty"`
 	LinkTarget         []byte                          `json:"link_target,omitempty"`
 	NativeIdentityHash string                          `json:"native_identity_hash,omitempty"`
 	NativeAlias        *repository.NativeAliasEvidence `json:"native_alias,omitempty"`
@@ -96,18 +97,18 @@ func (e ResultSnapshotEntry) Validate() error {
 			return ErrInvalidResultSnapshot
 		}
 	case repository.FileKindRegular:
-		if e.Mode == 0 || !validResultHash(e.SHA256) || len(e.LinkTarget) != 0 || !e.Complete || !validResultHash(e.NativeIdentityHash) {
+		if e.Mode == 0 || !validResultHash(e.SHA256) || len(e.LinkTarget) != 0 || e.ContentClass != "" && e.ContentClass.Validate() != nil || !e.Complete || !validResultHash(e.NativeIdentityHash) {
 			return ErrInvalidResultSnapshot
 		}
 		if e.NativeAlias != nil && e.NativeAlias.Validate() != nil {
 			return ErrInvalidResultSnapshot
 		}
 	case repository.FileKindSymlink:
-		if e.Mode == 0 || len(e.LinkTarget) == 0 || e.Bytes != uint64(len(e.LinkTarget)) || !validResultHash(e.SHA256) || e.NativeIdentityHash != "" || e.NativeAlias != nil || !e.Complete {
+		if e.Mode == 0 || len(e.LinkTarget) == 0 || e.Bytes != uint64(len(e.LinkTarget)) || !validResultHash(e.SHA256) || e.ContentClass != "" || e.NativeIdentityHash != "" || e.NativeAlias != nil || !e.Complete {
 			return ErrInvalidResultSnapshot
 		}
 	case repository.FileKindUnknown:
-		if e.Mode != 0 || e.Bytes != 0 || e.SHA256 != "" || len(e.LinkTarget) != 0 || e.NativeIdentityHash != "" || e.NativeAlias != nil || e.Complete || e.Reason == ResultReasonNone {
+		if e.Mode != 0 || e.Bytes != 0 || e.SHA256 != "" || e.ContentClass != "" || len(e.LinkTarget) != 0 || e.NativeIdentityHash != "" || e.NativeAlias != nil || e.Complete || e.Reason == ResultReasonNone {
 			return ErrInvalidResultSnapshot
 		}
 	default:
@@ -463,7 +464,7 @@ func compareResultEntry(base WorkspaceManifestEntry, result ResultSnapshotEntry)
 	if base.Mode != result.Mode {
 		kinds = append(kinds, ResultDeltaMode)
 	}
-	if base.Bytes != result.Bytes || base.SHA256 != result.SHA256 {
+	if base.Bytes != result.Bytes || base.SHA256 != result.SHA256 || base.ContentClass != "" && result.ContentClass != "" && base.ContentClass != result.ContentClass {
 		kinds = append(kinds, ResultDeltaContent)
 	}
 	if !bytes.Equal(base.LinkTarget, result.LinkTarget) {
@@ -659,6 +660,7 @@ func resultDeltaHash(delta ResultDelta) string {
 			writeResultHashUint(h, uint64(entry.Baseline.Mode))
 			writeResultHashUint(h, entry.Baseline.Bytes)
 			writeResultHashString(h, entry.Baseline.SHA256)
+			writeResultHashString(h, string(entry.Baseline.ContentClass))
 			writeResultHashBytes(h, entry.Baseline.LinkTarget)
 		}
 		if entry.Result == nil {
@@ -687,6 +689,7 @@ func writeResultEntryHash(h interface{ Write([]byte) (int, error) }, entry Resul
 	writeResultHashUint(h, uint64(entry.Mode))
 	writeResultHashUint(h, entry.Bytes)
 	writeResultHashString(h, entry.SHA256)
+	writeResultHashString(h, string(entry.ContentClass))
 	writeResultHashBytes(h, entry.LinkTarget)
 	writeResultHashString(h, entry.NativeIdentityHash)
 	if entry.NativeAlias == nil {

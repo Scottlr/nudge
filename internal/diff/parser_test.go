@@ -85,8 +85,22 @@ func TestParsePatchGolden(t *testing.T) {
 	if files[5].File.OldMode != 0o100644 || files[5].File.NewMode != 0o100755 {
 		t.Fatalf("mode change = %#v", files[5].File)
 	}
-	if !files[6].File.Binary || files[6].BinaryPatch == nil || files[6].BinaryPatch.Length == 0 {
+	if !files[6].File.Binary || files[6].File.ContentClass != repository.ContentClassRegularBinary || !files[6].BinaryComplete || files[6].BinaryPatch == nil || files[6].BinaryPatch.Length == 0 {
 		t.Fatalf("binary diff = %#v", files[6])
+	}
+}
+
+func TestParsePatchKeepsSummaryBinaryReviewOnly(t *testing.T) {
+	files, err := ParsePatch([]byte(strings.Join([]string{
+		"diff --git a/image.bin b/image.bin",
+		"index 1111111111111111111111111111111111111111..2222222222222222222222222222222222222222",
+		"Binary files a/image.bin and b/image.bin differ",
+	}, "\n")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || !files[0].File.Binary || files[0].File.ContentClass != repository.ContentClassRegularBinary || files[0].BinaryComplete {
+		t.Fatalf("summary binary evidence = %#v", files)
 	}
 }
 

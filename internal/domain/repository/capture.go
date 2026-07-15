@@ -88,9 +88,10 @@ const (
 // CaptureBlobRef links a changed-file side to one content-addressed spool
 // member. Git object IDs remain separate from the artifact hash.
 type CaptureBlobRef struct {
-	Side     CaptureBlobSide
-	Path     RepoPath
-	Artifact CaptureArtifact
+	Side         CaptureBlobSide
+	Path         RepoPath
+	Artifact     CaptureArtifact
+	ContentClass ContentClassV1
 }
 
 // Validate checks the path/side binding without opening the artifact.
@@ -99,6 +100,9 @@ func (b CaptureBlobRef) Validate() error {
 		return ErrInvalidLocalCaptureCandidate
 	}
 	if err := b.Path.Validate(); err != nil || b.Artifact.Validate() != nil || b.Artifact.Kind != CaptureArtifactBlobs || b.Artifact.Bytes == 0 || b.Artifact.Entries != 1 || !validCaptureSHA256(b.Artifact.ContentSHA256) {
+		return ErrInvalidLocalCaptureCandidate
+	}
+	if b.ContentClass != "" && b.ContentClass.Validate() != nil {
 		return ErrInvalidLocalCaptureCandidate
 	}
 	return nil
@@ -422,6 +426,7 @@ func (c LocalCaptureCandidate) FingerprintValue() (string, error) {
 		writeCaptureUint64(h, boolUint(entry.Change.Staged))
 		writeCaptureUint64(h, boolUint(entry.Change.Unstaged))
 		writeCaptureUint64(h, boolUint(entry.Change.Binary))
+		writeCaptureString(h, string(entry.Change.ContentClass))
 		if entry.Change.Conflict != nil {
 			writeCaptureString(h, entry.Change.Conflict.Code)
 		}
@@ -434,6 +439,7 @@ func (c LocalCaptureCandidate) FingerprintValue() (string, error) {
 		for _, blob := range entry.Blobs {
 			writeCaptureString(h, string(blob.Side))
 			writeCaptureString(h, blob.Artifact.ContentSHA256)
+			writeCaptureString(h, string(blob.ContentClass))
 		}
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil

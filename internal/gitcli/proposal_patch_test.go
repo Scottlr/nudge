@@ -41,7 +41,7 @@ func TestProposalPatchGeneratorAndArtifactIndex(t *testing.T) {
 	baseEntry := testPatchWorkspaceEntry(t, "main.go", []byte("before\n"), 0o100600)
 	resultEntries := []app.ResultSnapshotEntry{
 		{Path: []byte("main.go"), Kind: repository.FileKindRegular, Mode: 0o100600, Bytes: 6, SHA256: testPatchHash([]byte("after\n")), NativeIdentityHash: strings.Repeat("a", 64), Complete: true},
-		{Path: []byte("binary.dat"), Kind: repository.FileKindRegular, Mode: 0o100600, Bytes: 4, SHA256: testPatchHash([]byte{0, 1, 2, 255}), NativeIdentityHash: strings.Repeat("b", 64), Complete: true},
+		{Path: []byte("binary.dat"), Kind: repository.FileKindRegular, Mode: 0o100600, Bytes: 4, SHA256: testPatchHash([]byte{0, 1, 2, 255}), ContentClass: repository.ContentClassRegularBinary, NativeIdentityHash: strings.Repeat("b", 64), Complete: true},
 	}
 	baseline, err := app.NewWorkspaceManifest([]app.WorkspaceManifestEntry{baseEntry})
 	if err != nil {

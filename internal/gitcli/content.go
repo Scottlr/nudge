@@ -23,8 +23,6 @@ var (
 	ErrContentCorrupt = errors.New("content corrupt")
 	// ErrInvalidContentLoader reports an incomplete adapter composition.
 	ErrInvalidContentLoader = errors.New("invalid content loader")
-	// ErrContentLimit is internal to the bounded stream sink.
-	errContentLimit = errors.New("content limit exceeded")
 )
 
 // ContentLoader is the consumer-facing source/diff loading port.
@@ -209,7 +207,7 @@ func (l *GitContentLoader) readPublishedBlob(ctx context.Context, snapshot repos
 		return repository.FileContent{}, ErrContentCorrupt
 	}
 	if app.ByteSize(blob.Artifact.Bytes) > l.maxContentBytes {
-		return boundedFileContent(snapshot, *file.NewPath, file, nil, true, "content_limit")
+		return boundedFileContentIdentity(snapshot, *file.NewPath, file, nil, blob.Artifact.Bytes, blob.Artifact.ContentSHA256, blob.ContentClass, true, "content_limit")
 	}
 	data, err := l.readPublished(ctx, manifest.Blobs.Target, blob.Artifact.RelativePath, app.StreamIdentity{Bytes: app.ByteSize(blob.Artifact.Bytes), SHA256: blob.Artifact.ContentSHA256})
 	if err != nil {
@@ -218,7 +216,7 @@ func (l *GitContentLoader) readPublishedBlob(ctx context.Context, snapshot repos
 	if len(data) != int(blob.Artifact.Bytes) {
 		return repository.FileContent{}, ErrContentCorrupt
 	}
-	return boundedFileContent(snapshot, *file.NewPath, file, data, false, "")
+	return boundedFileContentIdentity(snapshot, *file.NewPath, file, data, blob.Artifact.Bytes, blob.Artifact.ContentSHA256, blob.ContentClass, false, "")
 }
 
 func (l *GitContentLoader) readPublished(ctx context.Context, target app.PublishTarget, relative string, expected app.StreamIdentity) ([]byte, error) {
@@ -265,7 +263,7 @@ func (l *GitContentLoader) loadGitFile(ctx context.Context, snapshot repository.
 	_, err := l.builder.RunStream(ctx, writer, "cat-file", "blob", argument)
 	if err != nil {
 		if writer.limited {
-			return boundedFileContent(snapshot, path, repository.ChangedFile{NewPath: &path, NewFileKind: repository.FileKindRegular, NewMode: 0o100644}, writer.Bytes(), true, "content_limit")
+			return boundedFileContentIdentity(snapshot, path, repository.ChangedFile{NewPath: &path, NewFileKind: repository.FileKindRegular, NewMode: 0o100644}, writer.Bytes(), writer.TotalBytes(), writer.Hash(), writer.Class(), true, "content_limit")
 		}
 		var gitErr *GitError
 		if errors.As(err, &gitErr) && gitErr.Code == ErrorCommandFailed {
@@ -274,10 +272,18 @@ func (l *GitContentLoader) loadGitFile(ctx context.Context, snapshot repository.
 		return repository.FileContent{}, err
 	}
 	file := repository.ChangedFile{NewPath: &path, NewFileKind: repository.FileKindRegular, NewMode: 0o100644}
-	return boundedFileContent(snapshot, path, file, writer.Bytes(), false, "")
+	if writer.limited {
+		return boundedFileContentIdentity(snapshot, path, file, writer.Bytes(), writer.TotalBytes(), writer.Hash(), writer.Class(), true, "content_limit")
+	}
+	return boundedFileContentIdentity(snapshot, path, file, writer.Bytes(), writer.TotalBytes(), writer.Hash(), writer.Class(), false, "")
 }
 
 func boundedFileContent(snapshot repository.SnapshotRef, path repository.RepoPath, file repository.ChangedFile, data []byte, truncated bool, reason string) (repository.FileContent, error) {
+	digest := sha256.Sum256(data)
+	return boundedFileContentIdentity(snapshot, path, file, data, uint64(len(data)), hex.EncodeToString(digest[:]), repository.ClassifyContentV1(data, file.Binary), truncated, reason)
+}
+
+func boundedFileContentIdentity(snapshot repository.SnapshotRef, path repository.RepoPath, file repository.ChangedFile, data []byte, byteLength uint64, contentHash string, contentClass repository.ContentClassV1, truncated bool, reason string) (repository.FileContent, error) {
 	kind := file.NewFileKind
 	mode := file.NewMode
 	if kind == "" || kind == repository.FileKindUnknown {
@@ -286,17 +292,26 @@ func boundedFileContent(snapshot repository.SnapshotRef, path repository.RepoPat
 	if mode == 0 {
 		mode = 0o100644
 	}
-	hash := sha256.Sum256(data)
+	if contentClass == "" {
+		contentClass = repository.ClassifyContentV1(data, file.Binary)
+	}
+	metadataOnly := contentClass.IsByteOriented()
+	if metadataOnly {
+		data = nil
+	}
 	content := repository.FileContent{
-		Snapshot:    snapshot,
-		Path:        repository.RepoPath(path.Bytes()),
-		Kind:        kind,
-		Mode:        mode,
-		Bytes:       append([]byte(nil), data...),
-		ContentHash: hex.EncodeToString(hash[:]),
-		Binary:      bytes.IndexByte(data, 0) >= 0 || !utf8.Valid(data),
-		Truncated:   truncated,
-		LimitReason: reason,
+		Snapshot:     snapshot,
+		Path:         repository.RepoPath(path.Bytes()),
+		Kind:         kind,
+		Mode:         mode,
+		Bytes:        append([]byte(nil), data...),
+		ByteLength:   byteLength,
+		ContentHash:  contentHash,
+		ContentClass: contentClass,
+		MetadataOnly: metadataOnly,
+		Binary:       contentClass != "" && contentClass.IsByteOriented() || contentClass == "" && (bytes.IndexByte(data, 0) >= 0 || !utf8.Valid(data)),
+		Truncated:    truncated,
+		LimitReason:  reason,
 	}
 	if err := content.Validate(); err != nil {
 		return repository.FileContent{}, err
@@ -305,7 +320,7 @@ func boundedFileContent(snapshot repository.SnapshotRef, path repository.RepoPat
 }
 
 func changedFileMatches(left, right repository.ChangedFile) bool {
-	if left.Kind != right.Kind || left.OldMode != right.OldMode || left.NewMode != right.NewMode || left.OldFileKind != right.OldFileKind || left.NewFileKind != right.NewFileKind || left.Binary != right.Binary {
+	if left.Kind != right.Kind || left.OldMode != right.OldMode || left.NewMode != right.NewMode || left.OldFileKind != right.OldFileKind || left.NewFileKind != right.NewFileKind {
 		return false
 	}
 	return sameRepoPath(left.OldPath, right.OldPath) && sameRepoPath(left.NewPath, right.NewPath)
@@ -319,33 +334,53 @@ func sameRepoPath(left, right *repository.RepoPath) bool {
 }
 
 type limitedContentWriter struct {
-	limit   app.ByteSize
-	data    []byte
-	limited bool
+	limit      app.ByteSize
+	data       []byte
+	limited    bool
+	totalBytes uint64
+	digest     interface {
+		Write([]byte) (int, error)
+		Sum([]byte) []byte
+	}
+	classifier *repository.ContentClassifierV1
 }
 
 func newLimitedContentWriter(limit app.ByteSize) *limitedContentWriter {
-	return &limitedContentWriter{limit: limit}
+	return &limitedContentWriter{limit: limit, digest: sha256.New(), classifier: repository.NewContentClassifierV1(false)}
 }
 
 func (w *limitedContentWriter) Write(data []byte) (int, error) {
-	if w.limited {
-		return 0, errContentLimit
+	if _, err := w.digest.Write(data); err != nil {
+		return 0, err
 	}
-	remaining := w.limit - app.ByteSize(len(w.data))
-	if app.ByteSize(len(data)) > remaining {
-		if remaining > 0 {
-			w.data = append(w.data, data[:int(remaining)]...)
+	_, _ = w.classifier.Write(data)
+	w.totalBytes += uint64(len(data))
+	if !w.limited {
+		remaining := w.limit - app.ByteSize(len(w.data))
+		if app.ByteSize(len(data)) > remaining {
+			if remaining > 0 {
+				w.data = append(w.data, data[:int(remaining)]...)
+			}
+			w.limited = true
+		} else {
+			w.data = append(w.data, data...)
 		}
-		w.limited = true
-		return int(remaining), errContentLimit
 	}
-	w.data = append(w.data, data...)
 	return len(data), nil
 }
 
 func (w *limitedContentWriter) Bytes() []byte {
 	return append([]byte(nil), w.data...)
+}
+
+func (w *limitedContentWriter) TotalBytes() uint64 { return w.totalBytes }
+
+func (w *limitedContentWriter) Hash() string {
+	return hex.EncodeToString(w.digest.Sum(nil))
+}
+
+func (w *limitedContentWriter) Class() repository.ContentClassV1 {
+	return w.classifier.Classify()
 }
 
 var _ ContentLoader = (*GitContentLoader)(nil)
