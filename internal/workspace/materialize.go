@@ -700,6 +700,10 @@ func (s *CaptureTreeSource) Open(ctx context.Context, entry repository.TreeEntry
 	if s == nil || ctx == nil || entry.Validate() != nil {
 		return nil, ErrInvalidWorkspaceSource
 	}
+	accepted, err := s.captures.OpenCaptureManifest(ctx, s.manifest.CaptureID)
+	if err != nil || accepted.ManifestHash != s.manifest.ManifestHash || accepted.RepositoryID != s.manifest.RepositoryID || accepted.WorktreeID != s.manifest.WorktreeID || accepted.Candidate.Fingerprint != s.manifest.Candidate.Fingerprint || accepted.Validate() != nil {
+		return nil, app.ErrCaptureCorrupt
+	}
 	s.mu.Lock()
 	value, ok := s.entries[entry.Path.Key()]
 	s.mu.Unlock()
@@ -712,7 +716,7 @@ func (s *CaptureTreeSource) Open(ctx context.Context, entry repository.TreeEntry
 	if value.capture == nil {
 		return nil, ErrInvalidWorkspaceSource
 	}
-	return &captureBlobReader{ctx: ctx, store: s.captures, manifest: s.manifest, blob: *value.capture}, nil
+	return &captureBlobReader{ctx: ctx, store: s.captures, manifest: accepted, blob: *value.capture}, nil
 }
 
 type captureBlobReader struct {
