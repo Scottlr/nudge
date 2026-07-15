@@ -134,6 +134,14 @@ type applyTestStore struct {
 	operations map[string]ApplyOperation
 }
 
+func (s *applyTestStore) LoadApplyOperation(_ context.Context, operationID domain.OperationID) (ApplyOperation, error) {
+	operation, ok := s.operations[string(operationID)]
+	if !ok {
+		return ApplyOperation{}, ErrApplyOperationNotFound
+	}
+	return operation, nil
+}
+
 func (s *applyTestStore) LoadApplyOperationByKey(_ context.Context, _ domain.ReviewSessionID, key string) (ApplyOperation, error) {
 	for _, operation := range s.operations {
 		if operation.IdempotencyKey == key {
@@ -182,6 +190,21 @@ func (t *applyTestTx) PrepareApplyOperation(_ context.Context, operation ApplyOp
 		if existing.IdempotencyKey == operation.IdempotencyKey || existing.ProposalID == operation.ProposalID && existing.ProposalVersion == operation.ProposalVersion {
 			return ErrApplyOperationConflict
 		}
+	}
+	t.store.operations[string(operation.ID)] = operation
+	return nil
+}
+
+func (t *applyTestTx) TransitionApplyOperation(_ context.Context, operation ApplyOperation) error {
+	existing, ok := t.store.operations[string(operation.ID)]
+	if !ok {
+		return ErrApplyOperationNotFound
+	}
+	if reflect.DeepEqual(existing, operation) {
+		return nil
+	}
+	if existing.ProposalID != operation.ProposalID || existing.ProposalVersion != operation.ProposalVersion {
+		return ErrApplyOperationConflict
 	}
 	t.store.operations[string(operation.ID)] = operation
 	return nil

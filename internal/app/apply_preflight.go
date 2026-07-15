@@ -45,15 +45,23 @@ type ApplyOperationPhase string
 
 const (
 	ApplyOperationPrepared       ApplyOperationPhase = "prepared"
-	ApplyOperationExecuting      ApplyOperationPhase = "executing"
+	ApplyOperationMutating       ApplyOperationPhase = "mutating"
+	ApplyOperationVerifying      ApplyOperationPhase = "verifying"
+	ApplyOperationRetrySafe      ApplyOperationPhase = "retry_safe"
 	ApplyOperationApplied        ApplyOperationPhase = "applied"
-	ApplyOperationFailed         ApplyOperationPhase = "failed"
+	ApplyOperationFailedClean    ApplyOperationPhase = "failed_clean"
 	ApplyOperationRepairRequired ApplyOperationPhase = "repair_required"
+	// ApplyOperationExecuting is retained as a source-compatible name for
+	// callers that used the T112 draft vocabulary.
+	ApplyOperationExecuting = ApplyOperationMutating
+	// ApplyOperationFailed is retained as a source-compatible name for callers
+	// that used the T112 draft vocabulary.
+	ApplyOperationFailed = ApplyOperationFailedClean
 )
 
 func (p ApplyOperationPhase) Validate() error {
 	switch p {
-	case ApplyOperationPrepared, ApplyOperationExecuting, ApplyOperationApplied, ApplyOperationFailed, ApplyOperationRepairRequired:
+	case ApplyOperationPrepared, ApplyOperationMutating, ApplyOperationVerifying, ApplyOperationRetrySafe, ApplyOperationApplied, ApplyOperationFailedClean, ApplyOperationRepairRequired:
 		return nil
 	default:
 		return ErrInvalidApplyPreflight
@@ -141,6 +149,7 @@ type ApplyOperation struct {
 	ExpectedSessionRevision uint64
 	ProposalPatchSHA256     string
 	ProposalPatchBytes      ByteSize
+	PatchArtifact           review.ProposedPatchArtifactReference
 	Destination             review.DestinationConstraints
 	Baseline                review.SnapshotIdentity
 	Result                  review.SnapshotIdentity
@@ -148,12 +157,29 @@ type ApplyOperation struct {
 	Evidence                ApplyDestinationEvidence
 	ApplyPolicyVersion      uint32
 	Phase                   ApplyOperationPhase
+	FailureCode             ApplyFailureCode
+	Verification            ApplyVerificationEvidence
 	CreatedAt               time.Time
 	PreparedAt              time.Time
+	CompletedAt             *time.Time
 }
 
 func (o ApplyOperation) Validate() error {
-	if o.Version != ApplyOperationVersion || o.ID == "" || o.SessionID == "" || o.ProposalID == "" || o.WorkspaceID == "" || o.ThreadID == "" || o.ProposalVersion == 0 || !safeText(o.IdempotencyKey) || o.ConfirmedReviewRevision == 0 || o.ExpectedSessionRevision == 0 || !validSHA256(o.ProposalPatchSHA256) || o.ProposalPatchBytes == 0 || o.Destination.Validate() != nil || o.Baseline.Validate() != nil || o.Result.Validate() != nil || o.Evidence.Validate() != nil || o.ApplyPolicyVersion == 0 || o.Phase.Validate() != nil || o.CreatedAt.IsZero() || o.PreparedAt.IsZero() || o.PreparedAt.Before(o.CreatedAt) {
+	if o.Version != ApplyOperationVersion || o.ID == "" || o.SessionID == "" || o.ProposalID == "" || o.WorkspaceID == "" || o.ThreadID == "" || o.ProposalVersion == 0 || !safeText(o.IdempotencyKey) || o.ConfirmedReviewRevision == 0 || o.ExpectedSessionRevision == 0 || !validSHA256(o.ProposalPatchSHA256) || o.ProposalPatchBytes == 0 || o.PatchArtifact != (review.ProposedPatchArtifactReference{}) && o.PatchArtifact.Validate() != nil || o.PatchArtifact != (review.ProposedPatchArtifactReference{}) && (o.PatchArtifact.PatchSHA256 != o.ProposalPatchSHA256 || ByteSize(o.PatchArtifact.PatchBytes) != o.ProposalPatchBytes) || o.Destination.Validate() != nil || o.Baseline.Validate() != nil || o.Result.Validate() != nil || o.Evidence.Validate() != nil || o.ApplyPolicyVersion == 0 || o.Phase.Validate() != nil || o.FailureCode.Validate() != nil || o.CreatedAt.IsZero() || o.PreparedAt.IsZero() || o.PreparedAt.Before(o.CreatedAt) {
+		return ErrInvalidApplyPreflight
+	}
+	if o.CompletedAt != nil && (o.CompletedAt.IsZero() || o.CompletedAt.Before(o.PreparedAt)) {
+		return ErrInvalidApplyPreflight
+	}
+	if o.Phase == ApplyOperationApplied || o.Phase == ApplyOperationFailedClean || o.Phase == ApplyOperationRepairRequired {
+		if o.CompletedAt == nil || o.Verification.Validate() != nil || o.FailureCode == "" && o.Phase != ApplyOperationApplied {
+			return ErrInvalidApplyPreflight
+		}
+	} else if o.Phase == ApplyOperationRetrySafe {
+		if o.CompletedAt != nil || o.Verification.Validate() != nil || o.FailureCode != ApplyFailureRetrySafe {
+			return ErrInvalidApplyPreflight
+		}
+	} else if o.CompletedAt != nil || o.Verification.Version != 0 || o.FailureCode != "" {
 		return ErrInvalidApplyPreflight
 	}
 	if o.Evidence.RepositoryID == "" || o.Evidence.WorktreeID != o.Destination.WorktreeID || o.Evidence.TargetKind != o.Destination.TargetKind || (o.Destination.TargetKind == repository.TargetLocal && o.Evidence.WorkingTreeFingerprint != o.Destination.ExpectedWorkingTreeFingerprint) || (o.Destination.TargetKind != repository.TargetLocal && o.Evidence.Head != o.Destination.ExpectedHead) || o.Evidence.Capability.Validate() != nil || o.Evidence.EvidenceHash != applyEvidenceHash(o.Evidence) {
@@ -238,6 +264,7 @@ type ApplyPatchChecker interface {
 
 // ApplyOperationStore is the restart/read boundary for prepared operations.
 type ApplyOperationStore interface {
+	LoadApplyOperation(context.Context, domain.OperationID) (ApplyOperation, error)
 	LoadApplyOperationByKey(context.Context, domain.ReviewSessionID, string) (ApplyOperation, error)
 	LoadApplyOperationForProposal(context.Context, domain.ProposalID, review.ProposalVersionNumber) (ApplyOperation, error)
 }
@@ -246,6 +273,7 @@ type ApplyOperationStore interface {
 // writer fence. It never performs filesystem or destination mutation.
 type ApplyOperationStoreTx interface {
 	PrepareApplyOperation(context.Context, ApplyOperation) error
+	TransitionApplyOperation(context.Context, ApplyOperation) error
 }
 
 // ApplyPreflightRequest is the immutable command input for T112.
@@ -390,7 +418,7 @@ func (s *ApplyPreflightService) Prepare(ctx context.Context, request ApplyPrefli
 	if now.IsZero() {
 		return ApplyPreparation{}, ErrInvalidApplyPreflight
 	}
-	operation := ApplyOperation{Version: ApplyOperationVersion, ID: request.OperationID, SessionID: request.Guard.SessionID, ProposalID: patch.ProposalID, WorkspaceID: patch.WorkspaceID, ThreadID: patch.ThreadID, ProposalVersion: patch.Version, IdempotencyKey: request.IdempotencyKey, ConfirmedReviewRevision: request.ConfirmedReviewRevision, ExpectedSessionRevision: request.Guard.ExpectedRevision, ProposalPatchSHA256: patch.PatchSHA256, ProposalPatchBytes: patchBytes(patch), Destination: patch.Destination, Baseline: patch.Baseline, Result: patch.Result, Preconditions: cloneApplyPreconditions(patch.Preconditions), Evidence: after, ApplyPolicyVersion: ApplyPolicyVersion(patch), Phase: ApplyOperationPrepared, CreatedAt: now, PreparedAt: now}
+	operation := ApplyOperation{Version: ApplyOperationVersion, ID: request.OperationID, SessionID: request.Guard.SessionID, ProposalID: patch.ProposalID, WorkspaceID: patch.WorkspaceID, ThreadID: patch.ThreadID, ProposalVersion: patch.Version, IdempotencyKey: request.IdempotencyKey, ConfirmedReviewRevision: request.ConfirmedReviewRevision, ExpectedSessionRevision: request.Guard.ExpectedRevision, ProposalPatchSHA256: patch.PatchSHA256, ProposalPatchBytes: patchBytes(patch), PatchArtifact: patch.Artifact, Destination: patch.Destination, Baseline: patch.Baseline, Result: patch.Result, Preconditions: cloneApplyPreconditions(patch.Preconditions), Evidence: after, ApplyPolicyVersion: ApplyPolicyVersion(patch), Phase: ApplyOperationPrepared, CreatedAt: now, PreparedAt: now}
 	if err := operation.Validate(); err != nil {
 		return ApplyPreparation{}, err
 	}
