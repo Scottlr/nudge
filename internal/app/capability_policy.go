@@ -550,14 +550,6 @@ func (e CapturePolicyEvaluation) Validate(policy CapabilityPolicyV1) error {
 	return nil
 }
 
-// DiscussionMode separates read-only discussion from proposal authorization.
-type DiscussionMode string
-
-const (
-	DiscussionModeReadOnly DiscussionMode = "read_only"
-	DiscussionModeProposal DiscussionMode = "proposal"
-)
-
 // DiscussionEvidence contains application/provider/account/disclosure state
 // that must not rewrite repository capability truth.
 type DiscussionEvidence struct {
@@ -580,6 +572,8 @@ type DiscussionAvailability struct {
 	Disclosure            bool
 	TurnPermission        bool
 	Reasons               []CapabilityReason
+	RepositoryReasons     []CapabilityReason
+	ApplicationReasons    []CapabilityReason
 }
 
 // ComposeDiscussionAvailability keeps provider state outside stored repository

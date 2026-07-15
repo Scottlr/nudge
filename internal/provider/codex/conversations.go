@@ -16,8 +16,12 @@ func (c *Connection) StartConversation(ctx context.Context, request provider.Sta
 	if err := request.Validate(); err != nil {
 		return "", err
 	}
+	sandbox, err := mapThreadSandbox(request.Permissions, request.WorkingDir)
+	if err != nil {
+		return "", err
+	}
 	var response protocol.ThreadStartResponse
-	if err := c.client.Call(ctx, "thread/start", protocol.ThreadStartParams{}, &response); err != nil {
+	if err := c.client.Call(ctx, "thread/start", protocol.ThreadStartParams{CWD: request.WorkingDir, Sandbox: sandbox}, &response); err != nil {
 		return "", err
 	}
 	return mapConversationResponse(response)
@@ -55,8 +59,17 @@ func (c *Connection) StartTurn(ctx context.Context, ref provider.ProviderConvers
 	if err := request.Validate(); err != nil {
 		return "", err
 	}
+	sandbox, err := MapTurnPermissions(request.Mode, request.Permissions, request.WorkingDir)
+	if err != nil {
+		return "", err
+	}
 	var response protocol.TurnStartResponse
-	if err := c.client.Call(ctx, "turn/start", protocol.TurnStartParams{ThreadID: string(ref), Input: []protocol.UserInput{{Type: "text", Text: request.Prompt}}}, &response); err != nil {
+	if err := c.client.Call(ctx, "turn/start", protocol.TurnStartParams{
+		ThreadID:      string(ref),
+		Input:         []protocol.UserInput{{Type: "text", Text: request.Prompt}},
+		CWD:           request.WorkingDir,
+		SandboxPolicy: &sandbox,
+	}, &response); err != nil {
 		return "", err
 	}
 	turnRef, err := mapTurnResponse(response)

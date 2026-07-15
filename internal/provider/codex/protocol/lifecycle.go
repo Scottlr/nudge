@@ -77,9 +77,12 @@ type AccountUpdatedNotification struct {
 	PlanType string `json:"planType,omitempty"`
 }
 
-// ThreadStartParams intentionally contains no prompt or permission content;
-// later tasks own the detailed context and policy mapping.
-type ThreadStartParams struct{}
+// ThreadStartParams contains only the stable thread-level cwd and legacy
+// sandbox fields supported by the pinned app-server schema.
+type ThreadStartParams struct {
+	CWD     string `json:"cwd,omitempty"`
+	Sandbox string `json:"sandbox,omitempty"`
+}
 
 // ThreadResumeParams identifies one opaque Codex thread.
 type ThreadResumeParams struct {
@@ -108,10 +111,22 @@ type UserInput struct {
 	Text string `json:"text"`
 }
 
+// SandboxPolicy is the stable turn-level policy union used by the pinned
+// app-server schema. The schema has no exact read-root field; the adapter
+// therefore rejects filesystem snapshot turns unless a future supported
+// provider explicitly proves that boundary.
+type SandboxPolicy struct {
+	Type          string   `json:"type"`
+	NetworkAccess *bool    `json:"networkAccess,omitempty"`
+	WritableRoots []string `json:"writableRoots,omitempty"`
+}
+
 // TurnStartParams starts one turn in one opaque Codex thread.
 type TurnStartParams struct {
-	ThreadID string      `json:"threadId"`
-	Input    []UserInput `json:"input"`
+	ThreadID      string         `json:"threadId"`
+	Input         []UserInput    `json:"input"`
+	CWD           string         `json:"cwd,omitempty"`
+	SandboxPolicy *SandboxPolicy `json:"sandboxPolicy,omitempty"`
 }
 
 // TurnSummary is the minimum stable response shape needed for identity
