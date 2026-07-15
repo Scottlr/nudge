@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"unicode"
+
+	"github.com/Scottlr/nudge/internal/theme"
 )
 
 var (
@@ -172,7 +174,7 @@ func (c Config) Validate() error {
 	if !validConfigText(c.Codex.Executable) || c.Codex.Executable == "" || (c.Codex.Model != "" && !validConfigText(c.Codex.Model)) {
 		return invalidField("codex")
 	}
-	if !validConfigText(c.UI.Theme) || c.UI.Theme == "" {
+	if !validConfigText(c.UI.Theme) || !theme.ValidName(c.UI.Theme) {
 		return invalidField("ui.theme")
 	}
 	if c.Persistence.WorkspaceRetentionDays < 1 || c.Persistence.WorkspaceRetentionDays > 14 || (!c.Persistence.Enabled && c.Persistence.StoreAnchorSnippets) {

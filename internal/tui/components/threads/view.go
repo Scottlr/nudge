@@ -44,7 +44,7 @@ func (m *Model) renderItem(item app.ThreadSummary) string {
 	if item.ID == m.selected {
 		selection = ">"
 	}
-	marker := summaryMarker(item)
+	marker := summaryMarkerFor(item, m.theme)
 	path := presentation.ProjectTerminalText(string(item.AnchorPath.Bytes()), presentation.TerminalTextScalar)
 	location := path
 	if item.AnchorStartLine > 0 {
@@ -58,7 +58,8 @@ func (m *Model) renderItem(item app.ThreadSummary) string {
 		title = "untitled concern"
 	}
 	status := summaryStatus(item)
-	line := fmt.Sprintf("%s %s %-18s %s", selection, marker, ansi.Truncate(location, 28, "…"), ansi.Truncate(title, 36, "…"))
+	ellipsis := m.theme.Glyph(theme.GlyphEllipsis)
+	line := fmt.Sprintf("%s %s %-18s %s", selection, marker, ansi.Truncate(location, 28, ellipsis), ansi.Truncate(title, 36, ellipsis))
 	if item.Unread {
 		line += " *"
 	}
@@ -78,20 +79,20 @@ func (m *Model) renderItem(item app.ThreadSummary) string {
 	return style.Lipgloss().Render(ansi.Truncate(line, maxInt(m.width, 1), ""))
 }
 
-func summaryMarker(item app.ThreadSummary) string {
+func summaryMarkerFor(item app.ThreadSummary, styles theme.Theme) string {
 	switch {
 	case item.FailurePhase != "" || item.ErrorCode != "" || item.Conversation == review.ConversationFailed || item.Proposal == review.ProposalFailed:
-		return "!"
+		return styles.Glyph(theme.GlyphThreadError)
 	case item.Anchor == review.AnchorOrphaned || item.Anchor == review.AnchorAmbiguous:
-		return "?"
+		return styles.Glyph(theme.GlyphThreadOrphaned)
 	case item.Proposal == review.ProposalReady || item.Proposal == review.ProposalStale || item.Proposal == review.ProposalApplying:
-		return "p"
+		return styles.Glyph(theme.GlyphThreadProposal)
 	case item.Conversation != review.ConversationIdle:
-		return "~"
+		return styles.Glyph(theme.GlyphThreadBusy)
 	case item.Resolution == review.ResolutionResolved:
-		return "x"
+		return styles.Glyph(theme.GlyphThreadResolved)
 	default:
-		return "o"
+		return styles.Glyph(theme.GlyphThreadOpen)
 	}
 }
 

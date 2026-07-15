@@ -93,9 +93,9 @@ func (m *Model) markerForRow(row codeRow, side app.RowSide) (string, theme.Role)
 		}
 	}
 	if !start {
-		return "│", markerRole(group.Items)
+		return m.theme.Glyph(theme.GlyphMarkerRail), markerRole(group.Items)
 	}
-	glyph := markerGlyph(group.Items)
+	glyph := markerGlyphFor(group.Items, m.theme)
 	if len(group.Items) > 1 {
 		glyph = fmt.Sprintf("%s%d", glyph, len(group.Items))
 	}
@@ -103,24 +103,28 @@ func (m *Model) markerForRow(row codeRow, side app.RowSide) (string, theme.Role)
 }
 
 func markerGlyph(items []ThreadMarker) string {
+	return markerGlyphFor(items, theme.BuiltinTerminalDefault())
+}
+
+func markerGlyphFor(items []ThreadMarker, styles theme.Theme) string {
 	for _, item := range items {
 		switch {
 		case item.Status.FailurePhase != "" || item.Status.ErrorCode != "" || item.Status.Conversation == review.ConversationFailed || item.Status.Proposal == review.ProposalFailed:
-			return "!"
+			return styles.Glyph(theme.GlyphThreadError)
 		case item.Status.Anchor == review.AnchorOrphaned || item.Status.Anchor == review.AnchorAmbiguous:
-			return "?"
+			return styles.Glyph(theme.GlyphThreadOrphaned)
 		case item.Status.Proposal == review.ProposalReady || item.Status.Proposal == review.ProposalStale || item.Status.Proposal == review.ProposalApplying:
-			return "p"
+			return styles.Glyph(theme.GlyphThreadProposal)
 		case item.Status.Conversation != review.ConversationIdle:
-			return "~"
+			return styles.Glyph(theme.GlyphThreadBusy)
 		}
 	}
 	for _, item := range items {
 		if item.Status.Resolution == review.ResolutionResolved {
-			return "x"
+			return styles.Glyph(theme.GlyphThreadResolved)
 		}
 	}
-	return "o"
+	return styles.Glyph(theme.GlyphThreadOpen)
 }
 
 func markerRole(items []ThreadMarker) theme.Role {

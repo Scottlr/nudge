@@ -124,16 +124,27 @@ func openExistingProtectedFile(root, relative string, flag int) (*os.File, error
 
 // ReadProtectedFile reads an existing protected file with a bounded buffer.
 func ReadProtectedFile(root, relative string) ([]byte, error) {
+	return ReadProtectedFileBounded(root, relative, maxProtectedRead)
+}
+
+// ReadProtectedFileBounded reads an existing protected file with a caller
+// selected bound no larger than the platform maximum. It preserves the
+// protected no-follow and owner-only checks while keeping stricter consumers
+// from allocating the full generic configuration limit.
+func ReadProtectedFileBounded(root, relative string, maxBytes int64) ([]byte, error) {
+	if maxBytes <= 0 || maxBytes > maxProtectedRead {
+		return nil, ErrProtectedPath
+	}
 	file, err := OpenExistingProtectedFile(root, relative)
 	if err != nil {
 		return nil, err
 	}
 	defer file.Close()
-	data, err := io.ReadAll(io.LimitReader(file, maxProtectedRead+1))
+	data, err := io.ReadAll(io.LimitReader(file, maxBytes+1))
 	if err != nil {
 		return nil, err
 	}
-	if len(data) > maxProtectedRead {
+	if int64(len(data)) > maxBytes {
 		return nil, ErrProtectedTooLarge
 	}
 	return data, nil

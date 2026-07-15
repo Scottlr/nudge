@@ -46,6 +46,7 @@ type Model struct {
 	narrowPane     Pane
 	overlays       OverlayStack
 	theme          theme.Theme
+	themeHealth    theme.Health
 	scheduler      *RenderScheduler
 	animationFrame uint64
 
@@ -78,19 +79,18 @@ func WithInitialSnapshot(snapshot app.AppSnapshot) ModelOption {
 	}
 }
 
-// WithTheme supplies an already-resolved semantic theme. Theme selection and
-// user-theme loading remain outside this task's root shell.
+// WithTheme supplies an already-resolved semantic theme.
 func WithTheme(value theme.Theme) ModelOption {
 	return func(model *Model) {
-		if value.Validate() == nil {
-			model.theme = value
-			if model.repositoryPane != nil {
-				model.repositoryPane.SetTheme(value)
-			}
-			if model.codePane != nil {
-				model.codePane.SetTheme(value)
-			}
-		}
+		model.SetTheme(value)
+	}
+}
+
+// WithThemeResolution installs a resolved theme and its payload-free health
+// evidence without coupling the root to theme-file parsing.
+func WithThemeResolution(value theme.Resolution) ModelOption {
+	return func(model *Model) {
+		model.SetThemeResolution(value)
 	}
 }
 
@@ -148,6 +148,7 @@ func NewModel(client app.ApplicationClient, options ...ModelOption) *Model {
 		threadPane:     threadpane.NewModel(),
 		discussionPane: discussionpane.NewModel(),
 		theme:          theme.BuiltinTerminalDefault(),
+		themeHealth:    theme.Health{ThemeID: "terminal", SchemaVersion: theme.SchemaVersion, Source: theme.SourceBuiltin},
 		layout:         CalculateLayout(Dimensions{}),
 		scheduler:      DefaultRenderScheduler(),
 	}
@@ -171,6 +172,26 @@ func NewModel(client app.ApplicationClient, options ...ModelOption) *Model {
 // New is a concise constructor for the default shell configuration.
 func New(client app.ApplicationClient) *Model {
 	return NewModel(client)
+}
+
+// SetTheme switches only the disposable presentation projection. Application
+// snapshots, stable selections, and workflow identities remain untouched.
+func (m *Model) SetTheme(value theme.Theme) {
+	if m == nil || value.Validate() != nil {
+		return
+	}
+	m.applyTheme(value)
+	m.themeHealth = theme.Health{ThemeID: value.Name, SchemaVersion: theme.SchemaVersion, Source: theme.SourceBuiltin}
+}
+
+// SetThemeResolution switches the presentation projection and records the
+// resolver's payload-free health evidence.
+func (m *Model) SetThemeResolution(value theme.Resolution) {
+	if m == nil || value.Theme.Validate() != nil {
+		return
+	}
+	m.applyTheme(value.Theme)
+	m.themeHealth = value.Health
 }
 
 // Snapshot returns a defensive copy of the current application projection.
@@ -225,3 +246,19 @@ func (m *Model) Init() tea.Cmd {
 }
 
 var _ tea.Model = (*Model)(nil)
+
+func (m *Model) applyTheme(value theme.Theme) {
+	m.theme = value
+	if m.repositoryPane != nil {
+		m.repositoryPane.SetTheme(value)
+	}
+	if m.codePane != nil {
+		m.codePane.SetTheme(value)
+	}
+	if m.threadPane != nil {
+		m.threadPane.SetTheme(value)
+	}
+	if m.discussionPane != nil {
+		m.discussionPane.SetTheme(value)
+	}
+}
