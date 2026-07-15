@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"strings"
 	"time"
@@ -46,6 +48,11 @@ const (
 	MaxPageEncodedBytes uint64 = 4 << 20
 	// MaxMessageBodyRange is the maximum returned message-body range.
 	MaxMessageBodyRange uint64 = 256 << 10
+	// MaxMessageBodyChunk is the immutable append-only chunk cap for streamed
+	// provider messages.
+	MaxMessageBodyChunk uint64 = 256 << 10
+	// MaxStreamedMessageBytes is the maximum accepted normalized message body.
+	MaxStreamedMessageBytes uint64 = 8 << 20
 )
 
 // SessionWriteGuard is the application fence carried by every durable
@@ -167,6 +174,62 @@ type MessagePageResult struct {
 	Next     *MessageCursor
 	Revision uint64
 	HasMore  bool
+}
+
+// MessageBodyChunkWrite is one immutable append to a streamed message body.
+// TotalLength and TotalSHA256 describe the accepted prefix after this chunk.
+type MessageBodyChunkWrite struct {
+	MessageID   domain.MessageID
+	Ordinal     uint64
+	Bytes       []byte
+	Hash        string
+	TotalLength uint64
+	TotalSHA256 string
+}
+
+// Validate enforces the bounded, identity-bearing chunk contract.
+func (c MessageBodyChunkWrite) Validate() error {
+	if c.MessageID == "" || c.Ordinal == 0 || len(c.Bytes) == 0 || uint64(len(c.Bytes)) > MaxMessageBodyChunk || c.TotalLength == 0 || c.TotalLength > MaxStreamedMessageBytes || c.TotalLength < uint64(len(c.Bytes)) || !validSHA256(c.Hash) || !validSHA256(c.TotalSHA256) {
+		return ErrReviewStoreInput
+	}
+	digest := sha256.Sum256(c.Bytes)
+	if !strings.EqualFold(hex.EncodeToString(digest[:]), c.Hash) {
+		return ErrReviewStoreInput
+	}
+	return nil
+}
+
+// MessageBodyIdentity freezes the exact terminal body represented by the
+// append-only chunks. Active streaming messages have no identity row.
+type MessageBodyIdentity struct {
+	MessageID      domain.MessageID
+	ChunkCount     uint64
+	ByteLength     uint64
+	SHA256         string
+	TerminalStatus review.MessageStatus
+	FailurePhase   review.FailurePhase
+	ErrorCode      review.ErrorCode
+	CompletedAt    time.Time
+}
+
+// Validate checks terminal status and exact body metadata.
+func (i MessageBodyIdentity) Validate() error {
+	if i.MessageID == "" || i.ByteLength > MaxStreamedMessageBytes || !validSHA256(i.SHA256) || i.CompletedAt.IsZero() || (i.TerminalStatus != review.MessageCompleted && i.TerminalStatus != review.MessageFailed && i.TerminalStatus != review.MessageCancelled) {
+		return ErrReviewStoreInput
+	}
+	if i.ByteLength == 0 && i.ChunkCount != 0 {
+		return ErrReviewStoreInput
+	}
+	if i.ByteLength > 0 && i.ChunkCount == 0 {
+		return ErrReviewStoreInput
+	}
+	if i.FailurePhase != "" && !validProviderMetadataOptional(string(i.FailurePhase), 64) {
+		return ErrReviewStoreInput
+	}
+	if i.ErrorCode != "" && !validProviderMetadataOptional(string(i.ErrorCode), 64) {
+		return ErrReviewStoreInput
+	}
+	return nil
 }
 
 // BodyRange is an identity-bound bounded byte request for one message.
@@ -399,4 +462,13 @@ type ReviewStoreTx interface {
 	StageReconciliationResult(ctx context.Context, result ReconciliationAnchorResult) error
 	CompleteReconciliation(ctx context.Context, operationID domain.OperationID, completedAt time.Time) error
 	ActivateReconciliation(ctx context.Context, operationID domain.OperationID) error
+}
+
+// MessageBodyStreamTx is an optional extension implemented by durable stores
+// that support append-only streaming bodies. Keeping it separate preserves
+// the narrow existing transaction port for stores that intentionally run in
+// no-persist mode.
+type MessageBodyStreamTx interface {
+	AppendMessageBodyChunk(ctx context.Context, chunk MessageBodyChunkWrite) error
+	FinalizeMessageBody(ctx context.Context, identity MessageBodyIdentity) error
 }

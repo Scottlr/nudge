@@ -58,6 +58,8 @@ func migrationCatalog() ([]migration, error) {
 			owner = "git_proposals"
 		} else if strings.Contains(name, "discussion_turn_provenance") {
 			owner = "integrate_nudge_codex"
+		} else if strings.Contains(name, "streamed_message_bodies") {
+			owner = "integrate_nudge_codex"
 		}
 		catalog = append(catalog, migration{
 			Version:  uint64(index + 1),

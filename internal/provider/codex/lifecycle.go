@@ -2,9 +2,12 @@ package codex
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
+	"sync/atomic"
 
+	"github.com/Scottlr/nudge/internal/domain"
 	"github.com/Scottlr/nudge/internal/process"
 	"github.com/Scottlr/nudge/internal/provider"
 	"github.com/Scottlr/nudge/internal/provider/codex/protocol"
@@ -51,6 +54,7 @@ type ConnectorConfig struct {
 	ClientTitle   string
 	ClientVersion string
 	Compatibility CompatibilityPolicy
+	EventStream   EventStreamConfig
 }
 
 func (c ConnectorConfig) withDefaults() (ConnectorConfig, error) {
@@ -209,7 +213,15 @@ func (c *Connector) connect(ctx context.Context) (*Connection, ConnectionStatus,
 	if err != nil {
 		return nil, ConnectionStatus{State: ConnectionUnavailable, Message: "provider_unavailable", Account: AccountStatus{State: AccountUnavailable}}, err
 	}
-	connection := &Connection{client: client, owner: c, turns: make(map[provider.ProviderTurnRef]provider.ProviderConversationRef), status: ConnectionStatus{State: ConnectionConnecting, Account: AccountStatus{State: AccountUnknown}}}
+	connection := &Connection{
+		client:               client,
+		owner:                c,
+		turns:                make(map[provider.ProviderTurnRef]provider.ProviderConversationRef),
+		conversationBindings: make(map[provider.ProviderConversationRef]conversationEventBinding),
+		turnBindings:         make(map[provider.ProviderTurnRef]turnEventBinding),
+		events:               newProviderEventStream(c.config.EventStream),
+		status:               ConnectionStatus{State: ConnectionConnecting, Account: AccountStatus{State: AccountUnknown}},
+	}
 	if err := connection.registerHandlers(); err != nil {
 		_ = client.Close()
 		return nil, ConnectionStatus{State: ConnectionUnavailable, Message: "provider_unavailable", Account: AccountStatus{State: AccountUnavailable}}, err
@@ -251,6 +263,7 @@ func (c *Connector) connect(ctx context.Context) (*Connection, ConnectionStatus,
 			AccountLogin:       true,
 			RateLimits:         true,
 			ResumeConversation: true,
+			Streaming:          true,
 			Steering:           true,
 			ReadOnlyFilesystem: true,
 		},
@@ -269,20 +282,197 @@ type Connection struct {
 	account   AccountStatus
 	loginID   string
 
-	statusMu    sync.RWMutex
-	status      ConnectionStatus
-	turnMu      sync.Mutex
-	turns       map[provider.ProviderTurnRef]provider.ProviderConversationRef
-	closeOnce   sync.Once
-	monitorOnce sync.Once
-	monitorDone chan struct{}
+	statusMu             sync.RWMutex
+	status               ConnectionStatus
+	turnMu               sync.Mutex
+	turns                map[provider.ProviderTurnRef]provider.ProviderConversationRef
+	eventMu              sync.RWMutex
+	conversationBindings map[provider.ProviderConversationRef]conversationEventBinding
+	turnBindings         map[provider.ProviderTurnRef]turnEventBinding
+	eventSequence        atomic.Uint64
+	events               *providerEventStream
+	closeOnce            sync.Once
+	monitorOnce          sync.Once
+	monitorDone          chan struct{}
 }
 
 func (c *Connection) registerHandlers() error {
 	if err := c.client.RegisterNotificationHandler("account/updated", func(_ context.Context, n protocol.Notification) error { return c.handleAccountUpdated(n) }); err != nil {
 		return err
 	}
-	return c.client.RegisterNotificationHandler("account/login/completed", func(_ context.Context, n protocol.Notification) error { return c.handleLoginCompleted(n) })
+	if err := c.client.RegisterNotificationHandler("account/login/completed", func(_ context.Context, n protocol.Notification) error { return c.handleLoginCompleted(n) }); err != nil {
+		return err
+	}
+	if err := c.client.RegisterNotificationHandler("account/rateLimits/updated", func(_ context.Context, n protocol.Notification) error { return c.handleRateLimitsUpdated(n) }); err != nil {
+		return err
+	}
+	for _, method := range []string{"thread/started", "turn/started", "turn/completed", "item/started", "item/completed", "item/agentMessage/delta", "error", "thread/status/changed"} {
+		method := method
+		if err := c.client.RegisterNotificationHandler(method, func(_ context.Context, n protocol.Notification) error { return c.handleProviderNotification(n) }); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Events returns the bounded normalized event stream for this connection.
+func (c *Connection) Events() <-chan provider.ProviderEvent {
+	if c == nil {
+		return nil
+	}
+	c.eventMu.Lock()
+	if c.events == nil {
+		c.events = newProviderEventStream(EventStreamConfig{})
+	}
+	stream := c.events
+	c.eventMu.Unlock()
+	return stream.Events()
+}
+
+type conversationEventBinding struct {
+	ThreadID       domain.ReviewThreadID
+	OperationID    domain.OperationID
+	CorrelationID  provider.CorrelationID
+	ConversationID domain.ProviderConversationID
+}
+
+type turnEventBinding struct {
+	ConversationRef provider.ProviderConversationRef
+	ThreadID        domain.ReviewThreadID
+	OperationID     domain.OperationID
+	CorrelationID   provider.CorrelationID
+	ConversationID  domain.ProviderConversationID
+	TurnID          domain.ProviderTurnID
+}
+
+// BindConversation associates the remote thread with the durable local
+// conversation after the application has completed its attach transaction.
+func (c *Connection) BindConversation(ref provider.ProviderConversationRef, id domain.ProviderConversationID, threadID domain.ReviewThreadID, operationID domain.OperationID, correlationID provider.CorrelationID) error {
+	if c == nil || ref.Validate() != nil || id == "" || threadID == "" || operationID == "" || correlationID.Validate() != nil {
+		return ErrInvalidConversationResponse
+	}
+	c.eventMu.Lock()
+	if c.conversationBindings == nil {
+		c.conversationBindings = make(map[provider.ProviderConversationRef]conversationEventBinding)
+	}
+	c.conversationBindings[ref] = conversationEventBinding{ThreadID: threadID, OperationID: operationID, CorrelationID: correlationID, ConversationID: id}
+	c.eventMu.Unlock()
+	return nil
+}
+
+// BindTurn associates a remote turn with the durable local turn after its
+// prepared/start journal has been committed.
+func (c *Connection) BindTurn(ref provider.ProviderTurnRef, id domain.ProviderTurnID, conversationID domain.ProviderConversationID, threadID domain.ReviewThreadID, operationID domain.OperationID, correlationID provider.CorrelationID) error {
+	if c == nil || ref.Validate() != nil || id == "" || conversationID == "" || threadID == "" || operationID == "" || correlationID.Validate() != nil {
+		return ErrInvalidTurnResponse
+	}
+	c.eventMu.Lock()
+	if c.turnBindings == nil {
+		c.turnBindings = make(map[provider.ProviderTurnRef]turnEventBinding)
+	}
+	conversationRef := provider.ProviderConversationRef("")
+	c.turnMu.Lock()
+	if refConversation, ok := c.turns[ref]; ok {
+		conversationRef = refConversation
+	}
+	c.turnMu.Unlock()
+	c.turnBindings[ref] = turnEventBinding{ConversationRef: conversationRef, ThreadID: threadID, OperationID: operationID, CorrelationID: correlationID, ConversationID: conversationID, TurnID: id}
+	c.eventMu.Unlock()
+	return nil
+}
+
+func (c *Connection) handleProviderNotification(notification protocol.Notification) error {
+	c.eventMu.RLock()
+	context := c.notificationContext(notification)
+	c.eventMu.RUnlock()
+	events, err := MapNotification(notification, context)
+	if err != nil {
+		return err
+	}
+	for _, event := range events {
+		if err := c.publishProviderEvent(event); err != nil {
+			if errors.Is(err, ErrProviderEventOverflow) {
+				return err
+			}
+			// A notification can arrive between the remote response and the
+			// local attach fence. It remains safely ignored until its local
+			// binding exists; no remote ID is promoted to a local identity.
+			if errors.Is(err, provider.ErrInvalidEvent) {
+				continue
+			}
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *Connection) publishProviderEvent(event provider.ProviderEvent) error {
+	if event.Sequence == 0 {
+		event.Sequence = c.eventSequence.Add(1)
+	}
+	if err := event.Validate(provider.DefaultValidationLimits()); err != nil {
+		return err
+	}
+	delivery := c.EventsSink().Deliver(c.client.ctx, event)
+	if delivery == provider.EventAccepted {
+		return nil
+	}
+	if delivery == provider.EventBackpressure {
+		c.client.fail(ErrProviderEventOverflow)
+		return ErrProviderEventOverflow
+	}
+	return ErrClientClosed
+}
+
+// EventsSink exposes the adapter-owned bounded sink to the connection's
+// handlers and focused adapter tests.
+func (c *Connection) EventsSink() *providerEventStream {
+	if c == nil {
+		return nil
+	}
+	c.eventMu.Lock()
+	if c.events == nil {
+		c.events = newProviderEventStream(EventStreamConfig{})
+	}
+	stream := c.events
+	c.eventMu.Unlock()
+	return stream
+}
+
+func (c *Connection) notificationContext(notification protocol.Notification) NotificationContext {
+	context := NotificationContext{}
+	var envelope struct {
+		ThreadID string `json:"threadId"`
+		TurnID   string `json:"turnId"`
+		Thread   struct {
+			ID string `json:"id"`
+		} `json:"thread"`
+		Turn struct {
+			ID string `json:"id"`
+		} `json:"turn"`
+	}
+	_ = json.Unmarshal(notification.Params, &envelope)
+	remoteTurn := envelope.TurnID
+	if remoteTurn == "" {
+		remoteTurn = envelope.Turn.ID
+	}
+	if remoteTurn != "" {
+		binding, ok := c.turnBindings[provider.ProviderTurnRef(remoteTurn)]
+		if ok {
+			return NotificationContext{ThreadID: binding.ThreadID, OperationID: binding.OperationID, CorrelationID: binding.CorrelationID, ConversationID: binding.ConversationID, ConversationRef: binding.ConversationRef, TurnID: binding.TurnID, TurnRef: provider.ProviderTurnRef(remoteTurn)}
+		}
+	}
+	remoteThread := envelope.ThreadID
+	if remoteThread == "" {
+		remoteThread = envelope.Thread.ID
+	}
+	if remoteThread != "" {
+		binding, ok := c.conversationBindings[provider.ProviderConversationRef(remoteThread)]
+		if ok {
+			return NotificationContext{ThreadID: binding.ThreadID, OperationID: binding.OperationID, CorrelationID: binding.CorrelationID, ConversationID: binding.ConversationID, ConversationRef: provider.ProviderConversationRef(remoteThread)}
+		}
+	}
+	return context
 }
 
 // Status returns a detached status projection including the latest account.
@@ -311,6 +501,10 @@ func (c *Connection) monitor() {
 	c.status.Message = "disconnected"
 	status := c.status
 	c.statusMu.Unlock()
+	if c.events != nil {
+		_ = c.publishProviderEvent(provider.ProviderEvent{Kind: provider.EventDisconnected})
+		c.events.Close()
+	}
 	if c.owner != nil {
 		c.owner.mu.Lock()
 		if c.owner.live == c {

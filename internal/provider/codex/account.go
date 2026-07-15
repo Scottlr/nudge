@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/Scottlr/nudge/internal/provider"
 	"github.com/Scottlr/nudge/internal/provider/codex/protocol"
 )
 
@@ -187,7 +188,7 @@ func (c *Connection) handleAccountUpdated(notification protocol.Notification) er
 	c.account.LoginInProgress = false
 	c.loginID = ""
 	c.accountMu.Unlock()
-	return nil
+	return c.publishProviderEvent(provider.ProviderEvent{Kind: provider.EventAccountChanged, Status: "updated"})
 }
 
 func (c *Connection) handleLoginCompleted(notification protocol.Notification) error {
@@ -205,7 +206,17 @@ func (c *Connection) handleLoginCompleted(notification protocol.Notification) er
 	c.account.LoginInProgress = false
 	c.loginID = ""
 	c.accountMu.Unlock()
-	return nil
+	return c.publishProviderEvent(provider.ProviderEvent{Kind: provider.EventAccountChanged, Status: "login_completed"})
+}
+
+func (c *Connection) handleRateLimitsUpdated(notification protocol.Notification) error {
+	var value struct {
+		RateLimits json.RawMessage `json:"rateLimits"`
+	}
+	if err := json.Unmarshal(notification.Params, &value); err != nil || len(value.RateLimits) == 0 || !json.Valid(value.RateLimits) {
+		return ErrInvalidAccountResponse
+	}
+	return c.publishProviderEvent(provider.ProviderEvent{Kind: provider.EventRateLimitChanged, Status: "updated"})
 }
 
 func (status AccountStatus) validate() error {
