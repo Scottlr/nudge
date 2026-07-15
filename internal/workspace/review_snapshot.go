@@ -13,7 +13,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -145,7 +144,7 @@ func (m *ReviewSnapshotManager) Ensure(ctx context.Context, request app.ReviewSn
 	if err := request.Validate(); err != nil {
 		return app.ReviewSnapshot{}, err
 	}
-	if request.PolicyVersion != m.policy.Version || request.EvidenceVersion != app.CurrentCapabilityEvidenceVersion {
+	if request.Target != nil || request.PolicyVersion != m.policy.Version || request.EvidenceVersion != app.CurrentCapabilityEvidenceVersion {
 		return app.ReviewSnapshot{}, app.ErrInvalidReviewSnapshot
 	}
 	manifest, err := m.captures.OpenCaptureManifest(ctx, request.CaptureID)
@@ -155,6 +154,22 @@ func (m *ReviewSnapshotManager) Ensure(ctx context.Context, request app.ReviewSn
 	if manifest.CaptureID != request.CaptureID || manifest.RepositoryID != request.RepositoryID || manifest.WorktreeID != request.WorktreeID || manifest.Validate() != nil {
 		return app.ReviewSnapshot{}, app.ErrReviewSnapshotCorrupt
 	}
+	return m.ensureMaterialized(ctx, request, &manifest)
+}
+
+// EnsureTarget materializes a read-only snapshot from a pinned branch or
+// commit tree. It never consults the current worktree or follows a ref.
+func (m *ReviewSnapshotManager) EnsureTarget(ctx context.Context, request app.ReviewSnapshotEnsureRequest) (app.ReviewSnapshot, error) {
+	if m == nil || ctx == nil || request.Target == nil {
+		return app.ReviewSnapshot{}, app.ErrInvalidReviewSnapshot
+	}
+	if err := request.Validate(); err != nil || request.PolicyVersion != m.policy.Version || request.EvidenceVersion != app.CurrentCapabilityEvidenceVersion || request.Persist != m.persist {
+		return app.ReviewSnapshot{}, app.ErrInvalidReviewSnapshot
+	}
+	return m.ensureMaterialized(ctx, request, nil)
+}
+
+func (m *ReviewSnapshotManager) ensureMaterialized(ctx context.Context, request app.ReviewSnapshotEnsureRequest, manifest *app.CaptureManifest) (app.ReviewSnapshot, error) {
 	if request.Persist != m.persist {
 		return app.ReviewSnapshot{}, app.ErrInvalidReviewSnapshot
 	}
@@ -163,8 +178,7 @@ func (m *ReviewSnapshotManager) Ensure(ctx context.Context, request app.ReviewSn
 	} else if ok {
 		return existing, nil
 	}
-
-	lock, err := m.acquireSnapshotLock(ctx, request.CaptureID, request.Persist)
+	lock, err := m.acquireSnapshotLock(ctx, m.snapshotKey(request), request.Persist)
 	if err != nil {
 		return app.ReviewSnapshot{}, err
 	}
@@ -174,14 +188,13 @@ func (m *ReviewSnapshotManager) Ensure(ctx context.Context, request app.ReviewSn
 	} else if ok {
 		return existing, nil
 	}
-
 	buildCtx, cancel := context.WithTimeout(ctx, m.limits.MaxDuration)
 	defer cancel()
 	snapshot, marker, temporaryRoot, err := m.materialize(buildCtx, request, manifest)
 	if err != nil {
 		return app.ReviewSnapshot{}, err
 	}
-	finalRoot := m.snapshotRoot(request.CaptureID, request.Persist)
+	finalRoot := m.snapshotRoot(request)
 	if _, statErr := os.Lstat(finalRoot); statErr == nil {
 		_ = removeOwnedTree(temporaryRoot)
 		return app.ReviewSnapshot{}, app.ErrReviewSnapshotBusy
@@ -237,7 +250,7 @@ func (m *ReviewSnapshotManager) AcquireReadLease(ctx context.Context, id domain.
 	if err != nil {
 		return app.ReviewSnapshotLease{}, err
 	}
-	lease := app.ReviewSnapshotLease{ID: leaseID, SnapshotID: snapshot.ID, CaptureID: snapshot.CaptureID, Root: snapshot.Root, ManifestHash: snapshot.ManifestHash, ProcessNonce: m.processNonce, AcquiredAt: m.clock.Now().UTC()}
+	lease := app.ReviewSnapshotLease{ID: leaseID, SnapshotID: snapshot.ID, CaptureID: snapshot.CaptureID, TargetKind: snapshot.TargetKind, HeadObjectID: snapshot.HeadObjectID, BaseObjectID: snapshot.BaseObjectID, ParentLabel: snapshot.ParentLabel, SourceRef: snapshotSourceRef(snapshot), Root: snapshot.Root, ManifestHash: snapshot.ManifestHash, ProcessNonce: m.processNonce, AcquiredAt: m.clock.Now().UTC()}
 	if err := lease.Validate(); err != nil {
 		return app.ReviewSnapshotLease{}, err
 	}
@@ -327,11 +340,20 @@ func (m *ReviewSnapshotManager) loadExisting(ctx context.Context, request app.Re
 	var snapshot app.ReviewSnapshot
 	var err error
 	if m.persist {
-		snapshot, err = m.store.LoadReviewSnapshotByCapture(ctx, request.CaptureID)
+		if request.Target != nil {
+			snapshot, err = m.store.LoadReviewSnapshotByObject(ctx, request.RepositoryID, request.Target.Head.ObjectID, request.PolicyVersion, request.FormatVersion)
+		} else {
+			snapshot, err = m.store.LoadReviewSnapshotByCapture(ctx, request.CaptureID)
+		}
 	} else {
 		m.mu.Lock()
 		for _, value := range m.snapshots {
-			if value.CaptureID == request.CaptureID {
+			if request.Target != nil {
+				if value.RepositoryID == request.RepositoryID && value.TargetKind == request.Target.Spec.Kind && value.HeadObjectID == request.Target.Head.ObjectID && value.PolicyVersion == request.PolicyVersion && value.FormatVersion == request.FormatVersion {
+					snapshot = value
+					break
+				}
+			} else if value.CaptureID == request.CaptureID {
 				snapshot = value
 				break
 			}
@@ -347,7 +369,10 @@ func (m *ReviewSnapshotManager) loadExisting(ctx context.Context, request app.Re
 	if err != nil {
 		return app.ReviewSnapshot{}, false, err
 	}
-	if snapshot.CaptureID != request.CaptureID || snapshot.RepositoryID != request.RepositoryID || snapshot.WorktreeID != request.WorktreeID || snapshot.PolicyVersion != request.PolicyVersion || snapshot.EvidenceVersion != request.EvidenceVersion || snapshot.State != app.ReviewSnapshotReady {
+	if snapshot.RepositoryID != request.RepositoryID || request.Target == nil && snapshot.WorktreeID != request.WorktreeID || snapshot.PolicyVersion != request.PolicyVersion || snapshot.EvidenceVersion != request.EvidenceVersion || snapshot.State != app.ReviewSnapshotReady {
+		return app.ReviewSnapshot{}, false, app.ErrReviewSnapshotCorrupt
+	}
+	if request.Target == nil && snapshot.CaptureID != request.CaptureID || request.Target != nil && (snapshot.CaptureID != "" || snapshot.HeadObjectID != request.Target.Head.ObjectID || snapshot.FormatVersion != request.FormatVersion) {
 		return app.ReviewSnapshot{}, false, app.ErrReviewSnapshotCorrupt
 	}
 	if err := m.verifySnapshot(snapshot); err != nil {
@@ -370,7 +395,7 @@ func (m *ReviewSnapshotManager) loadSnapshot(ctx context.Context, id domain.Revi
 }
 
 func (m *ReviewSnapshotManager) removeSnapshot(ctx context.Context, snapshot app.ReviewSnapshot, recovery bool) error {
-	lock, err := m.acquireSnapshotLock(ctx, snapshot.CaptureID, m.persist)
+	lock, err := m.acquireSnapshotLock(ctx, snapshotKeyFromSnapshot(snapshot), m.persist)
 	if err != nil {
 		return err
 	}
@@ -424,6 +449,12 @@ type snapshotMarker struct {
 	CaptureID       domain.CaptureID          `json:"capture_id"`
 	RepositoryID    domain.RepositoryID       `json:"repository_id"`
 	WorktreeID      domain.WorktreeID         `json:"worktree_id"`
+	TargetKind      repository.TargetKind     `json:"target_kind"`
+	HeadObjectID    repository.ObjectID       `json:"head_object_id"`
+	BaseObjectID    repository.ObjectID       `json:"base_object_id"`
+	ParentLabel     string                    `json:"parent_label"`
+	ObjectFormat    string                    `json:"object_format"`
+	FormatVersion   uint32                    `json:"format_version"`
 	Root            string                    `json:"root"`
 	Nonce           string                    `json:"nonce"`
 	ManifestHash    string                    `json:"manifest_hash"`
@@ -433,15 +464,25 @@ type snapshotMarker struct {
 	CreatedAt       time.Time                 `json:"created_at"`
 }
 
-func (m *ReviewSnapshotManager) materialize(ctx context.Context, request app.ReviewSnapshotEnsureRequest, manifest app.CaptureManifest) (app.ReviewSnapshot, snapshotMarker, string, error) {
-	baseEntries, err := m.source.ListBase(ctx, manifest.Candidate.Base)
+func (m *ReviewSnapshotManager) materialize(ctx context.Context, request app.ReviewSnapshotEnsureRequest, manifest *app.CaptureManifest) (app.ReviewSnapshot, snapshotMarker, string, error) {
+	var base repository.LocalCaptureBase
+	if request.Target != nil {
+		base = repository.LocalCaptureBase{ObjectFormat: request.ObjectFormat, ObjectID: request.Target.Head.ObjectID}
+	} else {
+		base = manifest.Candidate.Base
+	}
+	baseEntries, err := m.source.ListBase(ctx, base)
 	if err != nil {
 		return app.ReviewSnapshot{}, snapshotMarker{}, "", err
 	}
 	if app.Count(len(baseEntries)) > m.limits.MaxEntries {
 		return app.ReviewSnapshot{}, snapshotMarker{}, "", app.ErrReviewSnapshotLimit
 	}
-	entries := make(map[string]materializationEntry, len(baseEntries)+len(manifest.Candidate.Entries))
+	entryCapacity := len(baseEntries)
+	if manifest != nil {
+		entryCapacity += len(manifest.Candidate.Entries)
+	}
+	entries := make(map[string]materializationEntry, entryCapacity)
 	for _, entry := range baseEntries {
 		if err := entry.Validate(); err != nil {
 			return app.ReviewSnapshot{}, snapshotMarker{}, "", app.ErrReviewSnapshotCorrupt
@@ -457,7 +498,11 @@ func (m *ReviewSnapshotManager) materialize(ctx context.Context, request app.Rev
 		baseEntry := entry
 		entries[key] = materializationEntry{path: entry.Path.Bytes(), nativePath: path, kind: entry.Kind, mode: entry.Mode, base: &baseEntry}
 	}
-	for _, captureEntry := range manifest.Candidate.SortedEntries() {
+	var captureEntries []repository.LocalCaptureEntry
+	if manifest != nil {
+		captureEntries = manifest.Candidate.SortedEntries()
+	}
+	for _, captureEntry := range captureEntries {
 		change := captureEntry.Change
 		if err := change.Validate(); err != nil {
 			return app.ReviewSnapshot{}, snapshotMarker{}, "", app.ErrReviewSnapshotCorrupt
@@ -520,17 +565,17 @@ func (m *ReviewSnapshotManager) materialize(ctx context.Context, request app.Rev
 		var hash string
 		var size app.ByteSize
 		switch {
-		case entry.capture != nil:
+		case entry.capture != nil && manifest != nil:
 			if entry.kind == repository.FileKindSymlink {
-				hash, size, err = m.writeCaptureSymlink(ctx, temporaryRoot, entry, manifest)
+				hash, size, err = m.writeCaptureSymlink(ctx, temporaryRoot, entry, *manifest)
 			} else {
-				hash, size, err = m.writeCaptureBlob(ctx, temporaryRoot, entry, manifest)
+				hash, size, err = m.writeCaptureBlob(ctx, temporaryRoot, entry, *manifest)
 			}
 		case entry.base != nil:
 			if entry.kind == repository.FileKindSymlink {
-				hash, size, err = m.writeBaseSymlink(ctx, temporaryRoot, entry, manifest.Candidate.Base)
+				hash, size, err = m.writeBaseSymlink(ctx, temporaryRoot, entry, base)
 			} else {
-				hash, size, err = m.writeBaseBlob(ctx, temporaryRoot, entry, manifest.Candidate.Base)
+				hash, size, err = m.writeBaseBlob(ctx, temporaryRoot, entry, base)
 			}
 		default:
 			err = app.ErrReviewSnapshotCorrupt
@@ -569,10 +614,19 @@ func (m *ReviewSnapshotManager) materialize(ctx context.Context, request app.Rev
 	}
 	created := m.clock.Now().UTC()
 	snapshot := app.ReviewSnapshot{ID: id, CaptureID: request.CaptureID, RepositoryID: request.RepositoryID, WorktreeID: request.WorktreeID, Root: temporaryRoot, MarkerNonce: nonce, ManifestHash: observedHash, PolicyVersion: request.PolicyVersion, EvidenceVersion: request.EvidenceVersion, State: app.ReviewSnapshotReady, CreatedAt: created}
+	if request.Target != nil {
+		snapshot.WorktreeID = ""
+		snapshot.TargetKind = request.Target.Spec.Kind
+		snapshot.HeadObjectID = request.Target.Head.ObjectID
+		snapshot.BaseObjectID = request.Target.Base.ObjectID
+		snapshot.ParentLabel = request.Target.ParentLabel
+		snapshot.ObjectFormat = request.ObjectFormat
+		snapshot.FormatVersion = request.FormatVersion
+	}
 	if err := snapshot.Validate(); err != nil {
 		return app.ReviewSnapshot{}, snapshotMarker{}, "", err
 	}
-	marker := snapshotMarker{Version: reviewSnapshotMarkerVersion, ID: snapshot.ID, CaptureID: snapshot.CaptureID, RepositoryID: snapshot.RepositoryID, WorktreeID: snapshot.WorktreeID, Root: temporaryRoot, Nonce: snapshot.MarkerNonce, ManifestHash: snapshot.ManifestHash, PolicyVersion: snapshot.PolicyVersion, EvidenceVersion: snapshot.EvidenceVersion, State: snapshot.State, CreatedAt: snapshot.CreatedAt}
+	marker := snapshotMarker{Version: reviewSnapshotMarkerVersion, ID: snapshot.ID, CaptureID: snapshot.CaptureID, RepositoryID: snapshot.RepositoryID, WorktreeID: snapshot.WorktreeID, TargetKind: snapshot.TargetKind, HeadObjectID: snapshot.HeadObjectID, BaseObjectID: snapshot.BaseObjectID, ParentLabel: snapshot.ParentLabel, ObjectFormat: snapshot.ObjectFormat, FormatVersion: snapshot.FormatVersion, Root: temporaryRoot, Nonce: snapshot.MarkerNonce, ManifestHash: snapshot.ManifestHash, PolicyVersion: snapshot.PolicyVersion, EvidenceVersion: snapshot.EvidenceVersion, State: snapshot.State, CreatedAt: snapshot.CreatedAt}
 	if err := writeMarkerFile(temporaryRoot, marker); err != nil {
 		return app.ReviewSnapshot{}, snapshotMarker{}, "", err
 	}
@@ -949,7 +1003,7 @@ func (m *ReviewSnapshotManager) verifySnapshot(snapshot app.ReviewSnapshot) erro
 		return app.ErrReviewSnapshotCorrupt
 	}
 	marker, err := m.readMarker(snapshot.Root)
-	if err != nil || marker.ID != snapshot.ID || marker.CaptureID != snapshot.CaptureID || marker.RepositoryID != snapshot.RepositoryID || marker.WorktreeID != snapshot.WorktreeID || marker.Root != snapshot.Root || marker.Nonce != snapshot.MarkerNonce || marker.ManifestHash != snapshot.ManifestHash || marker.PolicyVersion != snapshot.PolicyVersion || marker.EvidenceVersion != snapshot.EvidenceVersion || marker.State != app.ReviewSnapshotReady {
+	if err != nil || marker.ID != snapshot.ID || marker.CaptureID != snapshot.CaptureID || marker.RepositoryID != snapshot.RepositoryID || marker.WorktreeID != snapshot.WorktreeID || marker.TargetKind != snapshot.TargetKind || marker.HeadObjectID != snapshot.HeadObjectID || marker.BaseObjectID != snapshot.BaseObjectID || marker.ParentLabel != snapshot.ParentLabel || marker.ObjectFormat != snapshot.ObjectFormat || marker.FormatVersion != snapshot.FormatVersion || marker.Root != snapshot.Root || marker.Nonce != snapshot.MarkerNonce || marker.ManifestHash != snapshot.ManifestHash || marker.PolicyVersion != snapshot.PolicyVersion || marker.EvidenceVersion != snapshot.EvidenceVersion || marker.State != app.ReviewSnapshotReady {
 		return app.ErrReviewSnapshotCorrupt
 	}
 	_, hash, err := m.walkManifest(context.Background(), snapshot.Root)
@@ -981,7 +1035,7 @@ func (m *ReviewSnapshotManager) findEphemeralSnapshot(id domain.ReviewSnapshotID
 		if markerErr != nil || marker.ID != id {
 			continue
 		}
-		return app.ReviewSnapshot{ID: marker.ID, CaptureID: marker.CaptureID, RepositoryID: marker.RepositoryID, WorktreeID: marker.WorktreeID, Root: root, MarkerNonce: marker.Nonce, ManifestHash: marker.ManifestHash, PolicyVersion: marker.PolicyVersion, EvidenceVersion: marker.EvidenceVersion, State: marker.State, CreatedAt: marker.CreatedAt}, nil
+		return app.ReviewSnapshot{ID: marker.ID, CaptureID: marker.CaptureID, RepositoryID: marker.RepositoryID, WorktreeID: marker.WorktreeID, TargetKind: marker.TargetKind, HeadObjectID: marker.HeadObjectID, BaseObjectID: marker.BaseObjectID, ParentLabel: marker.ParentLabel, ObjectFormat: marker.ObjectFormat, FormatVersion: marker.FormatVersion, Root: root, MarkerNonce: marker.Nonce, ManifestHash: marker.ManifestHash, PolicyVersion: marker.PolicyVersion, EvidenceVersion: marker.EvidenceVersion, State: marker.State, CreatedAt: marker.CreatedAt}, nil
 	}
 	return app.ReviewSnapshot{}, app.ErrReviewSnapshotNotFound
 }
@@ -1041,7 +1095,7 @@ func writeMarkerFile(root string, marker snapshotMarker) error {
 }
 
 func marshalMarker(marker snapshotMarker) ([]byte, error) {
-	if marker.Version != reviewSnapshotMarkerVersion || marker.ID == "" || marker.CaptureID == "" || marker.Root == "" || !validNonce(marker.Nonce) || !validHash(marker.ManifestHash) || marker.State != app.ReviewSnapshotReady {
+	if marker.Version != reviewSnapshotMarkerVersion || marker.ID == "" || marker.Root == "" || !validNonce(marker.Nonce) || !validHash(marker.ManifestHash) || marker.State != app.ReviewSnapshotReady || marker.CaptureID == "" && (marker.TargetKind != repository.TargetBranch && marker.TargetKind != repository.TargetCommit) {
 		return nil, app.ErrInvalidReviewSnapshot
 	}
 	data, err := json.Marshal(marker)
@@ -1063,8 +1117,8 @@ func (m *ReviewSnapshotManager) readMarker(root string) (snapshotMarker, error) 
 	return marker, nil
 }
 
-func (m *ReviewSnapshotManager) acquireSnapshotLock(ctx context.Context, captureID domain.CaptureID, persist bool) (*filelock.Lock, error) {
-	key := m.snapshotRoot(captureID, persist)
+func (m *ReviewSnapshotManager) acquireSnapshotLock(ctx context.Context, key string, persist bool) (*filelock.Lock, error) {
+	key = m.snapshotRootForKey(key, persist)
 	digest := sha256.Sum256([]byte(key))
 	return filelock.Acquire(ctx, filepath.Join(m.locks, hex.EncodeToString(digest[:])+".lock"))
 }
@@ -1085,13 +1139,38 @@ func (m *ReviewSnapshotManager) newTemporaryRoot(persist bool) (string, error) {
 	return root, nil
 }
 
-func (m *ReviewSnapshotManager) snapshotRoot(captureID domain.CaptureID, persist bool) string {
-	digest := sha256.Sum256([]byte(string(captureID) + ":" + strconv.FormatUint(uint64(m.policy.Version), 10)))
+func (m *ReviewSnapshotManager) snapshotRoot(request app.ReviewSnapshotEnsureRequest) string {
+	return m.snapshotRootForKey(m.snapshotKey(request), request.Persist)
+}
+
+func (m *ReviewSnapshotManager) snapshotRootForKey(key string, persist bool) string {
+	digest := sha256.Sum256([]byte(key))
 	parent := m.published
 	if !persist {
 		parent = m.ephemeral
 	}
 	return filepath.Join(parent, hex.EncodeToString(digest[:]))
+}
+
+func (m *ReviewSnapshotManager) snapshotKey(request app.ReviewSnapshotEnsureRequest) string {
+	if request.Target != nil {
+		return fmt.Sprintf("object:%s:%s:%d:%d", request.RepositoryID, request.Target.Head.ObjectID, request.PolicyVersion, request.FormatVersion)
+	}
+	return fmt.Sprintf("capture:%s:%d", request.CaptureID, request.PolicyVersion)
+}
+
+func snapshotKeyFromSnapshot(snapshot app.ReviewSnapshot) string {
+	if snapshot.CaptureID == "" {
+		return fmt.Sprintf("object:%s:%s:%d:%d", snapshot.RepositoryID, snapshot.HeadObjectID, snapshot.PolicyVersion, snapshot.FormatVersion)
+	}
+	return fmt.Sprintf("capture:%s:%d", snapshot.CaptureID, snapshot.PolicyVersion)
+}
+
+func snapshotSourceRef(snapshot app.ReviewSnapshot) string {
+	if snapshot.CaptureID != "" {
+		return ""
+	}
+	return fmt.Sprintf("target:%s:head:%s:base:%s:parent:%s", snapshot.TargetKind, snapshot.HeadObjectID, snapshot.BaseObjectID, snapshot.ParentLabel)
 }
 
 func (m *ReviewSnapshotManager) checkContext(ctx context.Context) error {

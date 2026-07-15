@@ -2,8 +2,10 @@ package app
 
 import (
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Scottlr/nudge/internal/domain"
 	"github.com/Scottlr/nudge/internal/domain/repository"
@@ -116,6 +118,38 @@ func TestDiscussionQueuesWhenOffline(t *testing.T) {
 	request := DiscussionDispatchRequest{Availability: availability}
 	if _, err := request.PrepareStartProviderTurn(); !errors.Is(err, ErrDiscussionUnavailable) {
 		t.Fatalf("offline dispatch error = %v, want ErrDiscussionUnavailable", err)
+	}
+}
+
+func TestDiscussionBindsPinnedObjectSnapshotProvenance(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "review-snapshot")
+	head := repository.ObjectID(strings.Repeat("a", 40))
+	parent := repository.ObjectID(strings.Repeat("b", 40))
+	lease := &ReviewSnapshotLease{
+		ID: "lease-1", SnapshotID: "snapshot-1", TargetKind: repository.TargetCommit,
+		HeadObjectID: head, BaseObjectID: parent, ParentLabel: "parent 1",
+		SourceRef: "target:commit:head:" + string(head) + ":base:" + string(parent) + ":parent:parent 1",
+		Root:      root, ManifestHash: strings.Repeat("c", 64), ProcessNonce: strings.Repeat("d", 64), AcquiredAt: time.Now().UTC(),
+	}
+	request := DiscussionDispatchRequest{
+		ThreadID: "thread-1", ConversationID: "conversation-1", Context: DiscussionContext{
+			Target: "commit HEAD generation 7", Path: repository.RepoPath("main.go"), Side: repository.DiffHead,
+			Lines: DiscussionLineRange{Start: 1, End: 1}, SelectedText: "return nil", UserConcern: "Concern", WorkingDir: root,
+		},
+		Availability: DiscussionAvailability{Available: true, Mode: DiscussionModeFilesystem}, SnapshotLease: lease,
+		Permissions: provider.TurnPermissionPolicy{
+			Filesystem: provider.FilesystemReviewSnapshot, ReadableRoots: []provider.PermissionRoot{{Path: root}},
+			Containment: provider.ContainmentEvidence{CanonicalRead: true, NoSymlinkEscape: true, NoJunctionEscape: true, NoMountEscape: true, NoHardLinkAlias: true, HandlesQuiescent: true},
+			Network:     provider.NetworkDisabled, RuntimeApprovals: provider.RuntimeApprovalsDisabled,
+		},
+		CapabilityPolicy: CurrentCapabilityPolicyVersion, ResourcePolicy: CurrentResourcePolicyVersion, Evidence: CurrentCapabilityEvidenceVersion, PermissionVersion: "provider-permissions-v1",
+	}
+	turn, err := request.PrepareStartProviderTurn()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if turn.Provenance.SourceCaptureID != "" || turn.Provenance.SourceSnapshotRef != lease.SourceRef || turn.Provenance.ReviewSnapshotID != lease.SnapshotID || turn.Provenance.ManifestHash != lease.ManifestHash {
+		t.Fatalf("object snapshot provenance = %#v", turn.Provenance)
 	}
 }
 

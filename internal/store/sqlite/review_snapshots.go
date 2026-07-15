@@ -7,6 +7,7 @@ import (
 
 	"github.com/Scottlr/nudge/internal/app"
 	"github.com/Scottlr/nudge/internal/domain"
+	"github.com/Scottlr/nudge/internal/domain/repository"
 )
 
 var _ app.ReviewSnapshotStore = (*Store)(nil)
@@ -24,10 +25,13 @@ func (s *Store) SaveReviewSnapshot(ctx context.Context, snapshot app.ReviewSnaps
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	_, err := s.db.ExecContext(ctx, `INSERT INTO review_snapshots(
-		id, capture_id, repository_id, worktree_id, root, marker_nonce,
+		id, capture_id, repository_id, worktree_id, target_kind, head_object_id,
+		base_object_id, parent_label, object_format, format_version, root, marker_nonce,
 		manifest_hash, policy_version, evidence_version, state, created_at, updated_at
-	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		snapshot.ID, snapshot.CaptureID, snapshot.RepositoryID, snapshot.WorktreeID,
+	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		snapshot.ID, nullableID(string(snapshot.CaptureID)), snapshot.RepositoryID, snapshot.WorktreeID,
+		snapshot.TargetKind, snapshot.HeadObjectID, snapshot.BaseObjectID, snapshot.ParentLabel,
+		snapshot.ObjectFormat, snapshot.FormatVersion,
 		snapshot.Root, snapshot.MarkerNonce, snapshot.ManifestHash, snapshot.PolicyVersion,
 		snapshot.EvidenceVersion, snapshot.State, formatTime(snapshot.CreatedAt), formatTime(snapshot.CreatedAt))
 	if err != nil {
@@ -39,6 +43,18 @@ func (s *Store) SaveReviewSnapshot(ctx context.Context, snapshot app.ReviewSnaps
 	return nil
 }
 
+// LoadReviewSnapshotByObject loads a pinned branch/commit snapshot by its
+// repository, head object, resource policy, and materialization format key.
+func (s *Store) LoadReviewSnapshotByObject(ctx context.Context, repositoryID domain.RepositoryID, headObjectID repository.ObjectID, policyVersion app.ResourcePolicyVersion, formatVersion uint32) (app.ReviewSnapshot, error) {
+	if err := s.ensureOpen(); err != nil {
+		return app.ReviewSnapshot{}, err
+	}
+	if repositoryID == "" || headObjectID == "" || policyVersion == 0 || formatVersion == 0 {
+		return app.ReviewSnapshot{}, app.ErrInvalidReviewSnapshot
+	}
+	return s.loadReviewSnapshot(ctx, "repository_id = ? AND head_object_id = ? AND policy_version = ? AND format_version = ?", repositoryID, headObjectID, policyVersion, formatVersion)
+}
+
 // LoadReviewSnapshot loads and validates the durable identity without
 // accepting the filesystem root as proof of readiness.
 func (s *Store) LoadReviewSnapshot(ctx context.Context, id domain.ReviewSnapshotID) (app.ReviewSnapshot, error) {
@@ -48,7 +64,7 @@ func (s *Store) LoadReviewSnapshot(ctx context.Context, id domain.ReviewSnapshot
 	if id == "" {
 		return app.ReviewSnapshot{}, app.ErrInvalidReviewSnapshot
 	}
-	return s.loadReviewSnapshot(ctx, "id", id)
+	return s.loadReviewSnapshot(ctx, "id = ?", id)
 }
 
 // LoadReviewSnapshotByCapture loads the one snapshot associated with an
@@ -60,18 +76,21 @@ func (s *Store) LoadReviewSnapshotByCapture(ctx context.Context, captureID domai
 	if captureID == "" {
 		return app.ReviewSnapshot{}, app.ErrInvalidReviewSnapshot
 	}
-	return s.loadReviewSnapshot(ctx, "capture_id", captureID)
+	return s.loadReviewSnapshot(ctx, "capture_id = ?", captureID)
 }
 
-func (s *Store) loadReviewSnapshot(ctx context.Context, column string, value any) (app.ReviewSnapshot, error) {
-	query := `SELECT id, capture_id, repository_id, worktree_id, root, marker_nonce,
-		manifest_hash, policy_version, evidence_version, state, created_at
-		FROM review_snapshots WHERE ` + column + ` = ?`
+func (s *Store) loadReviewSnapshot(ctx context.Context, predicate string, values ...any) (app.ReviewSnapshot, error) {
+	query := `SELECT id, capture_id, repository_id, worktree_id, target_kind,
+		head_object_id, base_object_id, parent_label, object_format, format_version,
+		root, marker_nonce, manifest_hash, policy_version, evidence_version, state, created_at
+		FROM review_snapshots WHERE ` + predicate + ` LIMIT 1`
 	var snapshot app.ReviewSnapshot
+	var captureID sql.NullString
 	var createdAt string
 	var policyVersion, evidenceVersion int64
-	err := s.db.QueryRowContext(ctx, query, value).Scan(
-		&snapshot.ID, &snapshot.CaptureID, &snapshot.RepositoryID, &snapshot.WorktreeID,
+	err := s.db.QueryRowContext(ctx, query, values...).Scan(
+		&snapshot.ID, &captureID, &snapshot.RepositoryID, &snapshot.WorktreeID, &snapshot.TargetKind,
+		&snapshot.HeadObjectID, &snapshot.BaseObjectID, &snapshot.ParentLabel, &snapshot.ObjectFormat, &snapshot.FormatVersion,
 		&snapshot.Root, &snapshot.MarkerNonce, &snapshot.ManifestHash, &policyVersion,
 		&evidenceVersion, &snapshot.State, &createdAt)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -79,6 +98,9 @@ func (s *Store) loadReviewSnapshot(ctx context.Context, column string, value any
 	}
 	if err != nil {
 		return app.ReviewSnapshot{}, err
+	}
+	if captureID.Valid {
+		snapshot.CaptureID = domain.CaptureID(captureID.String)
 	}
 	if policyVersion <= 0 || evidenceVersion <= 0 {
 		return app.ReviewSnapshot{}, app.ErrReviewSnapshotCorrupt
@@ -134,7 +156,7 @@ func (s *Store) SaveReviewSnapshotLease(ctx context.Context, lease app.ReviewSna
 	defer s.writeMu.Unlock()
 	_, err := s.db.ExecContext(ctx, `INSERT INTO review_snapshot_leases(
 		id, snapshot_id, capture_id, root, manifest_hash, process_nonce, acquired_at
-	) VALUES(?, ?, ?, ?, ?, ?, ?)`, lease.ID, lease.SnapshotID, lease.CaptureID,
+	) VALUES(?, ?, ?, ?, ?, ?, ?)`, lease.ID, lease.SnapshotID, nullableID(string(lease.CaptureID)),
 		lease.Root, lease.ManifestHash, lease.ProcessNonce, formatTime(lease.AcquiredAt))
 	if err != nil {
 		if isSQLiteConstraint(err) {

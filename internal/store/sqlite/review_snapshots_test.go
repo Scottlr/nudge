@@ -10,6 +10,7 @@ import (
 
 	"github.com/Scottlr/nudge/internal/app"
 	"github.com/Scottlr/nudge/internal/domain"
+	"github.com/Scottlr/nudge/internal/domain/repository"
 )
 
 func TestReviewSnapshotStoreRoundTripAndLeaseClosure(t *testing.T) {
@@ -48,5 +49,22 @@ func TestReviewSnapshotStoreRoundTripAndLeaseClosure(t *testing.T) {
 	}
 	if _, err := store.LoadReviewSnapshot(ctx, snapshot.ID); !errors.Is(err, app.ErrReviewSnapshotNotFound) {
 		t.Fatalf("deleted snapshot load = %v", err)
+	}
+
+	objectSnapshot := app.ReviewSnapshot{
+		ID: "snapshot-2", RepositoryID: "repository-1", WorktreeID: "worktree-1",
+		TargetKind: repository.TargetCommit, HeadObjectID: repository.ObjectID(strings.Repeat("d", 40)),
+		BaseObjectID: repository.ObjectID(strings.Repeat("e", 40)), ParentLabel: "parent 1", ObjectFormat: "sha1",
+		FormatVersion: app.ReviewSnapshotFormatVersion, Root: filepath.Join(t.TempDir(), "published", "snapshot-2"),
+		MarkerNonce: strings.Repeat("f", 64), ManifestHash: strings.Repeat("0", 64),
+		PolicyVersion: app.CurrentResourcePolicyVersion, EvidenceVersion: app.CurrentCapabilityEvidenceVersion,
+		State: app.ReviewSnapshotReady, CreatedAt: now.Add(time.Second),
+	}
+	if err := store.SaveReviewSnapshot(ctx, objectSnapshot); err != nil {
+		t.Fatal(err)
+	}
+	loadedObject, err := store.LoadReviewSnapshotByObject(ctx, objectSnapshot.RepositoryID, objectSnapshot.HeadObjectID, objectSnapshot.PolicyVersion, objectSnapshot.FormatVersion)
+	if err != nil || loadedObject != objectSnapshot {
+		t.Fatalf("loaded object snapshot = %#v, err=%v", loadedObject, err)
 	}
 }
