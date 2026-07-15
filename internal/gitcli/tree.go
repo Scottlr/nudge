@@ -230,11 +230,12 @@ func (r *GitTreeReader) changedFiles(ctx context.Context, target repository.Reso
 		for index := range records {
 			change := &records[index].entry.Change
 			if records[index].untracked && change.NewPath != nil {
-				kind, mode, observeErr := observeWorkingPath(r.root, *change.NewPath)
+				kind, mode, reviewOnly, observeErr := observeWorkingEntry(r.root, *change.NewPath)
 				if observeErr != nil {
 					return nil, observeErr
 				}
 				change.NewFileKind, change.NewMode = kind, mode
+				change.ReviewOnly = reviewOnly
 			}
 			if err := change.Validate(); err != nil {
 				return nil, fmt.Errorf("%w: %v", errInvalidTreeOutput, err)
@@ -285,17 +286,27 @@ func (r *GitTreeReader) listWorkingTree(ctx context.Context, target repository.R
 	addRecord := func(acc *treePageAccumulator, parsed lsFilesRecord) error {
 		mode := parsed.Mode
 		kind := fileKindFromGitMode(mode)
+		var reviewOnly *repository.ReviewOnlyEntryEvidence
 		if mode == 0 {
 			var observeErr error
-			kind, mode, observeErr = observeWorkingPath(r.root, parsed.Path)
+			kind, mode, reviewOnly, observeErr = observeWorkingEntry(r.root, parsed.Path)
 			if observeErr != nil {
 				return observeErr
 			}
 		}
 		changed := changedByPath[string(parsed.Path)]
+		if changed != nil && changed.ReviewOnly != nil {
+			reviewOnly = changed.ReviewOnly
+		}
 		entry, entryErr := newTreeEntry(parsed.Path, kind, mode, parsed.ObjectID, changed)
 		if entryErr != nil {
 			return entryErr
+		}
+		if reviewOnly != nil {
+			entry.ReviewOnly = cloneReviewOnly(reviewOnly)
+			if err := entry.Validate(); err != nil {
+				return err
+			}
 		}
 		acc.add(entry)
 		pathValue := parsed.Path
@@ -574,6 +585,9 @@ func mergeTreeEntry(left, right repository.TreeEntry) repository.TreeEntry {
 	if left.ObjectID == nil && right.ObjectID != nil {
 		left.ObjectID = cloneObjectID(right.ObjectID)
 	}
+	if left.ReviewOnly == nil && right.ReviewOnly != nil {
+		left.ReviewOnly = cloneReviewOnly(right.ReviewOnly)
+	}
 	if right.Kind == repository.FileKindDirectory {
 		left.Kind, left.Mode, left.LazyChild = right.Kind, right.Mode, true
 	}
@@ -592,6 +606,9 @@ func treeEntryBytes(entry repository.TreeEntry) app.ByteSize {
 		if entry.ChangedSummary.NewPath != nil {
 			bytes += len(*entry.ChangedSummary.NewPath)
 		}
+	}
+	if entry.ReviewOnly != nil {
+		bytes += len(entry.ReviewOnly.MetadataHash) + len(entry.ReviewOnly.ReasonCode) + len(entry.ReviewOnly.EvidenceVersion)
 	}
 	return app.ByteSize(bytes)
 }

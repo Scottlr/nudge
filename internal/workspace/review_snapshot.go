@@ -487,8 +487,11 @@ func (m *ReviewSnapshotManager) materialize(ctx context.Context, request app.Rev
 		if err := entry.Validate(); err != nil {
 			return app.ReviewSnapshot{}, snapshotMarker{}, "", app.ErrReviewSnapshotCorrupt
 		}
+		if entry.Kind == repository.FileKindUnknown || entry.Kind == repository.FileKindGitlink {
+			continue
+		}
 		path, err := nativeRepoPath(entry.Path)
-		if err != nil || entry.Kind == repository.FileKindUnknown || entry.Kind == repository.FileKindGitlink {
+		if err != nil {
 			return app.ReviewSnapshot{}, snapshotMarker{}, "", fmt.Errorf("%w: %v", app.ErrReviewSnapshotUnsafe, err)
 		}
 		key := string(entry.Path.Bytes())
@@ -514,7 +517,7 @@ func (m *ReviewSnapshotManager) materialize(ctx context.Context, request app.Rev
 			continue
 		}
 		if change.NewFileKind != repository.FileKindRegular && change.NewFileKind != repository.FileKindSymlink {
-			return app.ReviewSnapshot{}, snapshotMarker{}, "", fmt.Errorf("%w: unsupported file kind", app.ErrReviewSnapshotUnsafe)
+			continue
 		}
 		nativePath, pathErr := nativeRepoPath(*change.NewPath)
 		if pathErr != nil {

@@ -93,7 +93,7 @@ func (b ProposalBaseline) Validate() error {
 }
 
 func validateProposalBaselineChange(change repository.ChangedFile, symlinkEvidence map[repository.RepoPathKey]SymlinkCapabilityEvidence) error {
-	if err := change.Validate(); err != nil {
+	if err := change.Validate(); err != nil || change.ReviewOnly != nil || change.OldFileKind == repository.FileKindGitlink || change.NewFileKind == repository.FileKindGitlink {
 		return ErrInvalidProposalBaseline
 	}
 	switch change.Kind {

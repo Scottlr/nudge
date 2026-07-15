@@ -282,6 +282,9 @@ func newTreeEntry(path repository.RepoPath, kind repository.FileKind, mode uint3
 		ObjectID: cloneObjectID(objectID), LazyChild: kind == repository.FileKindDirectory,
 		ChangedSummary: cloneChangedFile(changed),
 	}
+	if changed != nil && changed.ReviewOnly != nil {
+		entry.ReviewOnly = cloneReviewOnly(changed.ReviewOnly)
+	}
 	if err := entry.Validate(); err != nil {
 		return repository.TreeEntry{}, fmt.Errorf("%w: %v", errInvalidTreeOutput, err)
 	}
@@ -320,6 +323,14 @@ func cloneObjectID(value *repository.ObjectID) *repository.ObjectID {
 	return &copyValue
 }
 
+func cloneReviewOnly(value *repository.ReviewOnlyEntryEvidence) *repository.ReviewOnlyEntryEvidence {
+	if value == nil {
+		return nil
+	}
+	copyValue := *value
+	return &copyValue
+}
+
 func cloneChangedFile(value *repository.ChangedFile) *repository.ChangedFile {
 	if value == nil {
 		return nil
@@ -339,6 +350,10 @@ func cloneChangedFile(value *repository.ChangedFile) *repository.ChangedFile {
 	if value.Rename != nil {
 		rename := *value.Rename
 		copyValue.Rename = &rename
+	}
+	if value.ReviewOnly != nil {
+		reviewOnly := *value.ReviewOnly
+		copyValue.ReviewOnly = &reviewOnly
 	}
 	if value.OldTextSemantics != nil {
 		semantics := *value.OldTextSemantics
@@ -360,6 +375,10 @@ func cloneGitTreeEntry(value repository.TreeEntry) repository.TreeEntry {
 	value.Name = repository.RepoPath(value.Name.Bytes())
 	value.Parent = repository.RepoPath(value.Parent.Bytes())
 	value.ObjectID = cloneObjectID(value.ObjectID)
+	if value.ReviewOnly != nil {
+		reviewOnly := *value.ReviewOnly
+		value.ReviewOnly = &reviewOnly
+	}
 	value.ChangedSummary = cloneChangedFile(value.ChangedSummary)
 	return value
 }

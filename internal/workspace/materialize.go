@@ -733,8 +733,11 @@ func (s *CaptureTreeSource) List(ctx context.Context) ([]repository.TreeEntry, e
 	}
 	entries := make(map[repository.RepoPathKey]captureSourceEntry, len(baseEntries)+len(s.manifest.Candidate.Entries))
 	for _, entry := range baseEntries {
-		if err := entry.Validate(); err != nil || entry.Kind == repository.FileKindUnknown || entry.Kind == repository.FileKindGitlink {
+		if err := entry.Validate(); err != nil {
 			return nil, ErrInvalidWorkspaceSource
+		}
+		if entry.Kind == repository.FileKindUnknown || entry.Kind == repository.FileKindGitlink {
+			continue
 		}
 		entries[entry.Path.Key()] = captureSourceEntry{entry: entry, base: true}
 	}
@@ -749,7 +752,7 @@ func (s *CaptureTreeSource) List(ctx context.Context) ([]repository.TreeEntry, e
 			continue
 		}
 		if captured.Change.NewFileKind != repository.FileKindRegular && captured.Change.NewFileKind != repository.FileKindSymlink {
-			return nil, ErrInvalidWorkspaceSource
+			continue
 		}
 		blob, found := captureWorkingBlob(captured, *captured.Change.NewPath)
 		if !found {

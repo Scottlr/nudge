@@ -314,7 +314,7 @@ type ProposedFile struct {
 }
 
 func (f ProposedFile) Validate() error {
-	if f.Path.Validate() != nil || f.Added && f.Deleted || f.Deleted && (f.Mode != 0 || f.Kind != repository.FileKindUnknown || f.ContentBytes != 0 || f.ContentClass != "" || f.TextSemantics != nil || f.ModeTransition != nil || f.SymlinkEvidence != nil) || !f.Deleted && (!validFileKind(f.Kind) || f.Kind == repository.FileKindUnknown || repository.ValidateGitMode(f.Mode) != nil) || (f.OldPath != nil && f.OldPath.Validate() != nil) || (f.OldPath == nil && (f.OldKind != "" || f.OldMode != 0 || f.OldContentBytes != 0 || f.OldContentHash != "" || f.OldContentClass != "" || f.OldTextSemantics != nil || f.ModeTransition != nil)) || (f.OldPath != nil && (!validFileKind(f.OldKind) || f.OldKind == repository.FileKindUnknown || repository.ValidateGitMode(f.OldMode) != nil)) || (f.ContentHash != "" && !validSHA256(f.ContentHash)) || (f.OldContentHash != "" && !validSHA256(f.OldContentHash)) || f.ContentClass != "" && f.ContentClass.Validate() != nil || f.OldContentClass != "" && f.OldContentClass.Validate() != nil {
+	if f.Path.Validate() != nil || f.Kind == repository.FileKindGitlink || f.OldKind == repository.FileKindGitlink || f.Added && f.Deleted || f.Deleted && (f.Mode != 0 || f.Kind != repository.FileKindUnknown || f.ContentBytes != 0 || f.ContentClass != "" || f.TextSemantics != nil || f.ModeTransition != nil || f.SymlinkEvidence != nil) || !f.Deleted && (!validFileKind(f.Kind) || f.Kind == repository.FileKindUnknown || repository.ValidateGitMode(f.Mode) != nil) || (f.OldPath != nil && f.OldPath.Validate() != nil) || (f.OldPath == nil && (f.OldKind != "" || f.OldMode != 0 || f.OldContentBytes != 0 || f.OldContentHash != "" || f.OldContentClass != "" || f.OldTextSemantics != nil || f.ModeTransition != nil)) || (f.OldPath != nil && (!validFileKind(f.OldKind) || f.OldKind == repository.FileKindUnknown || repository.ValidateGitMode(f.OldMode) != nil)) || (f.ContentHash != "" && !validSHA256(f.ContentHash)) || (f.OldContentHash != "" && !validSHA256(f.OldContentHash)) || f.ContentClass != "" && f.ContentClass.Validate() != nil || f.OldContentClass != "" && f.OldContentClass.Validate() != nil {
 		return ErrInvalidProposal
 	}
 	if f.Added && f.OldPath != nil || f.Deleted && f.OldPath != nil {
@@ -483,7 +483,7 @@ func (p ProposedPatch) Validate() error {
 	}
 	seen = make(map[repository.RepoPathKey]struct{}, len(p.Preconditions))
 	for _, precondition := range p.Preconditions {
-		if precondition.Validate() != nil {
+		if precondition.Validate() != nil || precondition.Kind == repository.FileKindGitlink {
 			return ErrInvalidProposal
 		}
 		if _, exists := seen[precondition.Path.Key()]; exists {

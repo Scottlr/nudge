@@ -88,6 +88,7 @@ type ChangedFile struct {
 	NewMode          uint32
 	OldObjectID      *ObjectID
 	NewObjectID      *ObjectID
+	ReviewOnly       *ReviewOnlyEntryEvidence
 	ModeTransition   *ModeTransition
 	ContentClass     ContentClassV1
 	OldTextSemantics *TextByteSemantics
@@ -150,6 +151,9 @@ func (f ChangedFile) Validate() error {
 		}
 	}
 	if f.Conflict != nil && f.Conflict.Validate() != nil {
+		return ErrInvalidChangedFile
+	}
+	if f.ReviewOnly != nil && (f.ReviewOnly.Validate() != nil || f.OldFileKind != FileKindUnknown && f.NewFileKind != FileKindUnknown) {
 		return ErrInvalidChangedFile
 	}
 	if f.ContentClass != "" {

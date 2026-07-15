@@ -108,6 +108,7 @@ type TreeEntry struct {
 	Mode           uint32
 	ModeClass      GitModeClass
 	ObjectID       *ObjectID
+	ReviewOnly     *ReviewOnlyEntryEvidence
 	LazyChild      bool
 	ChangedSummary *ChangedFile
 }
@@ -141,6 +142,9 @@ func (e TreeEntry) Validate() error {
 		return ErrInvalidTreeEntry
 	}
 	if e.ObjectID != nil && validatePresentObjectID(*e.ObjectID) != nil {
+		return ErrInvalidTreeEntry
+	}
+	if e.ReviewOnly != nil && (e.ReviewOnly.Validate() != nil || e.Kind != FileKindUnknown) {
 		return ErrInvalidTreeEntry
 	}
 	if e.ChangedSummary != nil && e.ChangedSummary.Validate() != nil {

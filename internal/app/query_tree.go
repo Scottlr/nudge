@@ -110,6 +110,10 @@ func cloneTreeEntry(entry repository.TreeEntry) repository.TreeEntry {
 		objectID := *entry.ObjectID
 		entry.ObjectID = &objectID
 	}
+	if entry.ReviewOnly != nil {
+		evidence := *entry.ReviewOnly
+		entry.ReviewOnly = &evidence
+	}
 	if entry.ChangedSummary != nil {
 		change := *entry.ChangedSummary
 		change.OldPath = cloneRepoPath(change.OldPath)
@@ -121,6 +125,10 @@ func cloneTreeEntry(entry repository.TreeEntry) repository.TreeEntry {
 		if change.NewObjectID != nil {
 			newID := *change.NewObjectID
 			change.NewObjectID = &newID
+		}
+		if change.ReviewOnly != nil {
+			evidence := *change.ReviewOnly
+			change.ReviewOnly = &evidence
 		}
 		if change.Conflict != nil {
 			conflict := *change.Conflict

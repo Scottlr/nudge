@@ -1095,12 +1095,13 @@ func (a *LocalCaptureAdapter) materializeUntracked(root string, records []captur
 		if _, ok := allowed[string(path)]; !ok {
 			return &GitError{Code: ErrorLocalCaptureMutation}
 		}
-		kind, mode, err := observeWorkingPath(root, path)
+		kind, mode, reviewOnly, err := observeWorkingEntry(root, path)
 		if err != nil {
 			return err
 		}
 		records[index].entry.Change.NewFileKind = kind
 		records[index].entry.Change.NewMode = mode
+		records[index].entry.Change.ReviewOnly = reviewOnly
 		seen[string(path)] = struct{}{}
 	}
 	if len(seen) != len(allowed) {
@@ -1179,19 +1180,28 @@ func parseAttributeRecords(data []byte, expectedPath repository.RepoPath) ([]Att
 }
 
 func observeWorkingPath(root string, path repository.RepoPath) (repository.FileKind, uint32, error) {
+	kind, mode, _, err := observeWorkingEntry(root, path)
+	return kind, mode, err
+}
+
+func observeWorkingEntry(root string, path repository.RepoPath) (repository.FileKind, uint32, *repository.ReviewOnlyEntryEvidence, error) {
 	native, err := captureNativePath(root, path)
 	if err != nil {
-		return repository.FileKindUnknown, 0, err
+		return repository.FileKindUnknown, 0, nil, err
 	}
 	info, err := os.Lstat(native)
 	if err != nil {
-		return repository.FileKindUnknown, 0, &GitError{Code: ErrorLocalCaptureIncomplete, Cause: err}
+		return repository.FileKindUnknown, 0, nil, &GitError{Code: ErrorLocalCaptureIncomplete, Cause: err}
 	}
 	kind, mode := fileKindFromNativeInfo(info)
-	if kind != repository.FileKindRegular && kind != repository.FileKindSymlink {
-		return repository.FileKindUnknown, 0, &GitError{Code: ErrorLocalCaptureIncomplete, Cause: errors.New("unsupported untracked filesystem kind")}
+	if kind == repository.FileKindRegular || kind == repository.FileKindSymlink {
+		return kind, mode, nil, nil
 	}
-	return kind, mode, nil
+	if specialKind, ok := paths.ClassifySpecialPath(native, info.Mode()); ok {
+		evidence := repository.NewCompleteReviewOnlyEntryEvidence(specialKind, info.Mode(), info.Size(), info.ModTime())
+		return repository.FileKindUnknown, 0, &evidence, nil
+	}
+	return repository.FileKindUnknown, 0, nil, &GitError{Code: ErrorLocalCaptureIncomplete, Cause: errors.New("unsupported untracked filesystem kind")}
 }
 
 type renameCaptureRecord struct {
@@ -1486,6 +1496,9 @@ func (a *LocalCaptureAdapter) captureEntryBlobs(ctx context.Context, builder *Co
 	for _, entry := range entries {
 		entryKey := captureEntryPath(entry.entry)
 		if entry.untracked {
+			if !capturableFileKind(entry.entry.Change.NewFileKind) {
+				continue
+			}
 			identity, contentClass, textSemantics, token, relative, err := a.writeWorkingBlob(ctx, root, *entry.entry.Change.NewPath, spool, counter)
 			if err != nil {
 				return nil, "", err

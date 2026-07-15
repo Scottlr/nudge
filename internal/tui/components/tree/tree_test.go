@@ -134,6 +134,9 @@ func TestRowBadgePreservesChangeAndConflictEvidence(t *testing.T) {
 	if got := rowBadge(TreeRow{Conflict: true}); got != "[conflict]" {
 		t.Fatalf("conflict badge = %q", got)
 	}
+	if got := rowBadge(TreeRow{ReviewOnlyReason: "special_fifo"}); got != "[review-only:special_fifo]" {
+		t.Fatalf("review-only badge = %q", got)
+	}
 }
 
 func TestSearchUsesImmutableSnapshotAndReturnsToHierarchySelection(t *testing.T) {

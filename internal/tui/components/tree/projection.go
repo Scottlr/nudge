@@ -79,24 +79,26 @@ type ThreadBadge struct {
 
 // TreeRow is inert display metadata derived from one immutable tree entry.
 type TreeRow struct {
-	Path           repository.RepoPath
-	Name           repository.RepoPath
-	Kind           repository.FileKind
-	ModeClass      repository.GitModeClass
-	OldKind        repository.FileKind
-	NewKind        repository.FileKind
-	OldMode        uint32
-	NewMode        uint32
-	ModeTransition *repository.ModeTransition
-	Depth          int
-	LazyChild      bool
-	Change         repository.ChangeKind
-	Staged         bool
-	Unstaged       bool
-	Conflict       bool
-	ThreadCount    int
-	ThreadStatus   string
-	Loading        bool
+	Path             repository.RepoPath
+	Name             repository.RepoPath
+	Kind             repository.FileKind
+	ModeClass        repository.GitModeClass
+	OldKind          repository.FileKind
+	NewKind          repository.FileKind
+	OldMode          uint32
+	NewMode          uint32
+	ModeTransition   *repository.ModeTransition
+	ReviewOnly       *repository.ReviewOnlyEntryEvidence
+	ReviewOnlyReason string
+	Depth            int
+	LazyChild        bool
+	Change           repository.ChangeKind
+	Staged           bool
+	Unstaged         bool
+	Conflict         bool
+	ThreadCount      int
+	ThreadStatus     string
+	Loading          bool
 }
 
 func rowFromEntry(entry repository.TreeEntry, badge ThreadBadge) TreeRow {
@@ -108,6 +110,13 @@ func rowFromEntry(entry repository.TreeEntry, badge ThreadBadge) TreeRow {
 		LazyChild:    entry.LazyChild,
 		ThreadCount:  maxInt(badge.Count, 0),
 		ThreadStatus: badge.Status,
+	}
+	if entry.ReviewOnly != nil {
+		evidence := *entry.ReviewOnly
+		row.ReviewOnly = &evidence
+		row.ReviewOnlyReason = evidence.ReasonCode
+	} else if entry.Kind == repository.FileKindGitlink {
+		row.ReviewOnlyReason = "gitlink_review_only"
 	}
 	if entry.ChangedSummary != nil {
 		row.Change = entry.ChangedSummary.Kind
@@ -129,6 +138,10 @@ func rowFromEntry(entry repository.TreeEntry, badge ThreadBadge) TreeRow {
 func cloneRow(row TreeRow) TreeRow {
 	row.Path = repository.RepoPath(row.Path.Bytes())
 	row.Name = repository.RepoPath(row.Name.Bytes())
+	if row.ReviewOnly != nil {
+		evidence := *row.ReviewOnly
+		row.ReviewOnly = &evidence
+	}
 	return row
 }
 
