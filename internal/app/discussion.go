@@ -156,11 +156,12 @@ func (r DiscussionDispatchRequest) PrepareStartProviderTurn() (StartProviderTurn
 		if r.SnapshotLease == nil || r.SnapshotLease.Validate() != nil || r.Permissions.Filesystem != provider.FilesystemReviewSnapshot || len(r.Permissions.ReadableRoots) != 1 || r.Context.WorkingDir != r.SnapshotLease.Root || r.Permissions.ReadableRoots[0].Path != r.SnapshotLease.Root {
 			return StartProviderTurn{}, ErrDiscussionUnavailable
 		}
-		if r.SnapshotLease.CaptureID == "" || r.SnapshotLease.ManifestHash == "" {
+		if r.SnapshotLease.ManifestHash == "" || r.SnapshotLease.CaptureID == "" && r.SnapshotLease.SourceRef == "" {
 			return StartProviderTurn{}, ErrDiscussionUnavailable
 		}
 		provenance.ReviewSnapshotID = r.SnapshotLease.SnapshotID
 		provenance.SourceCaptureID = r.SnapshotLease.CaptureID
+		provenance.SourceSnapshotRef = r.SnapshotLease.SourceRef
 		provenance.ManifestHash = r.SnapshotLease.ManifestHash
 	} else {
 		if r.SnapshotLease != nil || r.Permissions.Filesystem != provider.FilesystemPromptOnly {

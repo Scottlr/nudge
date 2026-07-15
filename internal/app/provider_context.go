@@ -257,6 +257,28 @@ func NewDiscussionContextFromAnchor(anchor review.CodeAnchor, target string, con
 	return context, nil
 }
 
+// NewDiscussionContextFromResolvedTarget builds the provider label from the
+// frozen target evidence so branch and commit discussions name exact objects,
+// not only movable expressions.
+func NewDiscussionContextFromResolvedTarget(anchor review.CodeAnchor, target repository.ResolvedTarget, concern string) (DiscussionContext, error) {
+	if target.Validate() != nil {
+		return DiscussionContext{}, ErrInvalidDiscussionContext
+	}
+	return NewDiscussionContextFromAnchor(anchor, DiscussionTargetLabel(target), concern)
+}
+
+// DiscussionTargetLabel is the bounded target header included in a focused
+// prompt. It keeps comparison-parent and merge-base evidence visible.
+func DiscussionTargetLabel(target repository.ResolvedTarget) string {
+	if target.Spec.Kind == repository.TargetCommit {
+		return fmt.Sprintf("commit %s generation %d head=%s base=%s parent=%s", target.Spec.CommitExpression, target.Generation, target.ResolvedCommit, target.Base.ObjectID, target.ParentLabel)
+	}
+	if target.Spec.Kind == repository.TargetBranch {
+		return fmt.Sprintf("branch %s generation %d head=%s base=%s merge-base=%s", target.Spec.BaseBranch, target.Generation, target.ResolvedCommit, target.ResolvedBaseRef, target.MergeBase)
+	}
+	return fmt.Sprintf("local working tree generation %d", target.Generation)
+}
+
 // DiscussionTurnProvenance records the evidence identity used by one turn.
 type DiscussionTurnProvenance struct {
 	Mode                    DiscussionMode
@@ -290,7 +312,7 @@ func (p DiscussionTurnProvenance) Validate() error {
 	}
 	switch p.Mode {
 	case DiscussionModeFilesystem:
-		if p.ReviewSnapshotID == "" || p.SourceCaptureID == "" || p.ManifestHash == "" || len(p.ManifestHash) != sha256.Size*2 || p.SourceSnapshotRef != "" {
+		if p.ReviewSnapshotID == "" || p.ManifestHash == "" || len(p.ManifestHash) != sha256.Size*2 || p.SourceCaptureID != "" && p.SourceSnapshotRef != "" || p.SourceCaptureID == "" && !safeDiscussionText(p.SourceSnapshotRef, false) {
 			return ErrInvalidDiscussionContext
 		}
 		if _, err := hex.DecodeString(p.ManifestHash); err != nil {

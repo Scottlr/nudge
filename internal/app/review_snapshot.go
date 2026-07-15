@@ -45,6 +45,10 @@ const (
 	ReviewSnapshotRemoved          ReviewSnapshotState = "removed"
 )
 
+// ReviewSnapshotFormatVersion identifies the filesystem materialization
+// format used for pinned object trees.
+const ReviewSnapshotFormatVersion uint32 = 1
+
 // ReviewSnapshot is the application identity of a materialized, read-only
 // view. Root is exposed only after the workspace adapter has independently
 // verified the marker, manifest, and containment evidence.
@@ -53,6 +57,12 @@ type ReviewSnapshot struct {
 	CaptureID       domain.CaptureID
 	RepositoryID    domain.RepositoryID
 	WorktreeID      domain.WorktreeID
+	TargetKind      repository.TargetKind
+	HeadObjectID    repository.ObjectID
+	BaseObjectID    repository.ObjectID
+	ParentLabel     string
+	ObjectFormat    string
+	FormatVersion   uint32
 	Root            string
 	MarkerNonce     string
 	ManifestHash    string
@@ -64,7 +74,27 @@ type ReviewSnapshot struct {
 
 // Validate checks the path-free identity and the adapter-returned root shape.
 func (s ReviewSnapshot) Validate() error {
-	if s.ID == "" || s.CaptureID == "" || s.RepositoryID == "" || s.WorktreeID == "" || s.Root == "" || !filepath.IsAbs(s.Root) || filepath.Clean(s.Root) != s.Root || !validSnapshotHash(s.MarkerNonce) || !validSnapshotHash(s.ManifestHash) || s.PolicyVersion == 0 || s.EvidenceVersion == 0 || !validReviewSnapshotState(s.State) || s.CreatedAt.IsZero() {
+	if s.ID == "" || s.RepositoryID == "" || s.Root == "" || !filepath.IsAbs(s.Root) || filepath.Clean(s.Root) != s.Root || !validSnapshotHash(s.MarkerNonce) || !validSnapshotHash(s.ManifestHash) || s.PolicyVersion == 0 || s.EvidenceVersion == 0 || !validReviewSnapshotState(s.State) || s.CreatedAt.IsZero() {
+		return ErrInvalidReviewSnapshot
+	}
+	if s.CaptureID != "" {
+		if s.WorktreeID == "" || s.TargetKind != "" || s.HeadObjectID != "" || s.BaseObjectID != "" || s.ParentLabel != "" || s.ObjectFormat != "" || s.FormatVersion != 0 {
+			return ErrInvalidReviewSnapshot
+		}
+		return nil
+	}
+	if (s.TargetKind != repository.TargetBranch && s.TargetKind != repository.TargetCommit) || s.HeadObjectID == "" || s.ObjectFormat == "" || s.FormatVersion != ReviewSnapshotFormatVersion || (s.BaseObjectID == "" && s.TargetKind == repository.TargetBranch) || (s.ParentLabel == "" && s.TargetKind == repository.TargetCommit) {
+		return ErrInvalidReviewSnapshot
+	}
+	if _, err := repository.NewObjectID(string(s.HeadObjectID)); err != nil {
+		return ErrInvalidReviewSnapshot
+	}
+	if s.BaseObjectID != "" {
+		if _, err := repository.NewObjectID(string(s.BaseObjectID)); err != nil {
+			return ErrInvalidReviewSnapshot
+		}
+	}
+	if !safeSnapshotText(s.ObjectFormat) || s.ParentLabel != "" && !safeSnapshotText(s.ParentLabel) {
 		return ErrInvalidReviewSnapshot
 	}
 	return nil
@@ -85,6 +115,11 @@ type ReviewSnapshotLease struct {
 	ID           domain.ReviewSnapshotLeaseID
 	SnapshotID   domain.ReviewSnapshotID
 	CaptureID    domain.CaptureID
+	TargetKind   repository.TargetKind
+	HeadObjectID repository.ObjectID
+	BaseObjectID repository.ObjectID
+	ParentLabel  string
+	SourceRef    string
 	Root         string
 	ManifestHash string
 	ProcessNonce string
@@ -94,7 +129,25 @@ type ReviewSnapshotLease struct {
 // Validate checks the lease binding before it is released or passed to a
 // provider permission mapper.
 func (l ReviewSnapshotLease) Validate() error {
-	if l.ID == "" || l.SnapshotID == "" || l.CaptureID == "" || l.Root == "" || !filepath.IsAbs(l.Root) || filepath.Clean(l.Root) != l.Root || !validSnapshotHash(l.ManifestHash) || l.ProcessNonce == "" || l.AcquiredAt.IsZero() {
+	if l.ID == "" || l.SnapshotID == "" || l.Root == "" || !filepath.IsAbs(l.Root) || filepath.Clean(l.Root) != l.Root || !validSnapshotHash(l.ManifestHash) || l.ProcessNonce == "" || l.AcquiredAt.IsZero() {
+		return ErrInvalidReviewSnapshot
+	}
+	if l.CaptureID == "" {
+		if l.TargetKind != repository.TargetBranch && l.TargetKind != repository.TargetCommit || l.HeadObjectID == "" || !safeSnapshotText(l.SourceRef) {
+			return ErrInvalidReviewSnapshot
+		}
+		if _, err := repository.NewObjectID(string(l.HeadObjectID)); err != nil {
+			return ErrInvalidReviewSnapshot
+		}
+		if l.BaseObjectID != "" {
+			if _, err := repository.NewObjectID(string(l.BaseObjectID)); err != nil {
+				return ErrInvalidReviewSnapshot
+			}
+		}
+		if l.ParentLabel != "" && !safeSnapshotText(l.ParentLabel) {
+			return ErrInvalidReviewSnapshot
+		}
+	} else if l.TargetKind != "" || l.HeadObjectID != "" || l.BaseObjectID != "" || l.ParentLabel != "" || l.SourceRef != "" {
 		return ErrInvalidReviewSnapshot
 	}
 	return nil
@@ -109,11 +162,23 @@ type ReviewSnapshotEnsureRequest struct {
 	PolicyVersion   ResourcePolicyVersion
 	EvidenceVersion EvidenceVersion
 	Persist         bool
+	Target          *repository.ResolvedTarget
+	ObjectFormat    string
+	FormatVersion   uint32
 }
 
 // Validate checks the exact capture/policy binding before materialization.
 func (r ReviewSnapshotEnsureRequest) Validate() error {
-	if r.CaptureID == "" || r.RepositoryID == "" || r.WorktreeID == "" || r.PolicyVersion == 0 || r.EvidenceVersion == 0 {
+	if r.RepositoryID == "" || r.WorktreeID == "" || r.PolicyVersion == 0 || r.EvidenceVersion == 0 {
+		return ErrInvalidReviewSnapshot
+	}
+	if r.Target == nil {
+		if r.CaptureID == "" {
+			return ErrInvalidReviewSnapshot
+		}
+		return nil
+	}
+	if r.CaptureID != "" || r.Target.Validate() != nil || (r.Target.Spec.Kind != repository.TargetBranch && r.Target.Spec.Kind != repository.TargetCommit) || r.Target.Head.Kind != repository.SnapshotCommit || !safeSnapshotText(r.ObjectFormat) || r.FormatVersion != ReviewSnapshotFormatVersion {
 		return ErrInvalidReviewSnapshot
 	}
 	return nil
@@ -179,6 +244,7 @@ type ReviewSnapshotStore interface {
 	SaveReviewSnapshot(context.Context, ReviewSnapshot) error
 	LoadReviewSnapshot(context.Context, domain.ReviewSnapshotID) (ReviewSnapshot, error)
 	LoadReviewSnapshotByCapture(context.Context, domain.CaptureID) (ReviewSnapshot, error)
+	LoadReviewSnapshotByObject(context.Context, domain.RepositoryID, repository.ObjectID, ResourcePolicyVersion, uint32) (ReviewSnapshot, error)
 	DeleteReviewSnapshot(context.Context, domain.ReviewSnapshotID) error
 	SaveReviewSnapshotLease(context.Context, ReviewSnapshotLease) error
 	ReleaseReviewSnapshotLease(context.Context, domain.ReviewSnapshotLeaseID) error
@@ -189,6 +255,7 @@ type ReviewSnapshotStore interface {
 // and doctor. Implementations retain the owner lock for each operation.
 type ReviewSnapshotManager interface {
 	Ensure(context.Context, ReviewSnapshotEnsureRequest) (ReviewSnapshot, error)
+	EnsureTarget(context.Context, ReviewSnapshotEnsureRequest) (ReviewSnapshot, error)
 	AcquireReadLease(context.Context, domain.ReviewSnapshotID) (ReviewSnapshotLease, error)
 	Release(context.Context, ReviewSnapshotLease) error
 	Recover(context.Context, ReviewSnapshotRecoveryProof) error
@@ -222,4 +289,8 @@ func validSnapshotHash(value string) bool {
 	}
 	_, err := hex.DecodeString(value)
 	return err == nil
+}
+
+func safeSnapshotText(value string) bool {
+	return value != "" && filepath.Clean(value) == value && !strings.ContainsRune(value, '\x00') && strings.TrimSpace(value) == value && strings.IndexByte(value, '\n') < 0 && strings.IndexByte(value, '\r') < 0
 }
