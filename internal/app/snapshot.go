@@ -32,6 +32,7 @@ type TargetSummary struct {
 	BranchRef        string
 	BaseBranchRef    string
 	BaseObjectID     repository.ObjectID
+	ParentLabel      string
 	MergeBase        repository.ObjectID
 	HeadObjectID     repository.ObjectID
 }
@@ -180,6 +181,10 @@ func snapshotFromState(state State) AppSnapshot {
 	}
 
 	if state.Target != nil {
+		baseObjectID := state.Target.ResolvedBaseRef
+		if state.Target.Spec.Kind == repository.TargetCommit {
+			baseObjectID = state.Target.Base.ObjectID
+		}
 		snapshot.Target = TargetSummary{
 			Present:          true,
 			Spec:             state.Target.Spec,
@@ -192,7 +197,8 @@ func snapshotFromState(state State) AppSnapshot {
 			BaseBranchSource: string(state.Target.BaseBranchSource),
 			BranchRef:        state.Target.BranchRef,
 			BaseBranchRef:    state.Target.BaseBranchRef,
-			BaseObjectID:     state.Target.ResolvedBaseRef,
+			BaseObjectID:     baseObjectID,
+			ParentLabel:      state.Target.ParentLabel,
 			MergeBase:        state.Target.MergeBase,
 			HeadObjectID:     state.Target.ResolvedCommit,
 		}

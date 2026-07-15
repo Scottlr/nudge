@@ -145,6 +145,22 @@ func TestViewHonorsExplicitMonochromeASCIIThemePolicy(t *testing.T) {
 	}
 }
 
+func TestCommitTargetStatusShowsFrozenParentAndReadOnlyState(t *testing.T) {
+	spec, err := repository.NewCommitTargetSpec("refs/heads/release", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := targetSummaryStatusLabel(app.TargetSummary{
+		Spec:         spec,
+		BaseObjectID: "parent-object",
+		ParentLabel:  "parent 1 (first-parent v1)",
+		HeadObjectID: "commit-object",
+	})
+	if !strings.Contains(status, "commit refs/heads/release") || !strings.Contains(status, "first-parent v1") || !strings.Contains(status, "read-only") {
+		t.Fatalf("commit status = %q", status)
+	}
+}
+
 func TestLocalReviewSnapshotFeedsProductionPaneProjections(t *testing.T) {
 	t.Parallel()
 

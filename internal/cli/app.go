@@ -29,7 +29,7 @@ import (
 	"github.com/Scottlr/nudge/internal/workspace"
 )
 
-func runLocalReview(ctx context.Context, startPath string, noPersist bool, themeOverride *string, branchBase string) error {
+func runLocalReview(ctx context.Context, startPath string, noPersist bool, themeOverride *string, branchBase, commitExpression string) error {
 	if ctx == nil {
 		return errors.New("local review: nil context")
 	}
@@ -194,6 +194,12 @@ func runLocalReview(ctx context.Context, startPath string, noPersist bool, theme
 				Discover:               resolver,
 				Resolver:               resolver,
 			}
+		}(),
+		Commit: func() *app.CommitReviewConfig {
+			if commitExpression == "" {
+				return nil
+			}
+			return &app.CommitReviewConfig{Expression: commitExpression, Resolver: resolver}
 		}(),
 	})
 	if err != nil {

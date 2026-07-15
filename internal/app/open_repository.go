@@ -58,6 +58,20 @@ type BranchReviewConfig struct {
 	Resolver               BranchTargetResolver
 }
 
+// CommitReviewConfig selects the application port for one frozen commit
+// review. The local capture store remains unused in this mode.
+type CommitReviewConfig struct {
+	Expression string
+	Resolver   CommitTargetResolver
+}
+
+func (c *CommitReviewConfig) validate() error {
+	if c == nil || c.Resolver == nil || ValidateCommitExpression(c.Expression) != nil {
+		return ErrInvalidLocalReviewSource
+	}
+	return nil
+}
+
 func (c *BranchReviewConfig) validate() error {
 	if c == nil || c.Resolver == nil {
 		return ErrInvalidLocalReviewSource

@@ -42,6 +42,15 @@ func TestRootCommandRejectsTargetFlagCombinationsBeforeRun(t *testing.T) {
 	}
 }
 
+func TestRootCommandRejectsOptionLookingCommitBeforeApplicationStartup(t *testing.T) {
+	command := NewRootCommand(BuildInfo{})
+	command.SetArgs([]string{"--commit", "-main"})
+	err := command.Execute()
+	if err == nil || !strings.Contains(err.Error(), "invalid --commit revision expression") {
+		t.Fatalf("leading-dash commit error = %v", err)
+	}
+}
+
 func TestVersionCommandUsesInjectedBuildInfo(t *testing.T) {
 	var output bytes.Buffer
 	command := NewRootCommand(BuildInfo{

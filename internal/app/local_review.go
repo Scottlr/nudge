@@ -53,6 +53,7 @@ type LocalReviewConfig struct {
 	Sessions            *SessionManager
 	PersistenceDegraded bool
 	Branch              *BranchReviewConfig
+	Commit              *CommitReviewConfig
 }
 
 // LocalReviewSnapshot is a bounded immutable projection of local-review
@@ -141,6 +142,7 @@ type LocalReview struct {
 	sessions            *SessionManager
 	persistenceDegraded bool
 	branch              *BranchReviewConfig
+	commit              *CommitReviewConfig
 
 	mu      sync.Mutex
 	started bool
@@ -169,9 +171,17 @@ func NewLocalReview(config LocalReviewConfig) (*LocalReview, error) {
 			return nil, ErrInvalidLocalReviewSource
 		}
 	}
+	if config.Commit != nil {
+		if err := config.Commit.validate(); err != nil || config.Source.Changed == nil || config.Source.Content == nil {
+			return nil, ErrInvalidLocalReviewSource
+		}
+	}
+	if config.Branch != nil && config.Commit != nil {
+		return nil, ErrInvalidLocalReviewSource
+	}
 	return &LocalReview{
 		source: config.Source, ids: config.IDs, clock: config.Clock, persistence: persistence,
-		sessions: config.Sessions, persistenceDegraded: config.PersistenceDegraded, branch: config.Branch,
+		sessions: config.Sessions, persistenceDegraded: config.PersistenceDegraded, branch: config.Branch, commit: config.Commit,
 	}, nil
 }
 
@@ -254,6 +264,10 @@ func (r *LocalReview) run(ctx context.Context, startPath string, stream chan<- L
 	}
 	if r.branch != nil {
 		r.runBranch(ctx, stream, publish, fail, repo, worktree, repositoryState)
+		return
+	}
+	if r.commit != nil {
+		r.runCommit(ctx, stream, publish, fail, repo, worktree, repositoryState)
 		return
 	}
 	artifacts, err := r.source.Capture.Capture(ctx, repo, worktree)
@@ -496,6 +510,95 @@ func (r *LocalReview) runBranch(ctx context.Context, _ chan<- LocalReviewSnapsho
 		value, highlightErr := r.source.Highlighter.Highlight(ctx, *content, string(contentPath.Bytes()), "github")
 		if highlightErr != nil {
 			fail(LocalReviewLoadingFile, "highlight branch file", highlightErr, repositoryState, &target, "", page, changes)
+			return
+		}
+		highlighted = &value
+	}
+	publish(LocalReviewSnapshot{Phase: LocalReviewReady, Repository: repositoryState, Target: &target, TreePage: page, ChangedFiles: changes, ActiveFile: &active, FileContent: content, FileDiff: &diffValue, Displayed: &displayed, DisplayedPage: &displayedPage, Highlighted: highlighted})
+}
+
+func (r *LocalReview) runCommit(ctx context.Context, _ chan<- LocalReviewSnapshot, publish func(LocalReviewSnapshot) bool, fail func(LocalReviewPhase, string, error, *RepositoryState, *repository.ResolvedTarget, domain.CaptureID, TreePage, []repository.ChangedFile), repo repository.Repository, worktree repository.WorktreeRef, repositoryState *RepositoryState) {
+	target, err := OpenCommitTarget(ctx, OpenCommitTargetRequest{
+		Repository: repo,
+		Worktree:   worktree,
+		Expression: r.commit.Expression,
+		Resolver:   r.commit.Resolver,
+		Generation: 1,
+	})
+	if err != nil {
+		fail(LocalReviewCapturing, "resolve commit target", err, repositoryState, nil, "", TreePage{}, nil)
+		return
+	}
+	var sessionHandle *SessionHandle
+	if r.sessions != nil {
+		handle, openErr := r.sessions.OpenSession(ctx, OpenSessionRequest{Repository: repo, Worktree: worktree, Target: target, Mode: SessionWritable, Persistence: r.persistence})
+		if openErr != nil {
+			fail(LocalReviewCapturing, "open review session", openErr, repositoryState, &target, "", TreePage{}, nil)
+			return
+		}
+		sessionHandle = &handle
+		r.persistenceDegraded = r.persistenceDegraded || handle.PersistenceDegraded
+		defer func() { _ = r.sessions.ReleaseSession(context.Background(), sessionHandle) }()
+		target = handle.Session.Target
+	}
+	if !publish(LocalReviewSnapshot{Phase: LocalReviewLoadingTree, Repository: repositoryState, Target: &target}) {
+		return
+	}
+	page, err := r.source.Tree.ListTree(ctx, target, TreeQuery{Filter: TreeFilterChanged})
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			publish(LocalReviewSnapshot{Phase: LocalReviewCancelled, Repository: repositoryState, Target: &target})
+			return
+		}
+		fail(LocalReviewLoadingTree, "load commit tree", err, repositoryState, &target, "", TreePage{}, nil)
+		return
+	}
+	changes, err := r.source.Changed.ChangedFiles(ctx, target)
+	if err != nil {
+		fail(LocalReviewLoadingTree, "load commit changes", err, repositoryState, &target, "", page, nil)
+		return
+	}
+	if len(changes) == 0 {
+		publish(LocalReviewSnapshot{Phase: LocalReviewClean, Repository: repositoryState, Target: &target, TreePage: page})
+		return
+	}
+	active := firstChangedFile(changes)
+	if !publish(LocalReviewSnapshot{Phase: LocalReviewLoadingFile, Repository: repositoryState, Target: &target, TreePage: page, ChangedFiles: changes, ActiveFile: &active}) {
+		return
+	}
+	loader, ok := r.source.Content.(TargetContentLoader)
+	if !ok {
+		fail(LocalReviewLoadingFile, "load commit diff", errors.New("target content loader unavailable"), repositoryState, &target, "", page, changes)
+		return
+	}
+	diffValue, err := loader.LoadTargetDiff(ctx, target, active)
+	if err != nil {
+		fail(LocalReviewLoadingFile, "load commit diff", err, repositoryState, &target, "", page, changes)
+		return
+	}
+	var content *repository.FileContent
+	contentPath, contentSnapshot := active.NewPath, target.Head
+	if contentPath == nil {
+		contentPath, contentSnapshot = active.OldPath, target.Base
+	}
+	if contentPath != nil && contentSnapshot.Validate() == nil {
+		loaded, loadErr := r.source.Content.LoadFile(ctx, "", contentSnapshot, *contentPath)
+		if loadErr != nil {
+			fail(LocalReviewLoadingFile, "load commit file", loadErr, repositoryState, &target, "", page, changes)
+			return
+		}
+		content = &loaded
+	}
+	displayed, displayedPage, err := displayedDiff(target, "", active, diffValue, content)
+	if err != nil {
+		fail(LocalReviewLoadingFile, "build commit diff", err, repositoryState, &target, "", page, changes)
+		return
+	}
+	var highlighted *highlight.HighlightedFile
+	if content != nil && contentPath != nil {
+		value, highlightErr := r.source.Highlighter.Highlight(ctx, *content, string(contentPath.Bytes()), "github")
+		if highlightErr != nil {
+			fail(LocalReviewLoadingFile, "highlight commit file", highlightErr, repositoryState, &target, "", page, changes)
 			return
 		}
 		highlighted = &value
