@@ -91,6 +91,38 @@ func TestWorkspaceCreationEvidenceRoundTripsThroughFencedStore(t *testing.T) {
 	if !reflect.DeepEqual(restored, evidence) || guard.ExpectedRevision != 3 {
 		t.Fatalf("restored evidence = %#v, guard=%#v", restored, guard)
 	}
+	manifest, err := app.NewWorkspaceManifest([]app.WorkspaceManifestEntry{{Path: []byte("example.go"), Kind: repository.FileKindRegular, Mode: 0o100644, Bytes: 4, SHA256: strings.Repeat("b", 64)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lifecycle := app.ProposalWorkspaceLifecycle{WorkspaceID: workspaceID, RepositoryID: repo.ID, WorktreeID: worktree.ID, SessionID: session.ID, ThreadID: thread.ID, OperationID: domain.OperationID("lifecycle-evidence"), Owner: "owner-evidence", Nonce: strings.Repeat("b", 64), CapacityReservationMarker: "capacity-lifecycle", Purpose: app.WorkspacePurposeInstallBaseline, Phase: app.WorkspaceBaselineInstalling, Source: app.WorkspaceSourceIdentity{Kind: "accepted_capture", ID: "capture-evidence", ManifestHash: strings.Repeat("c", 64)}, CreatedAt: now, UpdatedAt: now}
+	guard, err = store.WithSessionTx(ctx, guard, func(tx app.ReviewStoreTx) error {
+		lifecycleTx, ok := tx.(app.ProposalWorkspaceLifecycleStoreTx)
+		if !ok {
+			return app.ErrReviewStoreInput
+		}
+		return lifecycleTx.CreateProposalWorkspaceLifecycle(ctx, lifecycle)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lifecycle.Baseline = manifest
+	lifecycle.Phase = app.WorkspaceResultPreparing
+	lifecycle.UpdatedAt = now.Add(time.Second)
+	guard, err = store.WithSessionTx(ctx, guard, func(tx app.ReviewStoreTx) error {
+		lifecycleTx, ok := tx.(app.ProposalWorkspaceLifecycleStoreTx)
+		if !ok {
+			return app.ErrReviewStoreInput
+		}
+		return lifecycleTx.UpdateProposalWorkspaceLifecycle(ctx, lifecycle)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	restoredLifecycle, err := store.LoadLatestProposalWorkspaceLifecycle(ctx, workspaceID)
+	if err != nil || !reflect.DeepEqual(restoredLifecycle, lifecycle) {
+		t.Fatalf("restored lifecycle = %#v/%v", restoredLifecycle, err)
+	}
 }
 
 func worktreeSnapshot(worktreeID domain.WorktreeID) repository.SnapshotRef {

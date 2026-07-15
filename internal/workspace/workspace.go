@@ -534,6 +534,36 @@ func (a *Allocator) Inspect(ctx context.Context, store WorkspaceStore, workspace
 	return WorkspaceInspection{Evidence: evidence, Phase: evidence.Phase}, nil
 }
 
+// AcquireVerified obtains the existing workspace lock after the caller has
+// admitted the operation's capacity reservation. It never changes durable
+// creation evidence and returns only the exact verified handle roots.
+func (a *Allocator) AcquireVerified(ctx context.Context, store WorkspaceStore, handle WorkspaceHandle, reservation app.CapacityReservation) (*WorkspaceLease, error) {
+	if a == nil || ctx == nil || store == nil || reservation.Marker() == "" || handle.WorkspaceID == "" || !validWorkspaceNonce(handle.Nonce) {
+		return nil, ErrInvalidWorkspaceRequest
+	}
+	evidence, err := store.LoadWorkspaceCreation(ctx, handle.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	expectedRoots := RootSet{Baseline: handle.Roots.Baseline.identity, Admin: handle.Roots.Admin.identity, Result: handle.Roots.Result.identity, Destination: handle.Roots.Destination.identity}
+	if evidence.Phase != WorkspaceVerified || evidence.WorkspaceID != handle.WorkspaceID || evidence.RepositoryID != handle.RepositoryID || evidence.WorktreeID != handle.WorktreeID || evidence.ThreadID != handle.ThreadID || evidence.OperationID != handle.OperationID || evidence.Nonce != handle.Nonce || evidence.Roots != expectedRoots {
+		return nil, ErrWorkspaceMarkerMismatch
+	}
+	workspaceDir := filepath.Dir(evidence.Roots.Baseline.Path)
+	if filepath.Base(workspaceDir) != string(handle.WorkspaceID) || filepath.Dir(workspaceDir) != a.root {
+		return nil, ErrWorkspaceRootMismatch
+	}
+	lock, err := a.acquireWorkspaceLock(ctx, handle.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	if err := a.verifyFilesystem(workspaceDir, evidence, true); err != nil {
+		_ = lock.Close()
+		return nil, err
+	}
+	return &WorkspaceLease{handle: handle, lock: lock, reservation: reservation}, nil
+}
+
 func (a *Allocator) prepareRequest(request CreateRequest) (CreateRequest, WorkspaceCreationEvidence, string, error) {
 	if request.Store == nil || request.Capacity == nil || request.Guard.Validate() != nil || request.Workspace.Validate() != nil || request.Intent.Validate() != nil || request.Proposal.Validate() != nil || request.OperationID == "" || request.CapacityPlan.OperationID != request.OperationID || request.CapacityPlan.PolicyVersion != request.CapacityPolicy.Version || request.MarkerVersion == 0 || request.IsolationVersion == 0 || request.Now.IsZero() || request.Workspace.State != review.WorkspaceCreating || request.Workspace.ID != request.Proposal.WorkspaceID || request.Workspace.SourceThreadID != request.Intent.ThreadID || request.Workspace.SessionID != request.Intent.ConfirmedAgainst.SessionID || request.Workspace.SessionID != request.Guard.SessionID || request.DestinationPath == "" || !validAbsoluteCleanPath(request.DestinationPath) || !validWorkspaceLeaf(string(request.Workspace.ID)) {
 		return CreateRequest{}, WorkspaceCreationEvidence{}, "", ErrInvalidWorkspaceRequest
