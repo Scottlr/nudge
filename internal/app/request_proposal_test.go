@@ -279,8 +279,27 @@ func (t *proposalTurnTx) CreateWorkspace(context.Context, review.ProposalWorkspa
 }
 func (t *proposalTurnTx) RecordNoChanges(context.Context, review.ProposalAttempt) error { return nil }
 func (t *proposalTurnTx) PublishProposal(context.Context, review.ProposedPatch) error   { return nil }
-func (t *proposalTurnTx) TransitionProposal(context.Context, review.ProposalTransition) error {
-	return nil
+func (t *proposalTurnTx) TransitionProposal(_ context.Context, value review.ProposalTransition) error {
+	for index := range t.store.aggregate.Versions {
+		if t.store.aggregate.Versions[index].Version != value.Version || t.store.aggregate.Versions[index].ProposalID != value.ProposalID {
+			continue
+		}
+		current := t.store.aggregate.Versions[index].Status
+		if !current.CanTransitionTo(value.Status) {
+			return review.ErrInvalidProposalTransition
+		}
+		changedAt := value.ChangedAt
+		t.store.aggregate.Versions[index].Status = value.Status
+		t.store.aggregate.Versions[index].StatusReason = value.Reason
+		t.store.aggregate.Versions[index].StatusChangedAt = &changedAt
+		t.store.aggregate.Proposal.Status = value.Status
+		t.store.aggregate.Proposal.CurrentVersion = proposalVersionPointer(value.Version)
+		if value.ApplyOperationID != "" {
+			t.store.aggregate.Proposal.ApplyingOperationID = operationIDPointer(value.ApplyOperationID)
+		}
+		return nil
+	}
+	return ErrReviewStoreNotFound
 }
 func (t *proposalTurnTx) UpdateProposalWorkspace(_ context.Context, value review.ProposalWorkspace) error {
 	t.store.aggregate.Workspace = value

@@ -376,7 +376,7 @@ func (s *ApplyExecutionService) loadProposal(ctx context.Context, operation Appl
 		return review.ProposedPatch{}, ErrApplyStale
 	}
 	patch, ok := proposalVersion(aggregate, operation.ProposalVersion)
-	if !ok || patch.Status != review.ProposalVersionReady || patch.PatchSHA256 != operation.ProposalPatchSHA256 || patch.WorkspaceID != operation.WorkspaceID || patch.ThreadID != operation.ThreadID || patch.Artifact != operation.PatchArtifact {
+	if !ok || !proposalVersionCanApply(patch.Status) || patch.PatchSHA256 != operation.ProposalPatchSHA256 || patch.WorkspaceID != operation.WorkspaceID || patch.ThreadID != operation.ThreadID || patch.Artifact != operation.PatchArtifact {
 		return review.ProposedPatch{}, ErrApplyStale
 	}
 	if err := patch.Validate(); err != nil {

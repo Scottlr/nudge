@@ -35,6 +35,7 @@ const (
 	OperationSelectFile            OperationKind = "select_file"
 	OperationRefreshTarget         OperationKind = "refresh_target"
 	OperationRequestProposal       OperationKind = "request_proposal"
+	OperationApproveProposal       OperationKind = "approve_proposal"
 	OperationRejectProposal        OperationKind = "reject_proposal"
 	OperationDiscardProposalResult OperationKind = "discard_proposal_result"
 )

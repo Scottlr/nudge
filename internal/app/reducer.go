@@ -175,6 +175,11 @@ func (r *Reducer) handleCommand(command Command) (ReducerResponse, error) {
 			return ReducerResponse{}, ErrInvalidReducerInput
 		}
 		return r.startOperation(OperationRejectProposal, value.CorrelationID, 0, false)
+	case ApproveProposal:
+		if value.Guard.Validate() != nil || value.ThreadID == "" || value.ProposalID == "" || value.Version == 0 || !validSHA256(value.PatchSHA256) || value.ConfirmedReviewRevision == 0 || !validSHA256(value.ReviewCompletenessIdentity) || value.Destination.Validate() != nil || value.Repository.Validate() != nil || value.Worktree.Validate() != nil || value.Worktree.RepositoryID != value.Repository.ID || !safeText(value.IdempotencyKey) || value.OperationID == "" || value.CorrelationID == "" {
+			return ReducerResponse{}, ErrInvalidReducerInput
+		}
+		return r.startOperation(OperationApproveProposal, value.CorrelationID, 0, false)
 	case DiscardProposalResult:
 		if value.Guard.Validate() != nil || value.ProposalID == "" || value.AttemptID == "" || value.OperationID == "" || value.CorrelationID == "" || !safeOptionalText(value.Reason, 256) {
 			return ReducerResponse{}, ErrInvalidReducerInput

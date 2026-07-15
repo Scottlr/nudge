@@ -118,6 +118,25 @@ type RejectProposal struct {
 	CorrelationID CorrelationID
 }
 
+// ApproveProposal authorizes one exact, fully reviewed proposal version for
+// whole-proposal application. Destination evidence is checked again against
+// the durable aggregate before T112 or T113 is called.
+type ApproveProposal struct {
+	Guard                      SessionWriteGuard
+	ThreadID                   domain.ReviewThreadID
+	ProposalID                 domain.ProposalID
+	Version                    review.ProposalVersionNumber
+	PatchSHA256                string
+	ConfirmedReviewRevision    uint64
+	ReviewCompletenessIdentity string
+	Destination                review.DestinationConstraints
+	Repository                 repository.Repository
+	Worktree                   repository.WorktreeRef
+	IdempotencyKey             string
+	OperationID                domain.OperationID
+	CorrelationID              CorrelationID
+}
+
 // DiscardProposalResult discards one exact terminal failed/non-ready result
 // attempt after confirming the isolated result reset effect.
 type DiscardProposalResult struct {
@@ -146,6 +165,7 @@ func (RespondToRuntimeApproval) isReducerInput() {}
 func (RequestProposal) isReducerInput()          {}
 func (CancelProposal) isReducerInput()           {}
 func (RejectProposal) isReducerInput()           {}
+func (ApproveProposal) isReducerInput()          {}
 func (DiscardProposalResult) isReducerInput()    {}
 func (Shutdown) isReducerInput()                 {}
 
@@ -160,5 +180,6 @@ func (RespondToRuntimeApproval) isCommand() {}
 func (RequestProposal) isCommand()          {}
 func (CancelProposal) isCommand()           {}
 func (RejectProposal) isCommand()           {}
+func (ApproveProposal) isCommand()          {}
 func (DiscardProposalResult) isCommand()    {}
 func (Shutdown) isCommand()                 {}
