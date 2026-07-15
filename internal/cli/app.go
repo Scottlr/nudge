@@ -29,7 +29,7 @@ import (
 	"github.com/Scottlr/nudge/internal/workspace"
 )
 
-func runLocalReview(ctx context.Context, startPath string, noPersist bool, themeOverride *string) error {
+func runLocalReview(ctx context.Context, startPath string, noPersist bool, themeOverride *string, branchBase string) error {
 	if ctx == nil {
 		return errors.New("local review: nil context")
 	}
@@ -67,12 +67,14 @@ func runLocalReview(ctx context.Context, startPath string, noPersist bool, theme
 		persistenceMode = app.PersistenceNoPersist
 	}
 	var sessionManager *app.SessionManager
+	var preferenceStore app.RepositoryPreferenceStore
 	persistenceDegraded := false
 	if persistenceMode == app.PersistenceDurable {
 		durableStore, storeErr := sqlite.Open(runCtx, filepath.Join(locations.StateRoot, "nudge.db"))
 		if storeErr != nil {
 			persistenceDegraded = true
 		} else {
+			preferenceStore = durableStore
 			leaseManager, leaseErr := filelock.NewSessionLeaseManager(locations.StateRoot)
 			if leaseErr != nil {
 				_ = durableStore.Close()
@@ -175,12 +177,24 @@ func runLocalReview(ctx context.Context, startPath string, noPersist bool, theme
 			Capture:     captureSource{adapter: captureAdapter},
 			Store:       captureStore,
 			Tree:        treeReader,
+			Changed:     treeReader,
 			Content:     contentLoader,
 			Highlighter: highlighter,
 		},
 		Persistence:         persistenceMode,
 		Sessions:            sessionManager,
 		PersistenceDegraded: persistenceDegraded,
+		Branch: func() *app.BranchReviewConfig {
+			if branchBase == "" {
+				return nil
+			}
+			return &app.BranchReviewConfig{
+				ExplicitBaseExpression: branchBase,
+				Preferences:            preferenceStore,
+				Discover:               resolver,
+				Resolver:               resolver,
+			}
+		}(),
 	})
 	if err != nil {
 		return fmt.Errorf("local review: runtime: %w", err)

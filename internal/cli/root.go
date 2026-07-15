@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 
+	"github.com/Scottlr/nudge/internal/app"
 	"github.com/spf13/cobra"
 )
 
@@ -17,18 +18,26 @@ type BuildInfo struct {
 }
 
 // NewRootCommand creates the Nudge command tree with injected build metadata.
-// The root invocation is the local-review command; future target modes are
-// added only when their complete behavior is implemented.
+// The root invocation opens the selected local or current-branch review.
 func NewRootCommand(info BuildInfo) *cobra.Command {
 	var noPersist bool
 	var themeName string
+	var local bool
+	var commitExpression string
+	var branchExpression string
 	command := &cobra.Command{
 		Use:           "nudge [path]",
-		Short:         "Review local Git changes safely.",
+		Short:         "Review Git changes safely.",
 		Args:          cobra.MaximumNArgs(1),
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if branchExpression != "" && app.ValidateBaseBranchExpression(branchExpression) != nil {
+				return errors.New("invalid --branch base expression")
+			}
+			if commitExpression != "" {
+				return errors.New("--commit target is not implemented")
+			}
 			path := ""
 			var err error
 			if len(args) == 1 {
@@ -44,11 +53,16 @@ func NewRootCommand(info BuildInfo) *cobra.Command {
 			if cmd.Flags().Changed("theme") {
 				themeOverride = &themeName
 			}
-			return runLocalReview(cmd.Context(), path, noPersist, themeOverride)
+			_ = local
+			return runLocalReview(cmd.Context(), path, noPersist, themeOverride, branchExpression)
 		},
 	}
 	command.Flags().BoolVar(&noPersist, "no-persist", false, "Run without saving review state.")
 	command.Flags().StringVar(&themeName, "theme", "", "Use a built-in or protected user theme.")
+	command.Flags().BoolVar(&local, "local", false, "Review current working-tree changes.")
+	command.Flags().StringVar(&commitExpression, "commit", "", "Review one frozen commit.")
+	command.Flags().StringVar(&branchExpression, "branch", "", "Compare the current branch with a base branch.")
+	command.MarkFlagsMutuallyExclusive("local", "commit", "branch")
 	command.CompletionOptions.DisableDefaultCmd = true
 	command.AddCommand(newVersionCommand(info))
 	command.AddCommand(newConfigCommand())

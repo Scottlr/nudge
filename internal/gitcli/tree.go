@@ -83,6 +83,16 @@ func NewTreeReader(config TreeReaderConfig) (*GitTreeReader, error) {
 }
 
 var _ app.TreeReader = (*GitTreeReader)(nil)
+var _ app.ChangedFileReader = (*GitTreeReader)(nil)
+
+// ChangedFiles returns the complete bounded changed-file metadata for a
+// frozen target. Object targets never consult the working tree.
+func (r *GitTreeReader) ChangedFiles(ctx context.Context, target repository.ResolvedTarget) ([]repository.ChangedFile, error) {
+	if r == nil || ctx == nil || target.Validate() != nil {
+		return nil, ErrInvalidTreeReader
+	}
+	return r.changedFiles(ctx, target)
+}
 
 // ListTree returns one immediate-child page bound to the target head and
 // cursor query. The adapter never expands submodules or loads file bytes.
