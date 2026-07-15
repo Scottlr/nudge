@@ -252,6 +252,7 @@ func (c *Connector) connect(ctx context.Context) (*Connection, ConnectionStatus,
 			RateLimits:         true,
 			ResumeConversation: true,
 			Steering:           true,
+			ReadOnlyFilesystem: true,
 		},
 		Account: account,
 	}

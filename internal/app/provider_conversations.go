@@ -116,6 +116,7 @@ type ProviderTurnRecord struct {
 	State                    ProviderTurnState
 	ProviderVersion          string
 	RequestExpressionVersion string
+	Provenance               DiscussionTurnProvenance
 	StartedAt                time.Time
 	CompletedAt              *time.Time
 	ErrorCode                review.ErrorCode
@@ -151,6 +152,9 @@ func (r ProviderTurnRecord) Validate() error {
 		return ErrReviewStoreInput
 	}
 	if !validProviderMetadataOptional(string(r.ErrorCode), maxProviderNameBytes) {
+		return ErrReviewStoreInput
+	}
+	if !r.Provenance.IsZero() && r.Provenance.Validate() != nil {
 		return ErrReviewStoreInput
 	}
 	return nil
@@ -189,6 +193,7 @@ type EnsureProviderConversation struct {
 	ProviderName    string
 	ProviderVersion string
 	Mode            provider.TurnMode
+	WorkingDir      string
 	Permissions     provider.TurnPermissionPolicy
 	OperationID     domain.OperationID
 	CorrelationID   CorrelationID
@@ -203,6 +208,7 @@ type StartProviderTurn struct {
 	Prompt         string
 	WorkingDir     string
 	Permissions    provider.TurnPermissionPolicy
+	Provenance     DiscussionTurnProvenance
 	OperationID    domain.OperationID
 	CorrelationID  CorrelationID
 }
@@ -336,7 +342,7 @@ func (s *ProviderConversationService) EnsureConversation(ctx context.Context, co
 	if err := s.providerReady(ctx); err != nil {
 		return ProviderConversationCommit{}, err
 	}
-	startRequest := provider.StartConversationRequest{ThreadID: command.ThreadID, OperationID: command.OperationID, CorrelationID: provider.CorrelationID(command.CorrelationID), Mode: command.Mode, Permissions: command.Permissions}
+	startRequest := provider.StartConversationRequest{ThreadID: command.ThreadID, OperationID: command.OperationID, CorrelationID: provider.CorrelationID(command.CorrelationID), Mode: command.Mode, WorkingDir: command.WorkingDir, Permissions: command.Permissions}
 	if err := startRequest.Validate(); err != nil {
 		return ProviderConversationCommit{}, err
 	}
@@ -534,7 +540,18 @@ func (s *ProviderConversationService) StartTurn(ctx context.Context, command Sta
 		return ProviderConversationCommit{}, ErrReviewStoreInput
 	}
 	now := s.clock.Now().UTC()
-	turn := ProviderTurnRecord{ID: turnID, ThreadID: command.ThreadID, ConversationID: conversation.ID, OperationID: command.OperationID, CorrelationID: command.CorrelationID, Mode: command.Mode, State: ProviderTurnPrepared, ProviderVersion: conversation.ProviderVersion, RequestExpressionVersion: providerExpressionVersion, StartedAt: now}
+	provenance := command.Provenance
+	if command.Mode == provider.TurnDiscuss && provenance.IsZero() && command.Permissions.Filesystem == provider.FilesystemPromptOnly {
+		provenance = DiscussionTurnProvenance{
+			Mode:                    DiscussionModePromptOnly,
+			ContextHash:             DiscussionPromptHash(command.Prompt),
+			CapabilityPolicyVersion: CurrentCapabilityPolicyVersion,
+			ResourcePolicyVersion:   CurrentResourcePolicyVersion,
+			EvidenceVersion:         CurrentCapabilityEvidenceVersion,
+			PermissionVersion:       "provider-permissions-v1",
+		}
+	}
+	turn := ProviderTurnRecord{ID: turnID, ThreadID: command.ThreadID, ConversationID: conversation.ID, OperationID: command.OperationID, CorrelationID: command.CorrelationID, Mode: command.Mode, State: ProviderTurnPrepared, ProviderVersion: conversation.ProviderVersion, RequestExpressionVersion: providerExpressionVersion, Provenance: provenance, StartedAt: now}
 	if err := turn.Validate(); err != nil {
 		return ProviderConversationCommit{}, err
 	}

@@ -254,7 +254,7 @@ func runFakeAppServer(mode string) {
 		}
 	case "conversation_lifecycle":
 		start := readRequest()
-		if start.Method != "thread/start" || string(start.Params) != `{}` {
+		if start.Method != "thread/start" || !strings.Contains(string(start.Params), `"sandbox":"read-only"`) {
 			os.Exit(14)
 		}
 		write(responseLine(start.ID, `{"thread":{"id":"codex-thread-1"}}`))

@@ -58,7 +58,7 @@ func TestProviderLifecyclePersistsRestoresAndMarksRestartedTurnInterrupted(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loadedTurn.ProviderTurnRef != "remote-turn-1" || loadedTurn.CorrelationID != "corr-turn" {
+	if loadedTurn.ProviderTurnRef != "remote-turn-1" || loadedTurn.CorrelationID != "corr-turn" || loadedTurn.Provenance.Mode != app.DiscussionModePromptOnly || loadedTurn.Provenance.ContextHash == "" || loadedTurn.Provenance.PermissionVersion == "" {
 		t.Fatalf("loaded turn = %#v", loadedTurn)
 	}
 

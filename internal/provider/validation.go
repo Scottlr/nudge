@@ -182,7 +182,7 @@ func (p TurnPermissionPolicy) Validate(limits ValidationLimits) error {
 
 	switch p.Filesystem {
 	case FilesystemPromptOnly:
-		if len(p.ReadableRoots) != 0 || len(p.WritableRoots) != 0 || len(p.RuntimeRoots) != 0 || p.ProposalResultRoot.Path != "" || p.Containment != (ContainmentEvidence{}) {
+		if len(p.ReadableRoots) != 0 || len(p.WritableRoots) != 0 || p.ProposalResultRoot.Path != "" || p.Containment != (ContainmentEvidence{}) {
 			return ErrInvalidPermission
 		}
 	case FilesystemReviewSnapshot:
@@ -221,11 +221,40 @@ func validateModePermissions(mode TurnMode, permissions TurnPermissionPolicy, li
 	return nil
 }
 
+func validateWorkingDir(workingDir string, permissions TurnPermissionPolicy, limits ValidationLimits) error {
+	if workingDir == "" {
+		if permissions.Filesystem != FilesystemPromptOnly {
+			return ErrInvalidPermission
+		}
+		return nil
+	}
+	if validateText(workingDir, "working directory", limits.PathBytes, false) != nil || !filepath.IsAbs(workingDir) {
+		return ErrInvalidPermission
+	}
+	switch permissions.Filesystem {
+	case FilesystemPromptOnly:
+		if !pathWithinAny(permissions.RuntimeRoots, workingDir) {
+			return ErrInvalidPermission
+		}
+	case FilesystemReviewSnapshot:
+		if !pathWithinAny(permissions.ReadableRoots, workingDir) {
+			return ErrInvalidPermission
+		}
+	case FilesystemProposalResult:
+		if !pathWithin(permissions.ProposalResultRoot.Path, workingDir) || !pathWithinAny(permissions.WritableRoots, workingDir) {
+			return ErrInvalidPermission
+		}
+	default:
+		return ErrInvalidPermission
+	}
+	return nil
+}
+
 // Validate checks all local identity and policy fields before an adapter sends
 // a conversation-start request to an external provider.
 func (r StartConversationRequest) Validate() error {
 	limits := DefaultValidationLimits()
-	if validateLocalID(string(r.ThreadID), "thread id", limits) != nil || validateLocalID(string(r.OperationID), "operation id", limits) != nil || r.CorrelationID.Validate() != nil || validateModePermissions(r.Mode, r.Permissions, limits) != nil {
+	if validateLocalID(string(r.ThreadID), "thread id", limits) != nil || validateLocalID(string(r.OperationID), "operation id", limits) != nil || r.CorrelationID.Validate() != nil || validateModePermissions(r.Mode, r.Permissions, limits) != nil || validateWorkingDir(r.WorkingDir, r.Permissions, limits) != nil {
 		return ErrInvalidProviderValue
 	}
 	return nil
@@ -238,28 +267,7 @@ func (r TurnRequest) Validate() error {
 	if validateLocalID(string(r.ThreadID), "thread id", limits) != nil || validateLocalID(string(r.OperationID), "operation id", limits) != nil || r.CorrelationID.Validate() != nil || validateModePermissions(r.Mode, r.Permissions, limits) != nil || validateText(r.Prompt, "turn prompt", limits.PromptBytes, false) != nil {
 		return ErrInvalidProviderValue
 	}
-	if r.WorkingDir == "" {
-		if r.Permissions.Filesystem != FilesystemPromptOnly {
-			return ErrInvalidPermission
-		}
-		return nil
-	}
-	if validateText(r.WorkingDir, "working directory", limits.PathBytes, false) != nil || !filepath.IsAbs(r.WorkingDir) {
-		return ErrInvalidPermission
-	}
-	switch r.Permissions.Filesystem {
-	case FilesystemPromptOnly:
-		return ErrInvalidPermission
-	case FilesystemReviewSnapshot:
-		if !pathWithinAny(r.Permissions.ReadableRoots, r.WorkingDir) {
-			return ErrInvalidPermission
-		}
-	case FilesystemProposalResult:
-		if !pathWithin(r.Permissions.ProposalResultRoot.Path, r.WorkingDir) || !pathWithinAny(r.Permissions.WritableRoots, r.WorkingDir) {
-			return ErrInvalidPermission
-		}
-	}
-	return nil
+	return validateWorkingDir(r.WorkingDir, r.Permissions, limits)
 }
 
 // ValidateSteeringInput applies the bounded provider-turn input limit to a

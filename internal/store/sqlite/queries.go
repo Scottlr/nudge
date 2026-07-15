@@ -362,7 +362,9 @@ func (s *Store) LoadProviderTurn(ctx context.Context, id domain.ProviderTurnID) 
 	}
 	row := s.db.QueryRowContext(ctx, `SELECT id, thread_id, conversation_id, provider_turn_ref,
 		operation_id, correlation_id, mode, state, provider_version, request_expression_version,
-		started_at, completed_at, error_code FROM provider_turns WHERE id = ?`, id)
+		started_at, completed_at, error_code, discussion_mode, review_snapshot_id, source_capture_id,
+		source_snapshot_ref, context_hash, manifest_hash, capability_policy_version,
+		resource_policy_version, evidence_version, permission_version FROM provider_turns WHERE id = ?`, id)
 	turn, err := scanProviderTurn(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -387,7 +389,9 @@ func (s *Store) ListProviderTurns(ctx context.Context, threadID domain.ReviewThr
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT id, thread_id, conversation_id, provider_turn_ref,
 		operation_id, correlation_id, mode, state, provider_version, request_expression_version,
-		started_at, completed_at, error_code FROM provider_turns
+		started_at, completed_at, error_code, discussion_mode, review_snapshot_id, source_capture_id,
+		source_snapshot_ref, context_hash, manifest_hash, capability_policy_version,
+		resource_policy_version, evidence_version, permission_version FROM provider_turns
 		WHERE thread_id = ? ORDER BY started_at ASC, id ASC`, threadID)
 	if err != nil {
 		return nil, err
@@ -532,19 +536,31 @@ func (t *transaction) SaveProviderTurn(ctx context.Context, turn app.ProviderTur
 			return app.ErrReviewStoreInput
 		}
 		_, err = t.tx.ExecContext(ctx, `UPDATE provider_turns SET provider_turn_ref = ?, operation_id = ?, correlation_id = ?,
-			mode = ?, state = ?, provider_version = ?, request_expression_version = ?, completed_at = ?, error_code = ?
+			mode = ?, state = ?, provider_version = ?, request_expression_version = ?, completed_at = ?, error_code = ?,
+			discussion_mode = ?, review_snapshot_id = ?, source_capture_id = ?, source_snapshot_ref = ?, context_hash = ?,
+			manifest_hash = ?, capability_policy_version = ?, resource_policy_version = ?, evidence_version = ?, permission_version = ?
 			WHERE id = ? AND thread_id = ?`, nullableID(string(turn.ProviderTurnRef)), turn.OperationID, turn.CorrelationID, turn.Mode,
-			turn.State, turn.ProviderVersion, turn.RequestExpressionVersion, nullableTime(turn.CompletedAt), turn.ErrorCode, turn.ID, turn.ThreadID)
+			turn.State, turn.ProviderVersion, turn.RequestExpressionVersion, nullableTime(turn.CompletedAt), turn.ErrorCode,
+			turn.Provenance.Mode, nullableID(string(turn.Provenance.ReviewSnapshotID)), nullableID(string(turn.Provenance.SourceCaptureID)),
+			turn.Provenance.SourceSnapshotRef, turn.Provenance.ContextHash, turn.Provenance.ManifestHash,
+			turn.Provenance.CapabilityPolicyVersion, turn.Provenance.ResourcePolicyVersion, turn.Provenance.EvidenceVersion,
+			turn.Provenance.PermissionVersion, turn.ID, turn.ThreadID)
 		return err
 	case !errors.Is(err, sql.ErrNoRows):
 		return err
 	}
 	_, err = t.tx.ExecContext(ctx, `INSERT INTO provider_turns(
 		id, thread_id, conversation_id, provider_turn_ref, operation_id, correlation_id, mode, state,
-		provider_version, request_expression_version, started_at, completed_at, error_code)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, turn.ID, turn.ThreadID, turn.ConversationID,
+		provider_version, request_expression_version, started_at, completed_at, error_code, discussion_mode,
+		review_snapshot_id, source_capture_id, source_snapshot_ref, context_hash, manifest_hash,
+		capability_policy_version, resource_policy_version, evidence_version, permission_version)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, turn.ID, turn.ThreadID, turn.ConversationID,
 		nullableID(string(turn.ProviderTurnRef)), turn.OperationID, turn.CorrelationID, turn.Mode, turn.State,
-		turn.ProviderVersion, turn.RequestExpressionVersion, formatTime(turn.StartedAt), nullableTime(turn.CompletedAt), turn.ErrorCode)
+		turn.ProviderVersion, turn.RequestExpressionVersion, formatTime(turn.StartedAt), nullableTime(turn.CompletedAt), turn.ErrorCode,
+		turn.Provenance.Mode, nullableID(string(turn.Provenance.ReviewSnapshotID)), nullableID(string(turn.Provenance.SourceCaptureID)),
+		turn.Provenance.SourceSnapshotRef, turn.Provenance.ContextHash, turn.Provenance.ManifestHash,
+		turn.Provenance.CapabilityPolicyVersion, turn.Provenance.ResourcePolicyVersion, turn.Provenance.EvidenceVersion,
+		turn.Provenance.PermissionVersion)
 	return err
 }
 
@@ -1322,8 +1338,10 @@ func scanProviderConversation(row rowScanner) (app.ProviderConversationRecord, e
 
 func scanProviderTurn(row rowScanner) (app.ProviderTurnRecord, error) {
 	var id, threadID, conversationID, operationID, correlationID, mode, state, providerVersion, expressionVersion, startedAt, errorCode string
-	var turnRef, completedAt sql.NullString
-	if err := row.Scan(&id, &threadID, &conversationID, &turnRef, &operationID, &correlationID, &mode, &state, &providerVersion, &expressionVersion, &startedAt, &completedAt, &errorCode); err != nil {
+	var discussionMode, sourceSnapshotRef, contextHash, manifestHash, permissionVersion string
+	var turnRef, completedAt, reviewSnapshotID, sourceCaptureID sql.NullString
+	var capabilityPolicyVersion, resourcePolicyVersion, evidenceVersion int64
+	if err := row.Scan(&id, &threadID, &conversationID, &turnRef, &operationID, &correlationID, &mode, &state, &providerVersion, &expressionVersion, &startedAt, &completedAt, &errorCode, &discussionMode, &reviewSnapshotID, &sourceCaptureID, &sourceSnapshotRef, &contextHash, &manifestHash, &capabilityPolicyVersion, &resourcePolicyVersion, &evidenceVersion, &permissionVersion); err != nil {
 		return app.ProviderTurnRecord{}, err
 	}
 	started, err := parseTime(startedAt)
@@ -1334,6 +1352,17 @@ func scanProviderTurn(row rowScanner) (app.ProviderTurnRecord, error) {
 		ID: domain.ProviderTurnID(id), ThreadID: domain.ReviewThreadID(threadID), ConversationID: domain.ProviderConversationID(conversationID),
 		OperationID: domain.OperationID(operationID), CorrelationID: app.CorrelationID(correlationID), Mode: provider.TurnMode(mode), State: app.ProviderTurnState(state),
 		ProviderVersion: providerVersion, RequestExpressionVersion: expressionVersion, StartedAt: started, ErrorCode: review.ErrorCode(errorCode),
+	}
+	turn.Provenance = app.DiscussionTurnProvenance{
+		Mode: app.DiscussionMode(discussionMode), SourceSnapshotRef: sourceSnapshotRef, ContextHash: contextHash, ManifestHash: manifestHash,
+		CapabilityPolicyVersion: app.CapabilityPolicyVersion(capabilityPolicyVersion), ResourcePolicyVersion: app.ResourcePolicyVersion(resourcePolicyVersion),
+		EvidenceVersion: app.EvidenceVersion(evidenceVersion), PermissionVersion: permissionVersion,
+	}
+	if reviewSnapshotID.Valid {
+		turn.Provenance.ReviewSnapshotID = domain.ReviewSnapshotID(reviewSnapshotID.String)
+	}
+	if sourceCaptureID.Valid {
+		turn.Provenance.SourceCaptureID = domain.CaptureID(sourceCaptureID.String)
 	}
 	if turnRef.Valid {
 		turn.ProviderTurnRef = provider.ProviderTurnRef(turnRef.String)

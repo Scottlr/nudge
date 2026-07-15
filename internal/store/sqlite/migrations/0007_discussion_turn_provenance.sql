@@ -1,0 +1,10 @@
+ALTER TABLE provider_turns ADD COLUMN discussion_mode TEXT NOT NULL DEFAULT '';
+ALTER TABLE provider_turns ADD COLUMN review_snapshot_id TEXT;
+ALTER TABLE provider_turns ADD COLUMN source_capture_id TEXT;
+ALTER TABLE provider_turns ADD COLUMN source_snapshot_ref TEXT NOT NULL DEFAULT '';
+ALTER TABLE provider_turns ADD COLUMN context_hash TEXT NOT NULL DEFAULT '';
+ALTER TABLE provider_turns ADD COLUMN manifest_hash TEXT NOT NULL DEFAULT '';
+ALTER TABLE provider_turns ADD COLUMN capability_policy_version INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE provider_turns ADD COLUMN resource_policy_version INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE provider_turns ADD COLUMN evidence_version INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE provider_turns ADD COLUMN permission_version TEXT NOT NULL DEFAULT '';

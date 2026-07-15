@@ -106,6 +106,8 @@ type ProviderCapabilities struct {
 	Steering           bool
 	RuntimeApprovals   bool
 	WritableWorkspace  bool
+	ReadOnlyFilesystem bool
+	ExactReadRoots     bool
 	AccountLogin       bool
 	RateLimits         bool
 }
@@ -117,6 +119,7 @@ type StartConversationRequest struct {
 	OperationID   domain.OperationID
 	CorrelationID CorrelationID
 	Mode          TurnMode
+	WorkingDir    string
 	Permissions   TurnPermissionPolicy
 }
 
