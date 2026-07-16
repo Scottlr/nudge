@@ -332,6 +332,20 @@ func (s *Store) Snapshot(ctx context.Context, query app.StorageLedgerQuery) (app
 			return app.StorageLedgerSnapshot{}, err
 		}
 		snapshot.Reservations = reservations
+		var activeCount int64
+		countQuery := "SELECT COUNT(*) FROM capacity_reservations WHERE state = 'active'"
+		countArgs := []any{}
+		if query.RepositoryID != nil {
+			countQuery += " AND repository_id = ?"
+			countArgs = append(countArgs, string(*query.RepositoryID))
+		}
+		if err := tx.QueryRowContext(ctx, countQuery, countArgs...).Scan(&activeCount); err != nil || activeCount < 0 {
+			if err != nil {
+				return app.StorageLedgerSnapshot{}, err
+			}
+			return app.StorageLedgerSnapshot{}, app.ErrReviewStoreCorrupt
+		}
+		snapshot.ActiveReservations = app.Count(activeCount)
 		snapshot.Complete = complete
 	} else {
 		snapshot.Complete = true

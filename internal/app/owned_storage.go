@@ -291,13 +291,14 @@ type StoragePressureState struct {
 
 // StorageLedgerSnapshot is a bounded revisioned query result.
 type StorageLedgerSnapshot struct {
-	Revision     uint64
-	Repository   StorageTotals
-	Global       StorageTotals
-	Pressure     StoragePressureState
-	Reservations []CapacityReservationSummary
-	Artifacts    []OwnedArtifact
-	Complete     bool
+	Revision           uint64
+	Repository         StorageTotals
+	Global             StorageTotals
+	Pressure           StoragePressureState
+	ActiveReservations Count
+	Reservations       []CapacityReservationSummary
+	Artifacts          []OwnedArtifact
+	Complete           bool
 }
 
 // OwnedStorageLedger is the application-owned durable storage boundary. The

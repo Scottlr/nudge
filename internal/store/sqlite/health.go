@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/Scottlr/nudge/internal/app"
 	"github.com/Scottlr/nudge/internal/paths"
 )
 
@@ -150,4 +151,49 @@ func highestMigration(applied map[uint64]migration) uint64 {
 
 func ReadOnlyDatabaseUnavailableHealth() ReadOnlyDatabaseHealth {
 	return ReadOnlyDatabaseHealth{State: ReadOnlyDatabaseUnavailable}
+}
+
+// InspectOwnedStorageReadOnly reads only the global T067 totals through an
+// immutable SQLite connection. Owner filesystem evidence is deliberately not
+// inferred here, so the caller must keep reconciliation incomplete/uncertain.
+func InspectOwnedStorageReadOnly(ctx context.Context, path string) (app.StorageLedgerSnapshot, error) {
+	if ctx == nil || path == "" || !filepath.IsAbs(path) || filepath.Clean(path) != path {
+		return app.StorageLedgerSnapshot{}, ErrInvalidConfig
+	}
+	health, err := InspectReadOnly(ctx, path)
+	if err != nil {
+		return app.StorageLedgerSnapshot{}, err
+	}
+	if health.State != ReadOnlyDatabaseCurrent {
+		if health.State == ReadOnlyDatabaseMissing {
+			return app.StorageLedgerSnapshot{}, os.ErrNotExist
+		}
+		return app.StorageLedgerSnapshot{}, ErrInvalidConfig
+	}
+	dsn := fmt.Sprintf("file:%s?mode=ro&immutable=1&_pragma=foreign_keys(1)&_pragma=query_only(1)&_pragma=busy_timeout(%d)", filepath.ToSlash(path), (2 * time.Second).Milliseconds())
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return app.StorageLedgerSnapshot{}, err
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	if err := db.PingContext(ctx); err != nil {
+		return app.StorageLedgerSnapshot{}, err
+	}
+	var logical, observed, charged, reserved, uncertain, revision int64
+	err = db.QueryRowContext(ctx, `SELECT logical_bytes, observed_bytes, charged_bytes, reserved_bytes, uncertain_count, ledger_revision
+		FROM storage_totals WHERE scope_kind = 'global' AND scope_id = ''`).Scan(&logical, &observed, &charged, &reserved, &uncertain, &revision)
+	if errors.Is(err, sql.ErrNoRows) {
+		return app.StorageLedgerSnapshot{Complete: false}, nil
+	}
+	if err != nil || logical < 0 || observed < 0 || charged < 0 || reserved < 0 || uncertain < 0 || revision < 0 {
+		return app.StorageLedgerSnapshot{}, ErrMigrationCorrupt
+	}
+	var active int64
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM capacity_reservations WHERE state = 'active'").Scan(&active); err != nil || active < 0 {
+		return app.StorageLedgerSnapshot{}, ErrMigrationCorrupt
+	}
+	global := app.StorageTotals{LogicalBytes: app.ByteSize(logical), ObservedBytes: app.ByteSize(observed), ChargedBytes: app.ByteSize(charged), ReservedBytes: app.ByteSize(reserved), UncertainCount: app.Count(uncertain), Revision: uint64(revision)}
+	return app.StorageLedgerSnapshot{Revision: uint64(revision), Global: global, Pressure: storagePressure(app.StorageTotals{}, global), ActiveReservations: app.Count(active), Complete: false}, nil
 }

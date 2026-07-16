@@ -301,6 +301,12 @@ func collectDoctor(ctx context.Context, requestedPath string) (app.HealthReport,
 	}
 	environ := doctorEnvironment(os.Environ())
 	results := make([]app.HealthResult, 0, 16)
+	storageResult := app.HealthResult{
+		Code:             app.HealthStorageNotChecked,
+		Severity:         app.HealthInfo,
+		Summary:          "Owned-storage ledger health was not checked.",
+		RedactedEvidence: "not_checked",
+	}
 
 	locations, locationErr := paths.Resolve(environ)
 	if locationErr != nil {
@@ -370,6 +376,7 @@ func collectDoctor(ctx context.Context, requestedPath string) (app.HealthReport,
 		databasePath := filepath.Join(locations.StateRoot, "nudge.db")
 		results = append(results, databaseHealthResult(ctx, databasePath))
 		results = append(results, sessionLeaseHealthResults(ctx, databasePath)...)
+		storageResult = storageHealthResult(ctx, databasePath)
 	}
 	if gitErr == nil {
 		results = append(results, repositoryHealthResult(ctx, startPath, gitIdentity, explicitPath))
@@ -396,12 +403,7 @@ func collectDoctor(ctx context.Context, requestedPath string) (app.HealthReport,
 			Summary:          "Recovery and apply journals were not mutated or repaired.",
 			RedactedEvidence: "query_only",
 		},
-		app.HealthResult{
-			Code:             app.HealthStorageNotChecked,
-			Severity:         app.HealthInfo,
-			Summary:          "Owned-storage ledger health was not inferred without its owner evidence.",
-			RedactedEvidence: "owner_snapshot_unavailable",
-		},
+		storageResult,
 		app.HealthResult{
 			Code:             app.HealthProviderNotChecked,
 			Severity:         app.HealthInfo,
@@ -419,6 +421,18 @@ func collectDoctor(ctx context.Context, requestedPath string) (app.HealthReport,
 	)
 
 	return app.AggregateHealth(results, time.Now().UTC())
+}
+
+func storageHealthResult(ctx context.Context, databasePath string) app.HealthResult {
+	snapshot, err := sqlite.InspectOwnedStorageReadOnly(ctx, databasePath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return app.HealthResult{Code: app.HealthStorageNotChecked, Severity: app.HealthInfo, Summary: "Owned-storage ledger is not initialized.", RedactedEvidence: "not_initialized"}
+		}
+		return app.HealthResult{Code: app.HealthStorageNotChecked, Severity: app.HealthWarning, Summary: "Owned-storage ledger health could not be inspected query-only.", RedactedEvidence: "query_only_unavailable", Remediation: "Resolve database availability and run doctor again; plain doctor does not migrate or repair storage."}
+	}
+	health := app.CapacityHealthFromLedger(snapshot, nil, "", "", false)
+	return app.StorageHealthResult(health)
 }
 
 func doctorStartPath(requested string) (string, bool, error) {
