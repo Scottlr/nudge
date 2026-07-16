@@ -41,6 +41,7 @@ var (
 // used by the local immutable snapshot owner.
 type ReviewSnapshotConfig struct {
 	Root         string
+	CleanupOnly  bool
 	Source       app.ReviewSnapshotBaseSource
 	Captures     app.LocalCaptureStore
 	Store        app.ReviewSnapshotStore
@@ -100,7 +101,7 @@ func (o ReviewSnapshotCleanupOwner) Remove(ctx context.Context, resource app.Cle
 // NewReviewSnapshotManager creates the protected roots and validates the
 // source, persistence, and versioned limit contract before use.
 func NewReviewSnapshotManager(config ReviewSnapshotConfig) (*ReviewSnapshotManager, error) {
-	if config.Root == "" || !filepath.IsAbs(config.Root) || filepath.Clean(config.Root) != config.Root || config.Source == nil || config.Captures == nil {
+	if config.Root == "" || !filepath.IsAbs(config.Root) || filepath.Clean(config.Root) != config.Root || (!config.CleanupOnly && (config.Source == nil || config.Captures == nil)) {
 		return nil, app.ErrInvalidReviewSnapshot
 	}
 	if config.Persist && config.Store == nil {

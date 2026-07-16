@@ -165,6 +165,10 @@ func (s *Store) SaveCleanupOperation(ctx context.Context, operation app.CleanupO
 	if operation.Validate() != nil {
 		return app.ErrCleanupInvalid
 	}
+	completedResources, err := json.Marshal(operation.CompletedResources)
+	if err != nil {
+		return err
+	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -182,19 +186,20 @@ func (s *Store) SaveCleanupOperation(ctx context.Context, operation app.CleanupO
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO cleanup_operations(
 		id, plan_id, repository_id, manifest_hash, observed_revision, phase,
-		outcome, attempt, error_code, evidence_hash, created_at, updated_at, completed_at
-	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		outcome, attempt, error_code, evidence_hash, completed_resources_json, created_at, updated_at, completed_at
+	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(id) DO UPDATE SET
 		phase = excluded.phase,
 		outcome = excluded.outcome,
 		attempt = excluded.attempt,
 		error_code = excluded.error_code,
 		evidence_hash = excluded.evidence_hash,
+		completed_resources_json = excluded.completed_resources_json,
 		updated_at = excluded.updated_at,
 		completed_at = excluded.completed_at`,
 		operation.ID, operation.PlanID, operation.RepositoryID, operation.ManifestHash,
 		operation.ObservedRevision, operation.Phase, operation.Outcome, operation.Attempt,
-		operation.ErrorCode, operation.EvidenceHash, formatTime(operation.CreatedAt),
+		operation.ErrorCode, operation.EvidenceHash, completedResources, formatTime(operation.CreatedAt),
 		formatTime(operation.UpdatedAt), nullableCleanupTime(operation.CompletedAt))
 	if err != nil {
 		return err
@@ -226,13 +231,14 @@ func (s *Store) loadCleanupOperation(ctx context.Context, predicate string, valu
 	var operation app.CleanupOperation
 	var id, repositoryID, createdAt, updatedAt string
 	var completedAt sql.NullString
+	var completedResourcesData []byte
 	var version, attempt int64
 	err := s.db.QueryRowContext(ctx, `SELECT id, plan_id, repository_id, manifest_hash,
 		observed_revision, phase, outcome, attempt, error_code, evidence_hash,
-		created_at, updated_at, completed_at
+		completed_resources_json, created_at, updated_at, completed_at
 		FROM cleanup_operations WHERE `+predicate+` LIMIT 1`, value).Scan(
 		&id, &operation.PlanID, &repositoryID, &operation.ManifestHash, &operation.ObservedRevision,
-		&operation.Phase, &operation.Outcome, &attempt, &operation.ErrorCode, &operation.EvidenceHash,
+		&operation.Phase, &operation.Outcome, &attempt, &operation.ErrorCode, &operation.EvidenceHash, &completedResourcesData,
 		&createdAt, &updatedAt, &completedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return app.CleanupOperation{}, app.ErrCleanupNotFound
@@ -247,6 +253,9 @@ func (s *Store) loadCleanupOperation(ctx context.Context, predicate string, valu
 	}
 	operation.Version = uint64(version)
 	operation.Attempt = uint64(attempt)
+	if err := json.Unmarshal(completedResourcesData, &operation.CompletedResources); err != nil {
+		return app.CleanupOperation{}, app.ErrCleanupInvalid
+	}
 	operation.CreatedAt, err = parseTime(createdAt)
 	if err != nil {
 		return app.CleanupOperation{}, app.ErrCleanupInvalid
@@ -511,10 +520,13 @@ func (s *Store) DeleteRepositoryRows(ctx context.Context, repositoryID domain.Re
 		return app.ErrCleanupInvalid
 	}
 	current, err := s.LoadCleanupInventory(ctx, repositoryID)
+	if errors.Is(err, app.ErrCleanupNotFound) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
-	if current.ObservedRevision != plan.ObservedRevision || current.ManifestHash() != plan.ManifestHash {
+	if current.DatabaseManifestHash() != plan.DatabaseManifestHash() {
 		return app.ErrCleanupStalePlan
 	}
 	if len(plan.Blockers) != 0 {

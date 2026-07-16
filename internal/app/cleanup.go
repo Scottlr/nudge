@@ -249,31 +249,74 @@ func (i CleanupInventory) ManifestHash() string {
 	return plan.ManifestHash
 }
 
+// DatabaseManifestHash identifies only repository rows and database-owned
+// resource records. Repository-scoped logs are verified by their owner and
+// are intentionally excluded from the SQL deletion CAS.
+func (i CleanupInventory) DatabaseManifestHash() string {
+	return cleanupDatabaseManifestHash(i.RepositoryID, i.Rows, i.Resources)
+}
+
+// DatabaseManifestHash identifies the database portion of one full plan.
+func (p CleanupPlan) DatabaseManifestHash() string {
+	return cleanupDatabaseManifestHash(p.RepositoryID, p.Rows, p.Resources)
+}
+
+func cleanupDatabaseManifestHash(repositoryID domain.RepositoryID, rows CleanupRowCounts, resources []CleanupResource) string {
+	filtered := make([]CleanupResource, 0, len(resources))
+	for _, resource := range resources {
+		if resource.Kind != CleanupResourceLog {
+			filtered = append(filtered, resource)
+		}
+	}
+	sort.Slice(filtered, func(i, j int) bool {
+		if filtered[i].Kind != filtered[j].Kind {
+			return filtered[i].Kind < filtered[j].Kind
+		}
+		return filtered[i].ID < filtered[j].ID
+	})
+	data, err := json.Marshal(struct {
+		RepositoryID domain.RepositoryID
+		Rows         CleanupRowCounts
+		Resources    []CleanupResource
+	}{repositoryID, rows, filtered})
+	if err != nil {
+		return ""
+	}
+	digest := sha256.Sum256(data)
+	return hex.EncodeToString(digest[:])
+}
+
 // CleanupOperation is the durable journal record that survives repository-row
 // deletion and can be resumed without guessing which phase completed.
 type CleanupOperation struct {
-	Version          uint64
-	ID               domain.OperationID
-	PlanID           string
-	RepositoryID     domain.RepositoryID
-	ManifestHash     string
-	ObservedRevision string
-	Phase            CleanupPhase
-	Outcome          CleanupOutcome
-	Attempt          uint64
-	ErrorCode        string
-	EvidenceHash     string
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
-	CompletedAt      *time.Time
+	Version            uint64
+	ID                 domain.OperationID
+	PlanID             string
+	RepositoryID       domain.RepositoryID
+	ManifestHash       string
+	ObservedRevision   string
+	Phase              CleanupPhase
+	Outcome            CleanupOutcome
+	Attempt            uint64
+	CompletedResources []string
+	ErrorCode          string
+	EvidenceHash       string
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+	CompletedAt        *time.Time
 }
 
 func (o CleanupOperation) Validate() error {
 	if o.Version != CleanupJournalVersion || o.ID == "" || o.PlanID == "" || o.RepositoryID == "" || !validCleanupHash(o.ManifestHash) || !validCleanupHash(o.ObservedRevision) || o.Phase.Validate() != nil || o.Outcome.Validate() != nil || o.Attempt == 0 || o.CreatedAt.IsZero() || o.UpdatedAt.IsZero() || o.UpdatedAt.Before(o.CreatedAt) {
 		return ErrCleanupInvalid
 	}
-	if o.ErrorCode != "" && !cleanupToken(o.ErrorCode, 128) || o.EvidenceHash != "" && !validCleanupHash(o.EvidenceHash) {
+	if len(o.CompletedResources) > 4096 || o.ErrorCode != "" && !cleanupToken(o.ErrorCode, 128) || o.EvidenceHash != "" && !validCleanupHash(o.EvidenceHash) {
 		return ErrCleanupInvalid
+	}
+	for index, resourceID := range o.CompletedResources {
+		if !cleanupToken(resourceID, 512) || index > 0 && resourceID <= o.CompletedResources[index-1] {
+			return ErrCleanupInvalid
+		}
 	}
 	if o.CompletedAt != nil && o.CompletedAt.Before(o.CreatedAt) {
 		return ErrCleanupInvalid
@@ -369,19 +412,27 @@ func closeSessionLeases(leases []SessionLease) error {
 // CleanupService coordinates confirmation, journal phases, and owner-specific
 // effects. It has no generic filesystem or SQL mutation capability.
 type CleanupService struct {
-	Inventory CleanupInventoryStore
-	Journal   CleanupJournal
-	Gate      RepositoryMaintenanceGate
-	Quiescer  CleanupQuiescer
-	Owners    map[CleanupResourceKind]CleanupResourceOwner
-	IDs       IDSource
-	Clock     Clock
+	Inventory   CleanupInventoryStore
+	Journal     CleanupJournal
+	Gate        RepositoryMaintenanceGate
+	Quiescer    CleanupQuiescer
+	Enumerators []CleanupResourceEnumerator
+	Owners      map[CleanupResourceKind]CleanupResourceOwner
+	IDs         IDSource
+	Clock       Clock
 }
 
 // CleanupResourceOwner is the narrow mutation seam for one exact resource
 // class. Implementations revalidate marker, containment, and native identity.
 type CleanupResourceOwner interface {
 	Remove(context.Context, CleanupResource) error
+}
+
+// CleanupResourceEnumerator adds resources owned outside the repository
+// database, such as repository-scoped protected logs. It returns only exact
+// owner-backed resources and redacted blockers.
+type CleanupResourceEnumerator interface {
+	Resources(context.Context, domain.RepositoryID) ([]CleanupResource, []string, error)
 }
 
 // CleanupRequest is the only destructive cleanup input accepted by the app.
@@ -420,6 +471,17 @@ func (s *CleanupService) PlanRepositoryCleanup(ctx context.Context, repositoryID
 	if err != nil {
 		return CleanupPlan{}, err
 	}
+	for _, enumerator := range s.Enumerators {
+		if enumerator == nil {
+			return CleanupPlan{}, ErrCleanupInvalid
+		}
+		resources, blockers, enumErr := enumerator.Resources(ctx, repositoryID)
+		if enumErr != nil {
+			return CleanupPlan{}, enumErr
+		}
+		inventory.Resources = append(inventory.Resources, resources...)
+		inventory.Blockers = append(inventory.Blockers, blockers...)
+	}
 	plan, err := NewCleanupPlan(s.IDs.NewID(), inventory, s.Clock.Now().UTC())
 	if err != nil {
 		return CleanupPlan{}, err
@@ -442,18 +504,26 @@ func (s *CleanupService) Execute(ctx context.Context, request CleanupRequest) (C
 	if plan.Validate() != nil {
 		return CleanupOperation{}, ErrCleanupNotFound
 	}
-	current, err := s.Inventory.LoadCleanupInventory(ctx, plan.RepositoryID)
-	if err != nil {
-		if errors.Is(err, ErrCleanupNotFound) {
-			return CleanupOperation{}, ErrCleanupStalePlan
-		}
-		return CleanupOperation{}, err
+	operation, operationErr := s.Journal.LoadCleanupOperationByPlan(ctx, plan.ID)
+	operationExists := operationErr == nil
+	if operationErr != nil && !errors.Is(operationErr, ErrCleanupNotFound) {
+		return CleanupOperation{}, operationErr
 	}
-	if current.ObservedRevision != plan.ObservedRevision || current.ManifestHash() != plan.ManifestHash {
-		return CleanupOperation{}, ErrCleanupStalePlan
+	if operationExists && operation.Phase == CleanupPhaseComplete {
+		return operation, nil
 	}
 	if len(plan.Blockers) != 0 {
 		return CleanupOperation{}, ErrCleanupConflict
+	}
+	current, currentErr := s.Inventory.LoadCleanupInventory(ctx, plan.RepositoryID)
+	if currentErr != nil && !(operationExists && cleanupDatabasePhase(operation.Phase) && errors.Is(currentErr, ErrCleanupNotFound)) {
+		if errors.Is(currentErr, ErrCleanupNotFound) {
+			return CleanupOperation{}, ErrCleanupStalePlan
+		}
+		return CleanupOperation{}, currentErr
+	}
+	if currentErr == nil && !cleanupPlanMatches(plan, current, operation.CompletedResources) {
+		return CleanupOperation{}, ErrCleanupStalePlan
 	}
 	maintenance, err := s.Gate.Acquire(ctx, plan.RepositoryID)
 	if err != nil {
@@ -465,9 +535,18 @@ func (s *CleanupService) Execute(ctx context.Context, request CleanupRequest) (C
 		return CleanupOperation{}, err
 	}
 	defer quiesced.Close()
+	current, currentErr = s.Inventory.LoadCleanupInventory(ctx, plan.RepositoryID)
+	if currentErr != nil && !(operationExists && cleanupDatabasePhase(operation.Phase) && errors.Is(currentErr, ErrCleanupNotFound)) {
+		if errors.Is(currentErr, ErrCleanupNotFound) {
+			return CleanupOperation{}, ErrCleanupStalePlan
+		}
+		return CleanupOperation{}, currentErr
+	}
+	if currentErr == nil && !cleanupPlanMatches(plan, current, operation.CompletedResources) {
+		return CleanupOperation{}, ErrCleanupStalePlan
+	}
 	now := s.Clock.Now().UTC()
-	operation, err := s.Journal.LoadCleanupOperationByPlan(ctx, plan.ID)
-	if errors.Is(err, ErrCleanupNotFound) {
+	if !operationExists {
 		operationID, idErr := domain.NewOperationID(s.IDs.NewID())
 		if idErr != nil {
 			return CleanupOperation{}, idErr
@@ -476,30 +555,42 @@ func (s *CleanupService) Execute(ctx context.Context, request CleanupRequest) (C
 		if err := s.Journal.SaveCleanupOperation(ctx, operation); err != nil {
 			return CleanupOperation{}, err
 		}
-	} else if err != nil {
-		return CleanupOperation{}, err
+	} else {
+		operation.Attempt++
+		operation.Outcome = CleanupOutcomeNone
+		operation.ErrorCode = ""
 	}
-	if operation.Phase == CleanupPhaseComplete {
-		return operation, nil
-	}
-	operation.Phase = CleanupPhaseQuiesced
-	operation.UpdatedAt = now
-	if err := s.Journal.SaveCleanupOperation(ctx, operation); err != nil {
-		return CleanupOperation{}, err
-	}
-	for _, resource := range plan.Resources {
-		owner := s.Owners[resource.Kind]
-		if owner == nil {
-			return s.cleanupRequired(ctx, operation, "owner_unavailable")
-		}
-		if err := owner.Remove(ctx, resource); err != nil {
-			return s.cleanupRequired(ctx, operation, cleanupErrorCode(err))
+	if operation.Phase != CleanupPhaseFilesystemRemoved && operation.Phase != CleanupPhaseDatabaseRemoved && operation.Phase != CleanupPhaseVerified {
+		operation.Phase = CleanupPhaseQuiesced
+		operation.UpdatedAt = now
+		if err := s.Journal.SaveCleanupOperation(ctx, operation); err != nil {
+			return CleanupOperation{}, err
 		}
 	}
-	operation.Phase = CleanupPhaseFilesystemRemoved
-	operation.UpdatedAt = s.Clock.Now().UTC()
-	if err := s.Journal.SaveCleanupOperation(ctx, operation); err != nil {
-		return CleanupOperation{}, err
+	if operation.Phase == CleanupPhaseQuiesced || operation.Phase == CleanupPhaseCleanupRequired {
+		for _, resource := range plan.Resources {
+			if cleanupResourceCompleted(operation.CompletedResources, resource) {
+				continue
+			}
+			owner := s.Owners[resource.Kind]
+			if owner == nil {
+				return s.cleanupRequired(ctx, operation, "owner_unavailable")
+			}
+			if err := owner.Remove(ctx, resource); err != nil {
+				return s.cleanupRequired(ctx, operation, cleanupErrorCode(err))
+			}
+			operation.CompletedResources = append(operation.CompletedResources, cleanupResourceID(resource))
+			sort.Strings(operation.CompletedResources)
+			operation.UpdatedAt = s.Clock.Now().UTC()
+			if err := s.Journal.SaveCleanupOperation(ctx, operation); err != nil {
+				return CleanupOperation{}, err
+			}
+		}
+		operation.Phase = CleanupPhaseFilesystemRemoved
+		operation.UpdatedAt = s.Clock.Now().UTC()
+		if err := s.Journal.SaveCleanupOperation(ctx, operation); err != nil {
+			return CleanupOperation{}, err
+		}
 	}
 	if err := s.Inventory.DeleteRepositoryRows(ctx, plan.RepositoryID, plan); err != nil {
 		return s.cleanupRequired(ctx, operation, cleanupErrorCode(err))
@@ -534,6 +625,48 @@ func (s *CleanupService) cleanupRequired(ctx context.Context, operation CleanupO
 		return CleanupOperation{}, err
 	}
 	return operation, ErrCleanupConflict
+}
+
+func cleanupResourceID(resource CleanupResource) string {
+	return string(resource.Kind) + ":" + resource.ID
+}
+
+func cleanupResourceCompleted(completed []string, resource CleanupResource) bool {
+	key := cleanupResourceID(resource)
+	index := sort.SearchStrings(completed, key)
+	return index < len(completed) && completed[index] == key
+}
+
+func cleanupDatabasePhase(phase CleanupPhase) bool {
+	return phase == CleanupPhaseFilesystemRemoved || phase == CleanupPhaseDatabaseRemoved || phase == CleanupPhaseVerified
+}
+
+func cleanupPlanMatches(plan CleanupPlan, current CleanupInventory, completed []string) bool {
+	if current.DatabaseManifestHash() != plan.DatabaseManifestHash() {
+		return false
+	}
+	if len(completed) == 0 {
+		return current.ObservedRevision == plan.ObservedRevision && current.ManifestHash() == plan.ManifestHash
+	}
+	planned := make(map[string]CleanupResource, len(plan.Resources))
+	for _, resource := range plan.Resources {
+		planned[cleanupResourceID(resource)] = resource
+	}
+	seen := make(map[string]struct{}, len(current.Resources))
+	for _, resource := range current.Resources {
+		key := cleanupResourceID(resource)
+		plannedResource, ok := planned[key]
+		if !ok || plannedResource != resource {
+			return false
+		}
+		seen[key] = struct{}{}
+	}
+	for _, resource := range plan.Resources {
+		if _, ok := seen[cleanupResourceID(resource)]; !ok && !cleanupResourceCompleted(completed, resource) {
+			return false
+		}
+	}
+	return len(current.Blockers) == 0
 }
 
 func cleanupErrorCode(err error) string {

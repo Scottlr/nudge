@@ -147,6 +147,9 @@ func runLocalReview(ctx context.Context, startPath string, noPersist bool, theme
 		return fmt.Errorf("local review: operation identity: %w", err)
 	}
 	logConfig := protectedlogging.DefaultConfig(filepath.Join(locations.LogRoot, "process"))
+	if logRepository, _, resolveErr := resolver.ResolveRepository(runCtx, startPath); resolveErr == nil {
+		logConfig.RepositoryID = logRepository.ID
+	}
 	logConfig.Level = protectedlogging.ParseLevel(loaded.Config.Logging.Level)
 	var logReservation app.CapacityReservation
 	retainedLogBytes, logSizeErr := logConfig.MaxBytes.Mul(logConfig.MaxFiles)

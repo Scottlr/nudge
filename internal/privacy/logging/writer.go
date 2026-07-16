@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/Scottlr/nudge/internal/app"
+	"github.com/Scottlr/nudge/internal/domain"
 	"github.com/Scottlr/nudge/internal/filelock"
 	"github.com/Scottlr/nudge/internal/paths"
 )
@@ -40,14 +41,15 @@ var (
 
 // Config bounds one owner-marked process log identity.
 type Config struct {
-	Root      string
-	ProcessID string
-	MaxBytes  app.ByteSize
-	MaxFiles  app.Count
-	Retention time.Duration
-	Now       func() time.Time
-	Level     slog.Level
-	Capacity  *CapacityBinding
+	Root         string
+	ProcessID    string
+	RepositoryID domain.RepositoryID
+	MaxBytes     app.ByteSize
+	MaxFiles     app.Count
+	Retention    time.Duration
+	Now          func() time.Time
+	Level        slog.Level
+	Capacity     *CapacityBinding
 }
 
 // CapacityBinding connects one writer to the existing T067 reservation and
@@ -86,24 +88,25 @@ func ParseLevel(value string) slog.Level {
 // Writer is a protected owner-marked JSONL file writer. It rotates only its
 // own files and exposes no path or underlying file descriptor to callers.
 type Writer struct {
-	mu         sync.Mutex
-	root       string
-	ownerRoot  string
-	processID  string
-	activeName string
-	markerName string
-	maxBytes   uint64
-	maxFiles   uint64
-	retention  time.Duration
-	now        func() time.Time
-	file       *os.File
-	ownerLock  *filelock.Lock
-	bytes      uint64
-	generation uint64
-	files      []string
-	closed     bool
-	health     *healthState
-	capacity   *CapacityBinding
+	mu           sync.Mutex
+	root         string
+	ownerRoot    string
+	processID    string
+	activeName   string
+	markerName   string
+	maxBytes     uint64
+	maxFiles     uint64
+	retention    time.Duration
+	now          func() time.Time
+	file         *os.File
+	ownerLock    *filelock.Lock
+	bytes        uint64
+	generation   uint64
+	files        []string
+	closed       bool
+	health       *healthState
+	capacity     *CapacityBinding
+	repositoryID domain.RepositoryID
 }
 
 // NewWriter creates one private process log identity. Creation failure is
@@ -114,6 +117,9 @@ func NewWriter(ctx context.Context, config Config, health *healthState) (*Writer
 	}
 	if config.Now == nil {
 		config.Now = time.Now
+	}
+	if config.RepositoryID != "" && !validRepositoryID(config.RepositoryID) {
+		return nil, errLogDisabled
 	}
 	processID := config.ProcessID
 	if processID == "" {
@@ -129,15 +135,19 @@ func NewWriter(ctx context.Context, config Config, health *healthState) (*Writer
 	if config.MaxBytes > app.ByteSize(maxLogFileBytes) || config.MaxFiles > app.Count(maxLogFileCount) || config.Retention > maxLogRetention {
 		return nil, errLogDisabled
 	}
-	if err := paths.EnsurePrivateDir(config.Root); err != nil {
+	scopeRoot := config.Root
+	if config.RepositoryID != "" {
+		scopeRoot = filepath.Join(config.Root, "repositories", repositoryScopeID(config.RepositoryID))
+	}
+	if err := paths.EnsurePrivateDir(scopeRoot); err != nil {
 		return nil, err
 	}
-	ownerRoot := filepath.Join(config.Root, "owners")
+	ownerRoot := filepath.Join(scopeRoot, "owners")
 	if err := paths.EnsurePrivateDir(ownerRoot); err != nil {
 		return nil, err
 	}
 	writer := &Writer{
-		root: config.Root, ownerRoot: ownerRoot, processID: processID,
+		root: scopeRoot, ownerRoot: ownerRoot, processID: processID, repositoryID: config.RepositoryID,
 		markerName: processID + ".json", maxBytes: uint64(config.MaxBytes), maxFiles: uint64(config.MaxFiles),
 		retention: config.Retention, now: config.Now, health: health,
 		activeName: logName(processID, 0), files: []string{logName(processID, 0)},
@@ -174,6 +184,15 @@ func NewWriter(ctx context.Context, config Config, health *healthState) (*Writer
 		writer.healthFailure(app.LogFailureRetention)
 	}
 	return writer, nil
+}
+
+func validRepositoryID(value domain.RepositoryID) bool {
+	return value != "" && strings.TrimSpace(string(value)) == string(value) && !strings.ContainsAny(string(value), "\r\n\x00")
+}
+
+func repositoryScopeID(repositoryID domain.RepositoryID) string {
+	digest := sha256.Sum256([]byte(string(repositoryID)))
+	return hex.EncodeToString(digest[:])
 }
 
 // Write appends one already-encoded slog record or disables the sink when
@@ -389,7 +408,7 @@ func (w *Writer) updateMarker(closed bool) error {
 }
 
 func (w *Writer) writeMarker(closed, create bool) error {
-	marker := ownerMarker{Version: logSchemaVersion, ProcessID: w.processID, State: "active", CreatedAt: w.now().UTC().Format(time.RFC3339Nano), Files: append([]string(nil), w.files...)}
+	marker := ownerMarker{Version: logSchemaVersion, ProcessID: w.processID, RepositoryID: w.repositoryID, State: "active", CreatedAt: w.now().UTC().Format(time.RFC3339Nano), Files: append([]string(nil), w.files...)}
 	if w.capacity != nil {
 		marker.ReservationID = w.capacity.Reservation.Marker()
 		marker.PlanDigest = w.capacity.Reservation.PlanDigest()

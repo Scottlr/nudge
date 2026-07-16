@@ -130,6 +130,35 @@ func TestLoggerSettlesThroughOwnedStorageContracts(t *testing.T) {
 	}
 }
 
+func TestRepositoryScopedLogCleanupUsesMarkerIdentity(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "logs")
+	repositoryID := domain.RepositoryID("repository-1")
+	logger := New(context.Background(), Config{Root: root, ProcessID: "abc123", RepositoryID: repositoryID, MaxBytes: 4096, MaxFiles: 2, Retention: time.Hour})
+	logger.Log(context.Background(), app.LogEventOperationStarted)
+	if err := logger.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	scopeRoot := filepath.Join(root, "repositories", repositoryScopeID(repositoryID))
+	if _, err := os.Stat(filepath.Join(scopeRoot, "owners", "abc123.json")); err != nil {
+		t.Fatalf("repository marker was not scoped: %v", err)
+	}
+	owner, err := NewRepositoryCleanupOwner(root, repositoryID)
+	if err != nil {
+		t.Fatalf("NewRepositoryCleanupOwner() error = %v", err)
+	}
+	resources, blockers, err := owner.Resources(context.Background(), repositoryID)
+	if err != nil || len(blockers) != 0 || len(resources) != 1 {
+		t.Fatalf("cleanup enumeration = resources %d blockers %#v error %v", len(resources), blockers, err)
+	}
+	if err := owner.Remove(context.Background(), resources[0]); err != nil {
+		t.Fatalf("Remove() error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(scopeRoot, "owners", "abc123.json")); !os.IsNotExist(err) {
+		t.Fatalf("marker after cleanup error = %v", err)
+	}
+}
+
 func TestDebugLoggerUsesSeparateExpiringSink(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "logs")
 	current := time.Now().UTC()

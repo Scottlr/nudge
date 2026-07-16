@@ -1,6 +1,7 @@
 package app
 
 import (
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 
 func TestNewCleanupPlanBindsInventoryIdentity(t *testing.T) {
 	now := time.Date(2026, time.July, 16, 12, 0, 0, 0, time.UTC)
+	snapshotRoot := filepath.Join(t.TempDir(), "snapshots")
 	inventory := CleanupInventory{
 		RepositoryID:      domain.RepositoryID("repo-1"),
 		RepositoryDisplay: "repo",
@@ -16,8 +18,8 @@ func TestNewCleanupPlanBindsInventoryIdentity(t *testing.T) {
 		Rows:              CleanupRowCounts{Repositories: 1, Sessions: 2},
 		Resources: []CleanupResource{{
 			ID: "snapshot-1", Kind: CleanupResourceReviewSnapshot, OwnerID: "snapshot-1",
-			RepositoryID: domain.RepositoryID("repo-1"), CanonicalPath: `C:\state\snapshots\snapshot-1`,
-			ParentRoot: `C:\state\snapshots`, MarkerNonce: cleanupTestHash('b'), ManifestHash: cleanupTestHash('c'),
+			RepositoryID: domain.RepositoryID("repo-1"), CanonicalPath: filepath.Join(snapshotRoot, "snapshot-1"),
+			ParentRoot: snapshotRoot, MarkerNonce: cleanupTestHash('b'), ManifestHash: cleanupTestHash('c'),
 		}},
 		Exclusions: []string{"user worktree"},
 		Effects:    []string{"remove verified resource"},
