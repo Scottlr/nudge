@@ -13,6 +13,7 @@ import (
 
 	"github.com/Scottlr/nudge/internal/app"
 	"github.com/Scottlr/nudge/internal/config"
+	"github.com/Scottlr/nudge/internal/domain"
 	"github.com/Scottlr/nudge/internal/gitcli"
 	"github.com/Scottlr/nudge/internal/paths"
 	"github.com/Scottlr/nudge/internal/presentation"
@@ -28,7 +29,8 @@ const (
 )
 
 type doctorOptions struct {
-	format string
+	format    string
+	liveCodex bool
 }
 
 // doctorExitError indicates that the report was rendered and only the process
@@ -69,7 +71,18 @@ func newDoctorCommand() *cobra.Command {
 			if options.format != doctorFormatHuman && options.format != doctorFormatJSON {
 				return doctorExitError{code: app.HealthExitUsage, message: "unsupported doctor format"}
 			}
-			report, err := collectDoctor(cmd.Context(), path)
+			var report app.HealthReport
+			var err error
+			if options.liveCodex {
+				if options.format == doctorFormatHuman {
+					if _, err := fmt.Fprintln(cmd.OutOrStdout(), "Live Codex health: starting a local Codex app-server and querying account state."); err != nil {
+						return err
+					}
+				}
+				report, err = collectLiveCodexDoctor(cmd.Context(), path)
+			} else {
+				report, err = collectDoctor(cmd.Context(), path)
+			}
 			if err != nil {
 				return doctorExitError{code: app.HealthExitUsage, message: "doctor path must be an existing directory"}
 			}
@@ -80,7 +93,87 @@ func newDoctorCommand() *cobra.Command {
 		},
 	}
 	command.Flags().StringVar(&options.format, "format", doctorFormatHuman, "Output format: human or json.")
+	command.Flags().BoolVar(&options.liveCodex, "live-codex", false, "Explicitly start Codex app-server and query current account health.")
 	return command
+}
+
+func collectLiveCodexDoctor(ctx context.Context, requestedPath string) (app.HealthReport, error) {
+	base, err := collectDoctor(ctx, requestedPath)
+	if err != nil {
+		return app.HealthReport{}, err
+	}
+	results := make([]app.HealthResult, 0, len(base.Results))
+	for _, result := range base.Results {
+		if result.Code != app.HealthProviderNotChecked {
+			results = append(results, result)
+		}
+	}
+	startPath, _, err := doctorStartPath(requestedPath)
+	if err != nil {
+		return app.HealthReport{}, err
+	}
+	locations, locationErr := paths.Resolve(doctorEnvironment(os.Environ()))
+	var live app.LiveCodexHealthReport
+	var checkErr error
+	if locationErr != nil {
+		live = app.LiveCodexHealthReport{CheckedAt: time.Now().UTC(), Connection: app.ProviderConnectionUnavailable, ErrorCode: "locations_invalid", Remediation: "Review the protected Nudge locations and retry the explicit live check."}
+		checkErr = locationErr
+	} else {
+		loaded, loadErr := config.Load(ctx, locations, doctorEnvironment(os.Environ()), config.CLIOverrides{})
+		if loadErr != nil {
+			live = app.LiveCodexHealthReport{CheckedAt: time.Now().UTC(), Connection: app.ProviderConnectionUnavailable, ErrorCode: "configuration_invalid", Remediation: "Fix the protected Nudge configuration and retry the explicit live check."}
+			checkErr = loadErr
+		} else {
+			operation, operationErr := newLiveCodexHealthOperation(ctx, startPath, locations, loaded)
+			if operationErr != nil {
+				live = app.LiveCodexHealthReport{CheckedAt: time.Now().UTC(), Connection: app.ProviderConnectionUnavailable, ErrorCode: "provider_unavailable", Remediation: "Install Codex or review the trusted executable settings."}
+				checkErr = operationErr
+			} else {
+				correlationID, idErr := domain.NewOperationID("doctor-live-codex")
+				if idErr != nil {
+					return app.HealthReport{}, idErr
+				}
+				checkCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+				live, checkErr = operation.Check(checkCtx, app.LiveCodexHealthRequest{CorrelationID: correlationID, RequestedAt: time.Now().UTC()})
+				cancel()
+			}
+		}
+	}
+	results = append(results, liveHealthResult(live, checkErr))
+	report, err := app.AggregateHealth(results, time.Now().UTC())
+	if err != nil {
+		return app.HealthReport{}, err
+	}
+	return app.WithLiveCodex(report, live), nil
+}
+
+func liveHealthResult(report app.LiveCodexHealthReport, checkErr error) app.HealthResult {
+	code := app.HealthProviderLiveUnavailable
+	severity := app.HealthWarning
+	summary := "Live Codex health could not be completed."
+	switch report.Connection {
+	case app.ProviderConnectionConnected:
+		code = app.HealthProviderLiveConnected
+		severity = app.HealthOK
+		summary = "Codex app-server initialized and account state was queried."
+	case app.ProviderConnectionAuthRequired:
+		code = app.HealthProviderAuthRequired
+		severity = app.HealthWarning
+		summary = "Codex is available but requires authentication."
+	case app.ProviderConnectionIncompatible:
+		code = app.HealthProviderIncompatible
+		severity = app.HealthWarning
+		summary = "Codex app-server health is incompatible with the supported protocol."
+	}
+	evidence := "connection=" + app.NormalizeHealthToken(string(report.Connection), 64) + ",protocol=" + app.NormalizeHealthToken(report.Protocol.State, 64) + ",account=" + app.NormalizeHealthToken(report.Account.State, 64)
+	if report.LoginRequired {
+		evidence += ",login_required=true"
+	}
+	result := app.HealthResult{Code: code, Severity: severity, Summary: summary, RedactedEvidence: evidence, Remediation: report.Remediation}
+	if result.Remediation == "" && checkErr != nil {
+		result.Remediation = "Review the redacted provider state and retry Connect Codex explicitly."
+	}
+	return result
 }
 
 func collectDoctor(ctx context.Context, requestedPath string) (app.HealthReport, error) {
@@ -363,6 +456,19 @@ func renderDoctor(output io.Writer, report app.HealthReport, format string) erro
 		}
 		if result.Remediation != "" {
 			line += " Remediation: " + result.Remediation
+		}
+		if _, err := fmt.Fprintln(output, presentation.ProjectTerminalText(line, presentation.TerminalTextScalar)); err != nil {
+			return err
+		}
+	}
+	if report.LiveCodex != nil {
+		live := report.LiveCodex
+		line := fmt.Sprintf("Live Codex: connection=%s protocol=%s account=%s", live.Connection, live.Protocol.State, live.Account.State)
+		if live.LoginRequired {
+			line += " login required"
+		}
+		if live.Remediation != "" {
+			line += " Remediation: " + live.Remediation
 		}
 		if _, err := fmt.Fprintln(output, presentation.ProjectTerminalText(line, presentation.TerminalTextScalar)); err != nil {
 			return err

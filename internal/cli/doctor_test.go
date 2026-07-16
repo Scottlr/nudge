@@ -55,3 +55,30 @@ func TestDoctorEnvironmentFindsWindowsPathCaseInsensitively(t *testing.T) {
 		t.Fatalf("normalized environment = %#v", environ)
 	}
 }
+
+func TestLiveDoctorJSONIncludesRedactedCodexHealth(t *testing.T) {
+	report, err := app.AggregateHealth([]app.HealthResult{{Code: app.HealthProviderLiveConnected, Severity: app.HealthOK, Summary: "Codex is healthy."}}, time.Unix(1, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	report = app.WithLiveCodex(report, app.LiveCodexHealthReport{
+		CheckedAt:  time.Unix(2, 0).UTC(),
+		Connection: app.ProviderConnectionConnected,
+		Protocol:   app.ProtocolHealthSummary{State: "connected", Version: "0.144.0-alpha.4", Initialized: true},
+		Account:    app.AccountHealthSummary{State: "authenticated", AuthMode: "chatgpt", PlanType: "plus"},
+	})
+	var output bytes.Buffer
+	if err := renderDoctor(&output, report, doctorFormatJSON); err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		SchemaVersion uint32                    `json:"schema_version"`
+		LiveCodex     app.LiveCodexHealthReport `json:"live_codex"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.SchemaVersion != app.HealthSchemaVersion || decoded.LiveCodex.Connection != app.ProviderConnectionConnected || decoded.LiveCodex.Account.AuthMode != "chatgpt" {
+		t.Fatalf("decoded live report = %+v", decoded)
+	}
+}

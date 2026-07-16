@@ -46,6 +46,10 @@ type Config struct {
 	// notification that has no registered handler. Params are intentionally
 	// excluded from this callback.
 	UnknownNotification func(method string)
+
+	// UnknownServerRequest receives only the method name of an additive
+	// provider request. The dispatcher still replies with method-not-found.
+	UnknownServerRequest func(method string)
 }
 
 // DefaultConfig returns the v1 protocol bounds.

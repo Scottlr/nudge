@@ -13,7 +13,9 @@ import (
 )
 
 // HealthSchemaVersion is the version of the machine-readable doctor output.
-const HealthSchemaVersion uint32 = 1
+// Version 2 adds the optional live_codex projection used only by the
+// explicitly requested live provider-health path.
+const HealthSchemaVersion uint32 = 2
 
 // HealthSeverity controls doctor exit status and presentation.
 type HealthSeverity string
@@ -49,6 +51,10 @@ const (
 	HealthRecoveryNotChecked       HealthCode = "recovery.not_checked"
 	HealthStorageNotChecked        HealthCode = "storage.not_checked"
 	HealthProviderNotChecked       HealthCode = "provider.not_checked"
+	HealthProviderLiveConnected    HealthCode = "provider.live_connected"
+	HealthProviderAuthRequired     HealthCode = "provider.auth_required"
+	HealthProviderLiveUnavailable  HealthCode = "provider.live_unavailable"
+	HealthProviderIncompatible     HealthCode = "provider.incompatible"
 	HealthTerminalCapability       HealthCode = "terminal.capability"
 	HealthRepairPlansNotRegistered HealthCode = "repair.plans_not_registered"
 )
@@ -66,10 +72,11 @@ type HealthResult struct {
 
 // HealthReport is the complete versioned output of one query-only doctor run.
 type HealthReport struct {
-	SchemaVersion  uint32         `json:"schema_version"`
-	HealthRevision string         `json:"health_revision"`
-	GeneratedAt    time.Time      `json:"generated_at"`
-	Results        []HealthResult `json:"results"`
+	SchemaVersion  uint32                 `json:"schema_version"`
+	HealthRevision string                 `json:"health_revision"`
+	GeneratedAt    time.Time              `json:"generated_at"`
+	Results        []HealthResult         `json:"results"`
+	LiveCodex      *LiveCodexHealthReport `json:"live_codex,omitempty"`
 }
 
 var errInvalidHealthResult = errors.New("invalid health result")
@@ -107,6 +114,22 @@ func AggregateHealth(results []HealthResult, now time.Time) (HealthReport, error
 		GeneratedAt:    now.UTC(),
 		Results:        ordered,
 	}, nil
+}
+
+// WithLiveCodex attaches one explicit live observation and refreshes the
+// revision so the versioned report covers both static findings and the live
+// projection.
+func WithLiveCodex(report HealthReport, live LiveCodexHealthReport) HealthReport {
+	report.LiveCodex = &live
+	canonical, err := json.Marshal(struct {
+		Results   []HealthResult         `json:"results"`
+		LiveCodex *LiveCodexHealthReport `json:"live_codex,omitempty"`
+	}{Results: report.Results, LiveCodex: report.LiveCodex})
+	if err == nil {
+		digest := sha256.Sum256(canonical)
+		report.HealthRevision = hex.EncodeToString(digest[:])
+	}
+	return report
 }
 
 // Validate checks one result's bounded public contract.
@@ -158,6 +181,8 @@ func validHealthCode(code HealthCode) bool {
 		HealthProtectedRootPresent, HealthProtectedRootMissing, HealthProtectedRootRejected,
 		HealthWorkspaceNotChecked, HealthRecoveryNotChecked, HealthStorageNotChecked,
 		HealthProviderNotChecked, HealthTerminalCapability, HealthRepairPlansNotRegistered,
+		HealthProviderLiveConnected, HealthProviderAuthRequired, HealthProviderLiveUnavailable,
+		HealthProviderIncompatible,
 	} {
 		if code == known {
 			return true
