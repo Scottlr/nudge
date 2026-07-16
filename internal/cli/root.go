@@ -67,6 +67,7 @@ func NewRootCommand(info BuildInfo) *cobra.Command {
 	command.AddCommand(newVersionCommand(info))
 	command.AddCommand(newConfigCommand())
 	command.AddCommand(newDoctorCommand())
+	command.AddCommand(newExportCommand())
 	return command
 }
 

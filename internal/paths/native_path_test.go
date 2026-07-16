@@ -136,13 +136,13 @@ func TestNativePathExecutorRejectsStaleLeaf(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filePath, []byte("two"), 0o600); err != nil {
+	t.Cleanup(func() { _ = token.Close() })
+	if err := os.WriteFile(filePath, []byte("changed"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := resolver.Revalidate(context.Background(), token, evidence); !errors.Is(err, ErrNativePathStale) {
 		t.Fatalf("stale revalidation = %v", err)
 	}
-	_ = token.Close()
 }
 
 func TestNativePathExecutorKeepsUnsafePathReviewable(t *testing.T) {
