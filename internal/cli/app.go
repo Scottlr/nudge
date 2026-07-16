@@ -21,6 +21,7 @@ import (
 	"github.com/Scottlr/nudge/internal/gitcli"
 	"github.com/Scottlr/nudge/internal/highlight"
 	"github.com/Scottlr/nudge/internal/paths"
+	protectedlogging "github.com/Scottlr/nudge/internal/privacy/logging"
 	"github.com/Scottlr/nudge/internal/process"
 	"github.com/Scottlr/nudge/internal/store/sqlite"
 	"github.com/Scottlr/nudge/internal/terminal"
@@ -68,16 +69,22 @@ func runLocalReview(ctx context.Context, startPath string, noPersist bool, theme
 	}
 	var sessionManager *app.SessionManager
 	var preferenceStore app.RepositoryPreferenceStore
+	var storageLedger app.OwnedStorageLedger
+	var durableStore *sqlite.Store
 	persistenceDegraded := false
 	if persistenceMode == app.PersistenceDurable {
-		durableStore, storeErr := sqlite.Open(runCtx, filepath.Join(locations.StateRoot, "nudge.db"))
+		store, storeErr := sqlite.Open(runCtx, filepath.Join(locations.StateRoot, "nudge.db"))
 		if storeErr != nil {
 			persistenceDegraded = true
 		} else {
+			durableStore = store
+			storageLedger = store
 			preferenceStore = durableStore
 			leaseManager, leaseErr := filelock.NewSessionLeaseManager(locations.StateRoot)
 			if leaseErr != nil {
 				_ = durableStore.Close()
+				durableStore = nil
+				storageLedger = nil
 				persistenceDegraded = true
 			} else {
 				sessionManager, leaseErr = app.NewSessionManager(app.SessionManagerConfig{
@@ -85,6 +92,8 @@ func runLocalReview(ctx context.Context, startPath string, noPersist bool, theme
 				})
 				if leaseErr != nil {
 					_ = durableStore.Close()
+					durableStore = nil
+					storageLedger = nil
 					persistenceDegraded = true
 				} else {
 					defer durableStore.Close()
@@ -127,6 +136,32 @@ func runLocalReview(ctx context.Context, startPath string, noPersist bool, theme
 	if err != nil {
 		return fmt.Errorf("local review: operation identity: %w", err)
 	}
+	logConfig := protectedlogging.DefaultConfig(filepath.Join(locations.LogRoot, "process"))
+	logConfig.Level = protectedlogging.ParseLevel(loaded.Config.Logging.Level)
+	var logReservation app.CapacityReservation
+	retainedLogBytes, logSizeErr := logConfig.MaxBytes.Mul(logConfig.MaxFiles)
+	if logSizeErr == nil {
+		logPlan := app.CapacityPlan{
+			OperationID:   operationID,
+			VolumePeaks:   []app.VolumePeak{{ID: evidence.ID, Finals: retainedLogBytes, RetainedDelta: retainedLogBytes, Reserve: policyResource.Storage.MinimumFreeBytes}},
+			RetainedDelta: retainedLogBytes,
+			PolicyVersion: policyResource.Version,
+		}
+		logReservation, err = capacityManager.Reserve(runCtx, logPlan, policyResource, []app.VolumeEvidence{evidence})
+		if err == nil && storageLedger != nil {
+			logConfig.Capacity = &protectedlogging.CapacityBinding{
+				Ledger: storageLedger, Reservations: capacityManager, Reservation: logReservation,
+				Plan: logPlan, Policy: policyResource, VolumeID: evidence.ID,
+			}
+		} else if err == nil {
+			_ = capacityManager.Release(runCtx, logReservation, logPlan, policyResource)
+		}
+	}
+	if logReservation.Marker() == "" && logSizeErr == nil {
+		logConfig.MaxBytes = 0
+	}
+	operationalLogger := protectedlogging.New(runCtx, logConfig)
+	defer operationalLogger.Close()
 	captureAdapter, err := gitcli.NewLocalCaptureAdapter(gitcli.LocalCaptureConfig{
 		Executable:     trusted,
 		Runner:         runner,
@@ -182,6 +217,7 @@ func runLocalReview(ctx context.Context, startPath string, noPersist bool, theme
 			Highlighter: highlighter,
 		},
 		Persistence:         persistenceMode,
+		Logger:              operationalLogger,
 		Sessions:            sessionManager,
 		PersistenceDegraded: persistenceDegraded,
 		Branch: func() *app.BranchReviewConfig {

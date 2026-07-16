@@ -49,6 +49,7 @@ type LocalReviewConfig struct {
 	Source              LocalReviewSource
 	IDs                 IDSource
 	Clock               Clock
+	Logger              OperationalLogger
 	Persistence         PersistenceMode
 	Sessions            *SessionManager
 	PersistenceDegraded bool
@@ -146,6 +147,7 @@ type LocalReview struct {
 	source              LocalReviewSource
 	ids                 IDSource
 	clock               Clock
+	logger              OperationalLogger
 	persistence         PersistenceMode
 	sessions            *SessionManager
 	persistenceDegraded bool
@@ -166,6 +168,9 @@ func NewLocalReview(config LocalReviewConfig) (*LocalReview, error) {
 	}
 	if config.Clock == nil {
 		config.Clock = SystemClock{}
+	}
+	if config.Logger == nil {
+		config.Logger = NopOperationalLogger{}
 	}
 	persistence := config.Persistence
 	if persistence == "" {
@@ -188,7 +193,7 @@ func NewLocalReview(config LocalReviewConfig) (*LocalReview, error) {
 		return nil, ErrInvalidLocalReviewSource
 	}
 	return &LocalReview{
-		source: config.Source, ids: config.IDs, clock: config.Clock, persistence: persistence,
+		source: config.Source, ids: config.IDs, clock: config.Clock, logger: config.Logger, persistence: persistence,
 		sessions: config.Sessions, persistenceDegraded: config.PersistenceDegraded, branch: config.Branch, commit: config.Commit,
 	}, nil
 }
@@ -218,7 +223,32 @@ func (r *LocalReview) Start(ctx context.Context, startPath string) (<-chan Local
 func (r *LocalReview) run(ctx context.Context, startPath string, stream chan<- LocalReviewSnapshot) {
 	var revision uint64
 	var sessionID domain.ReviewSessionID
+	startedAt := r.clock.Now()
+	lastPhase := LocalReviewResolvingRepository
+	r.logger.Log(context.Background(), LogEventOperationStarted)
+	defer func() {
+		detail := LogDetailUnavailable
+		switch {
+		case ctx.Err() != nil:
+			detail = LogDetailCanceled
+		case lastPhase == LocalReviewReady || lastPhase == LocalReviewClean:
+			detail = LogDetailCompleted
+		case lastPhase == LocalReviewFailed:
+			detail = LogDetailFailed
+		}
+		fields := make([]SafeField, 0, 2)
+		if value, err := FieldDetailCode(detail); err == nil {
+			fields = append(fields, value)
+		}
+		if duration, err := FieldDuration(r.clock.Now().Sub(startedAt)); err == nil {
+			fields = append(fields, duration)
+		}
+		r.logger.Log(context.Background(), LogEventOperationFinished, fields...)
+	}()
 	publish := func(snapshot LocalReviewSnapshot) bool {
+		if snapshot.Phase != "" {
+			lastPhase = snapshot.Phase
+		}
 		revision++
 		snapshot.Revision = revision
 		snapshot.StartPath = startPath
