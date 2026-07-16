@@ -14,6 +14,7 @@ import (
 	"github.com/Scottlr/nudge/internal/app"
 	"github.com/Scottlr/nudge/internal/config"
 	"github.com/Scottlr/nudge/internal/domain"
+	"github.com/Scottlr/nudge/internal/filelock"
 	"github.com/Scottlr/nudge/internal/gitcli"
 	"github.com/Scottlr/nudge/internal/paths"
 	"github.com/Scottlr/nudge/internal/presentation"
@@ -136,7 +137,20 @@ func executeRepairDoctor(ctx context.Context, report app.HealthReport, planID ap
 		return app.RepairOperation{}, err
 	}
 	defer store.Close()
-	executor, err := app.NewRepairExecutor(store, app.NewRepairRegistry(), nil, app.RandomIDSource{})
+	registry, err := protectedPermissionRepairRegistry(locations)
+	if err != nil {
+		return app.RepairOperation{}, err
+	}
+	plans, err := registry.BuildPlans(ctx, report)
+	if err != nil {
+		return app.RepairOperation{}, err
+	}
+	for _, plan := range plans {
+		if err := store.SaveRepairPlan(ctx, plan); err != nil {
+			return app.RepairOperation{}, err
+		}
+	}
+	executor, err := app.NewRepairExecutor(store, registry, nil, app.RandomIDSource{})
 	if err != nil {
 		return app.RepairOperation{}, err
 	}
@@ -287,7 +301,7 @@ func collectDoctor(ctx context.Context, requestedPath string) (app.HealthReport,
 			Remediation:      "Review the NUDGE_* home settings and run doctor again.",
 		})
 	} else {
-		results = append(results, protectedRootResults(locations)...)
+		results = append(results, protectedRootResults(ctx, locations)...)
 	}
 
 	loaded := config.LoadedConfig{}
@@ -487,16 +501,58 @@ func repositorySeverity(explicit bool) app.HealthSeverity {
 	return app.HealthInfo
 }
 
-func protectedRootResults(locations paths.Locations) []app.HealthResult {
+func protectedPermissionRepairRegistry(locations paths.Locations) (*app.RepairRegistry, error) {
+	registry := app.NewRepairRegistry()
+	service, err := paths.NewProtectedPermissionService(locations)
+	if err != nil {
+		return nil, err
+	}
+	lockRoot, err := protectedPermissionLockRoot(locations)
+	if err != nil {
+		return nil, err
+	}
+	locks, err := filelock.NewProtectedPermissionLeaseManager(lockRoot)
+	if err != nil {
+		return nil, err
+	}
+	owner, err := app.NewProtectedPermissionRepairOwner(service, service, locks, nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := app.RegisterProtectedPermissionRepairOwner(registry, owner); err != nil {
+		return nil, err
+	}
+	return registry, nil
+}
+
+func protectedPermissionLockRoot(locations paths.Locations) (string, error) {
+	for _, root := range []string{locations.StateRoot, locations.ConfigRoot, locations.CacheRoot, locations.LogRoot, locations.WorkspaceRoot} {
+		if err := paths.ValidatePrivateDir(root); err == nil {
+			return root, nil
+		}
+	}
+	return "", errors.New("no private Nudge root is available for permission repair locking")
+}
+
+func protectedRootResults(ctx context.Context, locations paths.Locations) []app.HealthResult {
+	permissionPlans := make(map[string]string)
+	if service, err := paths.NewProtectedPermissionService(locations); err == nil {
+		if targets, listErr := service.ListProtectedPermissionTargets(ctx); listErr == nil {
+			for _, target := range targets {
+				permissionPlans[string(target.Kind)] = "protected-permission-" + target.ResourceID
+			}
+		}
+	}
 	roots := []struct {
 		name string
+		kind app.ProtectedPermissionRootKind
 		path string
 	}{
-		{"config", locations.ConfigRoot},
-		{"state", locations.StateRoot},
-		{"cache", locations.CacheRoot},
-		{"workspace", locations.WorkspaceRoot},
-		{"log", locations.LogRoot},
+		{"config", app.ProtectedConfigRoot, locations.ConfigRoot},
+		{"state", app.ProtectedStateRoot, locations.StateRoot},
+		{"cache", app.ProtectedCacheRoot, locations.CacheRoot},
+		{"workspace", app.ProtectedWorkspaceRoot, locations.WorkspaceRoot},
+		{"log", app.ProtectedLogRoot, locations.LogRoot},
 	}
 	results := make([]app.HealthResult, 0, len(roots))
 	for _, root := range roots {
@@ -506,7 +562,7 @@ func protectedRootResults(locations paths.Locations) []app.HealthResult {
 			continue
 		}
 		if err != nil {
-			results = append(results, app.HealthResult{Code: app.HealthProtectedRootRejected, Severity: app.HealthWarning, Summary: root.name + " root failed protected-path validation.", RedactedEvidence: protectedPathError(err), Remediation: "Review ownership, alias, and permission evidence for the Nudge-owned root."})
+			results = append(results, app.HealthResult{Code: app.HealthProtectedRootRejected, Severity: app.HealthWarning, Summary: root.name + " root failed protected-path validation.", RedactedEvidence: protectedPathError(err), Remediation: "Review ownership, alias, and permission evidence for the Nudge-owned root.", RepairPlanID: permissionPlans[string(root.kind)]})
 			continue
 		}
 		results = append(results, app.HealthResult{Code: app.HealthProtectedRootPresent, Severity: app.HealthOK, Summary: root.name + " root is present and protected.", RedactedEvidence: "present,owner_only=true"})
