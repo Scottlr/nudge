@@ -2,6 +2,7 @@ package paths
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -42,7 +43,16 @@ func TestProtectedPermissionServicePreservesDesiredRootIdentity(t *testing.T) {
 
 func testPermissionLocations(t *testing.T) Locations {
 	t.Helper()
-	base, err := filepath.EvalSymlinks(t.TempDir())
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawBase, err := os.MkdirTemp(home, "nudge-permission-repair-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(rawBase) })
+	base, err := filepath.EvalSymlinks(rawBase)
 	if err != nil {
 		t.Fatal(err)
 	}
