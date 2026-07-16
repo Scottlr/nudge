@@ -193,6 +193,19 @@ type OwnedStorageDiscovery struct {
 }
 
 func (d OwnedStorageDiscovery) Validate() error {
+	return d.validateWithin(int(MaxOwnedStorageReconcileItems), int64(MaxOwnedStorageReconcileEvidenceBytes))
+}
+
+// ValidateWithin rejects an owner response that exceeds the caller's bounded
+// batch. The reconciler never truncates owner evidence silently.
+func (d OwnedStorageDiscovery) ValidateWithin(maxItems int, maxEvidenceBytes int64) error {
+	return d.validateWithin(maxItems, maxEvidenceBytes)
+}
+
+func (d OwnedStorageDiscovery) validateWithin(maxItems int, maxEvidenceBytes int64) error {
+	if maxItems <= 0 || maxItems > int(MaxOwnedStorageReconcileItems) || maxEvidenceBytes <= 0 || maxEvidenceBytes > int64(MaxOwnedStorageReconcileEvidenceBytes) || len(d.Items) > maxItems {
+		return ErrInvalidOwnedStorageReconcile
+	}
 	if d.NextCursor != "" && !stableStorageText(d.NextCursor) {
 		return ErrInvalidOwnedStorageReconcile
 	}
@@ -206,7 +219,7 @@ func (d OwnedStorageDiscovery) Validate() error {
 		}
 		var err error
 		evidence, err = evidence.Add(item.EvidenceBytes)
-		if err != nil || evidence > MaxOwnedStorageReconcileEvidenceBytes {
+		if err != nil || evidence > ByteSize(maxEvidenceBytes) {
 			return ErrInvalidOwnedStorageReconcile
 		}
 	}
@@ -240,6 +253,7 @@ type OwnedStorageLedgerPage struct {
 // users do not gain pagination or filesystem responsibilities accidentally.
 type OwnedStorageReconcileLedger interface {
 	ReconciliationPage(context.Context, OwnedStorageLedgerPageQuery) (OwnedStorageLedgerPage, error)
+	ContainsArtifact(context.Context, *domain.RepositoryID, string) (bool, error)
 }
 
 type OwnedStorageLedgerPageQuery struct {
@@ -253,6 +267,36 @@ func (q OwnedStorageLedgerPageQuery) Validate() error {
 		return ErrInvalidOwnedStorageReconcile
 	}
 	return nil
+}
+
+const ownedStorageOwnerCursorPrefix = "owner:"
+
+// ParseOwnedStorageOwnerCursor identifies the owner-discovery stage and its
+// owner-local continuation cursor.
+func ParseOwnedStorageOwnerCursor(cursor string) (OwnerKind, string, bool, error) {
+	if !strings.HasPrefix(cursor, ownedStorageOwnerCursorPrefix) {
+		return "", "", false, nil
+	}
+	rest := strings.TrimPrefix(cursor, ownedStorageOwnerCursorPrefix)
+	kindText, ownerCursor, found := strings.Cut(rest, ":")
+	if !found || !isOwnedStorageOwnerKind(OwnerKind(kindText)) || ownerCursor != "" && !stableStorageText(ownerCursor) {
+		return "", "", true, ErrInvalidOwnedStorageReconcile
+	}
+	return OwnerKind(kindText), ownerCursor, true, nil
+}
+
+func ownedStorageOwnerCursor(kind OwnerKind, cursor string) string {
+	return ownedStorageOwnerCursorPrefix + string(kind) + ":" + cursor
+}
+
+func nextOwnedStorageOwner(kind OwnerKind) (OwnerKind, bool) {
+	kinds := OwnedStorageOwnerKinds()
+	for index, value := range kinds {
+		if value == kind && index+1 < len(kinds) {
+			return kinds[index+1], true
+		}
+	}
+	return "", false
 }
 
 // OwnedStorageDiscrepancy is a redacted, stable finding suitable for a repair
@@ -420,7 +464,7 @@ type OwnedStorageReconcileReport struct {
 }
 
 func (r OwnedStorageReconcileReport) Validate() error {
-	if !validRepairHash(r.Epoch) || !validRepairHash(r.HealthRevision) || r.NextCursor != "" && !stableStorageText(r.NextCursor) {
+	if !validRepairHash(r.Epoch) || !validRepairHash(r.HealthRevision) || r.NextCursor != "" && !stableStorageText(r.NextCursor) || r.Complete && r.NextCursor != "" || !r.Complete && r.NextCursor == "" {
 		return ErrInvalidOwnedStorageReconcile
 	}
 	for _, discrepancy := range r.Discrepancies {
@@ -444,6 +488,21 @@ type OwnedStorageReconciler struct {
 	Inspectors map[OwnerKind]OwnedStorageInspector
 	Policy     ResourcePolicy
 	Clock      Clock
+}
+
+// OwnedStorageOwnerKinds is the complete v1 owner coverage set. A composed
+// reconciler must register evidence for every kind before health is complete.
+func OwnedStorageOwnerKinds() []OwnerKind {
+	return []OwnerKind{OwnerCapture, OwnerReviewSnapshot, OwnerWorkspace, OwnerProposal, OwnerCache, OwnerLog}
+}
+
+func isOwnedStorageOwnerKind(kind OwnerKind) bool {
+	for _, candidate := range OwnedStorageOwnerKinds() {
+		if candidate == kind {
+			return true
+		}
+	}
+	return false
 }
 
 func NewOwnedStorageReconciler(ledger OwnedStorageReconcileLedger, store OwnedStorageReconciliationStore, inspectors []OwnedStorageInspector, policy ResourcePolicy, clock Clock) (*OwnedStorageReconciler, error) {
@@ -479,6 +538,10 @@ func (r *OwnedStorageReconciler) Reconcile(ctx context.Context, request OwnedSto
 	if err := ctx.Err(); err != nil {
 		return OwnedStorageReconcileReport{}, err
 	}
+	ownerKind, ownerCursor, ownerStage, err := ParseOwnedStorageOwnerCursor(request.Cursor)
+	if err != nil || ownerStage && !isOwnedStorageOwnerKind(ownerKind) {
+		return OwnedStorageReconcileReport{}, ErrInvalidOwnedStorageReconcile
+	}
 	limit := uint32(request.MaxItems)
 	page, err := r.Ledger.ReconciliationPage(ctx, OwnedStorageLedgerPageQuery{RepositoryID: request.RepositoryID, Cursor: request.Cursor, Limit: limit})
 	if err != nil {
@@ -497,6 +560,7 @@ func (r *OwnedStorageReconciler) Reconcile(ctx context.Context, request OwnedSto
 	discrepancies := make([]OwnedStorageDiscrepancy, 0, len(page.Artifacts)+len(page.Reservations))
 	seen := make(map[string]struct{}, len(page.Artifacts))
 	evidenceBytes := ByteSize(0)
+	processedItems := len(page.Artifacts) + len(page.Reservations)
 	for _, artifact := range page.Artifacts {
 		if err := ctx.Err(); err != nil {
 			return OwnedStorageReconcileReport{}, err
@@ -543,41 +607,86 @@ func (r *OwnedStorageReconciler) Reconcile(ctx context.Context, request OwnedSto
 			discrepancies = append(discrepancies, OwnedStorageDiscrepancy{Kind: ReservationStale, OwnerKind: reservation.OwnerKind, OwnerID: reservation.OwnerID, ReservationID: reservation.ReservationID, VolumeID: "unknown", MarkerNonce: evidence.MarkerNonce, EvidenceCode: "owner_lease_inactive", PlanEligible: evidence.MarkerNonce != ""})
 		}
 	}
+	nextCursor := page.NextCursor
+	complete := page.Complete
 	if page.Complete {
-		for ownerKind, inspector := range r.Inspectors {
-			discovery, discoverErr := inspector.Discover(ctx, OwnedStorageDiscoveryRequest{RepositoryID: request.RepositoryID, MaxItems: request.MaxItems, MaxEvidenceBytes: request.MaxEvidenceBytes})
-			if discoverErr != nil || discovery.Validate() != nil {
-				discrepancies = append(discrepancies, OwnedStorageDiscrepancy{Kind: OwnershipUncertain, OwnerKind: ownerKind, OwnerID: "owner", VolumeID: "unknown", EvidenceCode: "owner_discovery_uncertain"})
-				continue
-			}
-			for _, evidence := range discovery.Items {
-				if _, ok := seen[evidence.OwnerID+"\x00"+evidence.ArtifactID]; ok {
-					continue
+		currentOwner := OwnerCapture
+		if ownerStage {
+			currentOwner = ownerKind
+		}
+		inspector := r.Inspectors[currentOwner]
+		if inspector == nil {
+			discrepancies = append(discrepancies, OwnedStorageDiscrepancy{Kind: OwnershipUncertain, OwnerKind: currentOwner, OwnerID: "owner", VolumeID: "unknown", EvidenceCode: "owner_inspector_missing"})
+			complete = false
+			nextCursor = ownedStorageOwnerCursor(currentOwner, ownerCursor)
+		} else {
+			discovery, discoverErr := inspector.Discover(ctx, OwnedStorageDiscoveryRequest{RepositoryID: request.RepositoryID, Cursor: ownerCursor, MaxItems: request.MaxItems, MaxEvidenceBytes: request.MaxEvidenceBytes})
+			if discoverErr != nil || discovery.ValidateWithin(request.MaxItems, request.MaxEvidenceBytes) != nil {
+				discrepancies = append(discrepancies, OwnedStorageDiscrepancy{Kind: OwnershipUncertain, OwnerKind: currentOwner, OwnerID: "owner", VolumeID: "unknown", EvidenceCode: "owner_discovery_uncertain"})
+				complete = false
+				nextCursor = ownedStorageOwnerCursor(currentOwner, ownerCursor)
+			} else {
+				processedItems += len(discovery.Items)
+				for _, evidence := range discovery.Items {
+					if evidence.OwnerKind != currentOwner {
+						discrepancies = append(discrepancies, OwnedStorageDiscrepancy{Kind: OwnershipUncertain, OwnerKind: currentOwner, OwnerID: evidence.OwnerID, ArtifactID: evidence.ArtifactID, VolumeID: evidence.VolumeID, EvidenceCode: "owner_discovery_owner_mismatch"})
+						continue
+					}
+					var addErr error
+					evidenceBytes, addErr = addReconcileBytes(evidenceBytes, evidence.EvidenceBytes, int64(request.MaxEvidenceBytes))
+					if addErr != nil {
+						return OwnedStorageReconcileReport{}, addErr
+					}
+					if _, ok := seen[evidence.OwnerID+"\x00"+evidence.ArtifactID]; ok {
+						continue
+					}
+					if evidence.ArtifactID != "" {
+						inLedger, membershipErr := r.Ledger.ContainsArtifact(ctx, request.RepositoryID, evidence.ArtifactID)
+						if membershipErr != nil {
+							return OwnedStorageReconcileReport{}, membershipErr
+						}
+						if inLedger {
+							continue
+						}
+					}
+					if evidence.State == OwnedStorageEvidenceUncertain || evidence.ArtifactID == "" || evidence.State != OwnedStorageEvidenceTemporary && !evidence.Complete {
+						discrepancies = append(discrepancies, OwnedStorageDiscrepancy{Kind: OwnershipUncertain, OwnerKind: evidence.OwnerKind, OwnerID: evidence.OwnerID, ArtifactID: evidence.ArtifactID, VolumeID: evidence.VolumeID, MarkerNonce: evidence.MarkerNonce, EvidenceCode: "filesystem_candidate_uncertain"})
+						continue
+					}
+					kind := LedgerEntryMissing
+					if evidence.State == OwnedStorageEvidenceTemporary {
+						kind = OwnedTemporaryResidue
+					}
+					discrepancies = append(discrepancies, OwnedStorageDiscrepancy{Kind: kind, OwnerKind: evidence.OwnerKind, OwnerID: evidence.OwnerID, ArtifactID: evidence.ArtifactID, ReservationID: evidence.ReservationID, RepositoryID: evidence.RepositoryID, VolumeID: evidence.VolumeID, MarkerNonce: evidence.MarkerNonce, ObservedManifestHash: evidence.ManifestHash, ObservedBytes: evidence.ObservedBytes, EvidenceCode: "filesystem_candidate_not_in_ledger", PlanEligible: evidence.QuarantineReady})
 				}
-				if evidence.State == OwnedStorageEvidenceUncertain || evidence.ArtifactID == "" || evidence.State != OwnedStorageEvidenceTemporary && !evidence.Complete {
-					discrepancies = append(discrepancies, OwnedStorageDiscrepancy{Kind: OwnershipUncertain, OwnerKind: evidence.OwnerKind, OwnerID: evidence.OwnerID, ArtifactID: evidence.ArtifactID, VolumeID: evidence.VolumeID, MarkerNonce: evidence.MarkerNonce, EvidenceCode: "filesystem_candidate_uncertain"})
-					continue
+				if !discovery.Complete {
+					complete = false
+					nextCursor = ownedStorageOwnerCursor(currentOwner, discovery.NextCursor)
+				} else if nextOwner, ok := nextOwnedStorageOwner(currentOwner); ok {
+					complete = false
+					nextCursor = ownedStorageOwnerCursor(nextOwner, "")
+				} else {
+					complete = true
+					nextCursor = ""
 				}
-				kind := LedgerEntryMissing
-				if evidence.State == OwnedStorageEvidenceTemporary {
-					kind = OwnedTemporaryResidue
-				}
-				discrepancies = append(discrepancies, OwnedStorageDiscrepancy{Kind: kind, OwnerKind: evidence.OwnerKind, OwnerID: evidence.OwnerID, ArtifactID: evidence.ArtifactID, ReservationID: evidence.ReservationID, RepositoryID: evidence.RepositoryID, VolumeID: evidence.VolumeID, MarkerNonce: evidence.MarkerNonce, ObservedManifestHash: evidence.ManifestHash, ObservedBytes: evidence.ObservedBytes, EvidenceCode: "filesystem_candidate_not_in_ledger", PlanEligible: evidence.QuarantineReady})
 			}
 		}
 	}
 	status := capacityHealthStatus(page, discrepancies)
-	capacity := capacityHealth(page, request.Volumes, epochID, request.Cursor, page.Complete && len(discrepancies) == 0 || page.Complete)
+	if !complete {
+		status = CapacityHealthAccountingUncertain
+	}
+	capacity := capacityHealth(page, request.Volumes, epochID, request.Cursor, complete)
 	capacity.Status = status
 	capacity.UncertaintyCount, _ = capacity.UncertaintyCount.Add(countUncertainty(discrepancies))
-	batchKey := reconciliationBatchID(epochID, request.Cursor, page.NextCursor, page.Revision, discrepancies)
-	epoch := OwnedStorageReconciliationEpoch{Epoch: epochID, RepositoryID: request.RepositoryID, LedgerRevision: page.Revision, PolicyVersion: r.Policy.Version, Cursor: request.Cursor, NextCursor: page.NextCursor, BatchKey: batchKey, ProcessedItems: Count(len(page.Artifacts) + len(page.Reservations)), DiscrepancyCount: Count(len(discrepancies)), EvidenceBytes: evidenceBytes, UncertaintyCount: countUncertainty(discrepancies), Complete: page.Complete, UpdatedAt: r.Clock.Now().UTC()}
+	batchKey := reconciliationBatchID(epochID, request.Cursor, nextCursor, page.Revision, discrepancies)
+	epoch := OwnedStorageReconciliationEpoch{Epoch: epochID, RepositoryID: request.RepositoryID, LedgerRevision: page.Revision, PolicyVersion: r.Policy.Version, Cursor: request.Cursor, NextCursor: nextCursor, BatchKey: batchKey, ProcessedItems: Count(processedItems), DiscrepancyCount: Count(len(discrepancies)), EvidenceBytes: evidenceBytes, UncertaintyCount: countUncertainty(discrepancies), Complete: complete, UpdatedAt: r.Clock.Now().UTC()}
 	if err := epoch.Validate(); err != nil {
 		return OwnedStorageReconcileReport{}, err
 	}
 	candidates := repairCandidates(page.Revision, discrepancies)
 	healthRevision := reconciliationHealthID(epoch, capacity, discrepancies, candidates)
-	report := OwnedStorageReconcileReport{Epoch: epochID, HealthRevision: healthRevision, LedgerRevision: page.Revision, Discrepancies: discrepancies, Capacity: capacity, Candidates: candidates, NextCursor: page.NextCursor, Complete: page.Complete}
+	report := OwnedStorageReconcileReport{Epoch: epochID, HealthRevision: healthRevision, LedgerRevision: page.Revision, Discrepancies: discrepancies, Capacity: capacity, Candidates: candidates, NextCursor: nextCursor, Complete: complete}
 	if err := report.Validate(); err != nil {
 		return OwnedStorageReconcileReport{}, err
 	}

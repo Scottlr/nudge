@@ -18,6 +18,7 @@ var _ app.OwnedStorageReconciliationStore = (*Store)(nil)
 const (
 	storageArtifactCursor    = "artifact:"
 	storageReservationCursor = "reservation:"
+	storageOwnerCursor       = "owner:"
 )
 
 // ReconciliationPage returns one keyset-bounded, filesystem-free view of the
@@ -87,6 +88,8 @@ func (s *Store) ReconciliationPage(ctx context.Context, query app.OwnedStorageLe
 		if !page.Complete {
 			page.NextCursor = storageReservationCursor + page.Reservations[len(page.Reservations)-1].ReservationID
 		}
+	case storageOwnerCursor:
+		page.Complete = true
 	default:
 		return app.OwnedStorageLedgerPage{}, app.ErrInvalidOwnedStorageReconcile
 	}
@@ -94,6 +97,33 @@ func (s *Store) ReconciliationPage(ctx context.Context, query app.OwnedStorageLe
 		return app.OwnedStorageLedgerPage{}, err
 	}
 	return page, nil
+}
+
+// ContainsArtifact checks durable ledger membership without loading artifact
+// contents. It is used when an owner discovery page resumes after the ledger
+// page that originally contained an artifact.
+func (s *Store) ContainsArtifact(ctx context.Context, repositoryID *domain.RepositoryID, artifactID string) (bool, error) {
+	if err := s.ensureOpen(); err != nil {
+		return false, err
+	}
+	if artifactID == "" || repositoryID != nil && *repositoryID == "" {
+		return false, app.ErrInvalidOwnedStorageReconcile
+	}
+	query := "SELECT 1 FROM owned_artifact_ledger WHERE artifact_id = ?"
+	args := []any{artifactID}
+	if repositoryID != nil {
+		query += " AND repository_id = ?"
+		args = append(args, string(*repositoryID))
+	}
+	var found int
+	err := s.db.QueryRowContext(ctx, query, args...).Scan(&found)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return found == 1, nil
 }
 
 func countReconciliationReservations(ctx context.Context, tx *sql.Tx, repositoryID *domain.RepositoryID) (app.Count, error) {
@@ -122,6 +152,13 @@ func storageReconciliationCursor(cursor string) (string, string, error) {
 	}
 	if strings.HasPrefix(cursor, storageReservationCursor) {
 		return storageReservationCursor, strings.TrimPrefix(cursor, storageReservationCursor), nil
+	}
+	if strings.HasPrefix(cursor, storageOwnerCursor) {
+		_, _, ok, err := app.ParseOwnedStorageOwnerCursor(cursor)
+		if err != nil || !ok {
+			return "", "", app.ErrInvalidOwnedStorageReconcile
+		}
+		return storageOwnerCursor, strings.TrimPrefix(cursor, storageOwnerCursor), nil
 	}
 	return "", "", app.ErrInvalidOwnedStorageReconcile
 }
