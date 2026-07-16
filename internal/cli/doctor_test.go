@@ -19,6 +19,20 @@ func TestDoctorCommandRejectsInvalidFormatWithUsageExit(t *testing.T) {
 	}
 }
 
+func TestDoctorRepairRequiresExactConfirmationMode(t *testing.T) {
+	for _, args := range [][]string{
+		{"doctor", "--repair", "plan-1", "--health-revision", strings.Repeat("a", 64)},
+		{"doctor", "--repair", "plan-1", "--health-revision", strings.Repeat("a", 64), "--yes", "--live-codex"},
+	} {
+		command := NewRootCommand(BuildInfo{})
+		command.SetArgs(args)
+		err := command.Execute()
+		if code, ok := HealthExitCode(err); !ok || code != app.HealthExitUsage {
+			t.Fatalf("repair args %#v error=%v code=%d ok=%t", args, err, code, ok)
+		}
+	}
+}
+
 func TestRenderDoctorJSONIsVersionedAndBounded(t *testing.T) {
 	report, err := app.AggregateHealth([]app.HealthResult{{
 		Code:             app.HealthConfigValid,

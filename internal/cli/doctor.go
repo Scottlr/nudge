@@ -29,8 +29,11 @@ const (
 )
 
 type doctorOptions struct {
-	format    string
-	liveCodex bool
+	format         string
+	liveCodex      bool
+	repairPlanID   string
+	healthRevision string
+	repairYes      bool
 }
 
 // doctorExitError indicates that the report was rendered and only the process
@@ -71,6 +74,26 @@ func newDoctorCommand() *cobra.Command {
 			if options.format != doctorFormatHuman && options.format != doctorFormatJSON {
 				return doctorExitError{code: app.HealthExitUsage, message: "unsupported doctor format"}
 			}
+			if options.repairPlanID != "" {
+				if options.liveCodex || options.healthRevision == "" || !options.repairYes {
+					return doctorExitError{code: app.HealthExitUsage, message: "--repair requires --health-revision and --yes, and cannot be combined with --live-codex"}
+				}
+				report, err := collectDoctor(cmd.Context(), path)
+				if err != nil {
+					return doctorExitError{code: app.HealthExitUsage, message: "doctor path must be an existing directory"}
+				}
+				operation, err := executeRepairDoctor(cmd.Context(), report, app.RepairPlanID(options.repairPlanID), options.healthRevision)
+				if err != nil {
+					return doctorExitError{code: app.HealthExitError, message: repairErrorMessage(err)}
+				}
+				if err := renderRepairDoctor(cmd.OutOrStdout(), report, operation, options.format); err != nil {
+					return err
+				}
+				return doctorExitError{code: repairExitCode(operation)}
+			}
+			if options.healthRevision != "" || options.repairYes {
+				return doctorExitError{code: app.HealthExitUsage, message: "--health-revision and --yes require --repair"}
+			}
 			var report app.HealthReport
 			var err error
 			if options.liveCodex {
@@ -94,7 +117,74 @@ func newDoctorCommand() *cobra.Command {
 	}
 	command.Flags().StringVar(&options.format, "format", doctorFormatHuman, "Output format: human or json.")
 	command.Flags().BoolVar(&options.liveCodex, "live-codex", false, "Explicitly start Codex app-server and query current account health.")
+	command.Flags().StringVar(&options.repairPlanID, "repair", "", "Execute one advertised repair plan by exact ID.")
+	command.Flags().StringVar(&options.healthRevision, "health-revision", "", "Bind repair execution to this exact doctor health revision.")
+	command.Flags().BoolVar(&options.repairYes, "yes", false, "Confirm the exact advertised repair plan and health revision.")
 	return command
+}
+
+func executeRepairDoctor(ctx context.Context, report app.HealthReport, planID app.RepairPlanID, healthRevision string) (app.RepairOperation, error) {
+	if ctx == nil || planID == "" || report.HealthRevision == "" || healthRevision == "" || report.HealthRevision != healthRevision {
+		return app.RepairOperation{}, app.ErrRepairHealthRevision
+	}
+	locations, err := paths.Resolve(doctorEnvironment(os.Environ()))
+	if err != nil {
+		return app.RepairOperation{}, err
+	}
+	store, err := sqlite.Open(ctx, filepath.Join(locations.StateRoot, "nudge.db"))
+	if err != nil {
+		return app.RepairOperation{}, err
+	}
+	defer store.Close()
+	executor, err := app.NewRepairExecutor(store, app.NewRepairRegistry(), nil, app.RandomIDSource{})
+	if err != nil {
+		return app.RepairOperation{}, err
+	}
+	return executor.Execute(ctx, app.ExecuteRepair{
+		PlanID: planID, HealthRevision: healthRevision, Confirmation: app.RepairConfirmationYes,
+		IdempotencyKey: "doctor:" + string(planID) + ":" + healthRevision,
+	})
+}
+
+func renderRepairDoctor(output io.Writer, report app.HealthReport, operation app.RepairOperation, format string) error {
+	if output == nil {
+		return errors.New("doctor: nil output")
+	}
+	if format == doctorFormatJSON {
+		return json.NewEncoder(output).Encode(struct {
+			Health app.HealthReport    `json:"health"`
+			Repair app.RepairOperation `json:"repair"`
+		}{Health: report, Repair: operation})
+	}
+	if err := renderDoctor(output, report, doctorFormatHuman); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintf(output, "Repair: plan=%s phase=%s outcome=%s\n", presentation.ProjectTerminalText(string(operation.PlanID), presentation.TerminalTextScalar), operation.Phase, operation.Outcome)
+	return err
+}
+
+func repairExitCode(operation app.RepairOperation) int {
+	if operation.Outcome == app.RepairOutcomeSucceeded || operation.Outcome == app.RepairOutcomeAlreadyRepaired {
+		return app.HealthExitOK
+	}
+	return app.HealthExitError
+}
+
+func repairErrorMessage(err error) string {
+	switch {
+	case errors.Is(err, app.ErrRepairHealthRevision):
+		return "repair health revision is stale"
+	case errors.Is(err, app.ErrRepairPlanNotFound):
+		return "repair plan is not advertised"
+	case errors.Is(err, app.ErrRepairHandlerUnavailable):
+		return "repair handler is unavailable"
+	case errors.Is(err, app.ErrRepairConfirmation):
+		return "repair confirmation was rejected"
+	case errors.Is(err, app.ErrRepairPreconditions):
+		return "repair preconditions changed"
+	default:
+		return "repair could not be completed"
+	}
 }
 
 func collectLiveCodexDoctor(ctx context.Context, requestedPath string) (app.HealthReport, error) {
