@@ -111,8 +111,9 @@ func observeProtectedPermissionHandle(handle windows.Handle) (protectedPermissio
 	if err != nil {
 		return protectedPermissionObservation{}, err
 	}
-	currentUser, err := windows.GetCurrentProcessToken().GetTokenUser()
-	if err != nil || owner == nil || currentUser == nil || !owner.Equals(currentUser.User.Sid) {
+	token := windows.GetCurrentProcessToken()
+	owned, err := tokenOwnsSID(token, owner)
+	if err != nil || !owned {
 		return protectedPermissionObservation{}, ErrProtectedPermissionOwnership
 	}
 	daclDescriptor, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION)
@@ -130,6 +131,29 @@ func observeProtectedPermissionHandle(handle windows.Handle) (protectedPermissio
 		currentHash = desiredHash
 	}
 	return protectedPermissionObservation{identity: identity, currentHash: currentHash, desiredHash: desiredHash}, nil
+}
+
+func tokenOwnsSID(token windows.Token, owner *windows.SID) (bool, error) {
+	if owner == nil {
+		return false, nil
+	}
+	user, err := token.GetTokenUser()
+	if err != nil {
+		return false, err
+	}
+	if user != nil && user.User.Sid != nil && owner.Equals(user.User.Sid) {
+		return true, nil
+	}
+	groups, err := token.GetTokenGroups()
+	if err != nil {
+		return false, err
+	}
+	for _, group := range groups.AllGroups() {
+		if group.Attributes&windows.SE_GROUP_ENABLED != 0 && group.Sid != nil && owner.Equals(group.Sid) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func windowsPermissionIdentity(info windows.ByHandleFileInformation) repository.NativeIdentity {
