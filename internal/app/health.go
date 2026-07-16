@@ -53,6 +53,7 @@ const (
 	HealthStorageNotChecked        HealthCode = "storage.not_checked"
 	HealthStorageReconciliation    HealthCode = "storage.reconciliation"
 	HealthWorkspaceRepairRequired  HealthCode = "workspace.repair_required"
+	HealthApplyRepairRequired      HealthCode = "apply.repair_required"
 	HealthProviderNotChecked       HealthCode = "provider.not_checked"
 	HealthProviderLiveConnected    HealthCode = "provider.live_connected"
 	HealthProviderAuthRequired     HealthCode = "provider.auth_required"
@@ -183,7 +184,7 @@ func validHealthCode(code HealthCode) bool {
 		HealthDatabaseOutdated, HealthDatabaseCorrupt, HealthDatabaseUnavailable,
 		HealthProtectedRootPresent, HealthProtectedRootMissing, HealthProtectedRootRejected,
 		HealthSessionLeaseStale,
-		HealthWorkspaceNotChecked, HealthRecoveryNotChecked, HealthStorageNotChecked, HealthStorageReconciliation, HealthWorkspaceRepairRequired,
+		HealthWorkspaceNotChecked, HealthRecoveryNotChecked, HealthStorageNotChecked, HealthStorageReconciliation, HealthWorkspaceRepairRequired, HealthApplyRepairRequired,
 		HealthProviderNotChecked, HealthTerminalCapability, HealthRepairPlansNotRegistered,
 		HealthProviderLiveConnected, HealthProviderAuthRequired, HealthProviderLiveUnavailable,
 		HealthProviderIncompatible,
