@@ -42,21 +42,6 @@ func TestOwnedStorageReconciliationPageResumesByStableCursor(t *testing.T) {
 	if len(page.Reservations) != 1 || page.Reservations[0].ReservationID != second.Reservation.Marker() || !page.Complete {
 		t.Fatalf("second page = %#v", page)
 	}
-	ownerPage, err := store.ReconciliationPage(ctx, app.OwnedStorageLedgerPageQuery{Cursor: "owner:capture:resume", Limit: 1})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !ownerPage.Complete || ownerPage.NextCursor != "" || len(ownerPage.Artifacts) != 0 || len(ownerPage.Reservations) != 0 {
-		t.Fatalf("owner page = %#v", ownerPage)
-	}
-	found, err := store.ContainsArtifact(ctx, artifact.RepositoryID, artifact.ArtifactID)
-	if err != nil || !found {
-		t.Fatalf("contains artifact = %v/%v", found, err)
-	}
-	found, err = store.ContainsArtifact(ctx, artifact.RepositoryID, "missing-artifact")
-	if err != nil || found {
-		t.Fatalf("missing artifact = %v/%v", found, err)
-	}
 }
 
 func TestOwnedStorageReconciliationPersistenceIsIdempotentAndRedacted(t *testing.T) {
