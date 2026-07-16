@@ -41,6 +41,7 @@ var (
 // used by the local immutable snapshot owner.
 type ReviewSnapshotConfig struct {
 	Root         string
+	CleanupOnly  bool
 	Source       app.ReviewSnapshotBaseSource
 	Captures     app.LocalCaptureStore
 	Store        app.ReviewSnapshotStore
@@ -76,10 +77,31 @@ type ReviewSnapshotManager struct {
 	leases    map[domain.ReviewSnapshotLeaseID]app.ReviewSnapshotLease
 }
 
+// ReviewSnapshotCleanupOwner adapts the snapshot owner to the repository
+// cleanup coordinator. The manager still performs all marker, manifest,
+// containment, lease, and owner-lock checks before removing anything.
+type ReviewSnapshotCleanupOwner struct {
+	Manager *ReviewSnapshotManager
+}
+
+func (o ReviewSnapshotCleanupOwner) Remove(ctx context.Context, resource app.CleanupResource) error {
+	if o.Manager == nil || resource.Kind != app.CleanupResourceReviewSnapshot || resource.ID == "" {
+		return app.ErrCleanupInvalid
+	}
+	snapshot, err := o.Manager.loadSnapshot(ctx, domain.ReviewSnapshotID(resource.ID))
+	if err != nil {
+		return err
+	}
+	if snapshot.RepositoryID != resource.RepositoryID || snapshot.Root != resource.CanonicalPath || snapshot.MarkerNonce != resource.MarkerNonce || snapshot.ManifestHash != resource.ManifestHash {
+		return app.ErrCleanupConflict
+	}
+	return o.Manager.Remove(ctx, snapshot.ID)
+}
+
 // NewReviewSnapshotManager creates the protected roots and validates the
 // source, persistence, and versioned limit contract before use.
 func NewReviewSnapshotManager(config ReviewSnapshotConfig) (*ReviewSnapshotManager, error) {
-	if config.Root == "" || !filepath.IsAbs(config.Root) || filepath.Clean(config.Root) != config.Root || config.Source == nil || config.Captures == nil {
+	if config.Root == "" || !filepath.IsAbs(config.Root) || filepath.Clean(config.Root) != config.Root || (!config.CleanupOnly && (config.Source == nil || config.Captures == nil)) {
 		return nil, app.ErrInvalidReviewSnapshot
 	}
 	if config.Persist && config.Store == nil {

@@ -3,11 +3,21 @@ package app
 import (
 	"context"
 	"errors"
+	"io"
 
 	"github.com/Scottlr/nudge/internal/domain"
 	"github.com/Scottlr/nudge/internal/domain/repository"
 	"github.com/Scottlr/nudge/internal/domain/review"
 )
+
+var ErrRepositoryMaintenance = errors.New("repository is under maintenance")
+
+// RepositoryMaintenanceGate serializes repository-scoped maintenance with
+// durable session creation and writer claims. The caller holds the returned
+// closer across the complete claim sequence.
+type RepositoryMaintenanceGate interface {
+	Acquire(context.Context, domain.RepositoryID) (io.Closer, error)
+}
 
 // PersistenceMode identifies whether review state may survive this process.
 type PersistenceMode string
@@ -160,6 +170,7 @@ func (h *SessionHandle) Release() error {
 type SessionManager struct {
 	store                  ReviewStore
 	leases                 SessionLeaseManager
+	maintenance            RepositoryMaintenanceGate
 	ids                    IDSource
 	clock                  Clock
 	allowEphemeralFallback bool
@@ -169,6 +180,7 @@ type SessionManager struct {
 type SessionManagerConfig struct {
 	Store                  ReviewStore
 	Leases                 SessionLeaseManager
+	Maintenance            RepositoryMaintenanceGate
 	IDs                    IDSource
 	Clock                  Clock
 	AllowEphemeralFallback bool
@@ -188,6 +200,7 @@ func NewSessionManager(config SessionManagerConfig) (*SessionManager, error) {
 	return &SessionManager{
 		store:                  config.Store,
 		leases:                 config.Leases,
+		maintenance:            config.Maintenance,
 		ids:                    config.IDs,
 		clock:                  config.Clock,
 		allowEphemeralFallback: config.AllowEphemeralFallback,
@@ -212,6 +225,15 @@ func (m *SessionManager) OpenSession(ctx context.Context, request OpenSessionReq
 			return m.newEphemeral(request, true)
 		}
 		return SessionHandle{}, ErrReviewStoreClosed
+	}
+	var maintenance io.Closer
+	if m.maintenance != nil {
+		var err error
+		maintenance, err = m.maintenance.Acquire(ctx, request.Repository.ID)
+		if err != nil {
+			return SessionHandle{}, err
+		}
+		defer func() { _ = maintenance.Close() }()
 	}
 
 	if err := m.store.UpsertRepository(ctx, request.Repository, request.Worktree); err != nil {

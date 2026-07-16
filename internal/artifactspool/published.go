@@ -15,6 +15,22 @@ import (
 
 const maxPublishedRangeBytes app.ByteSize = 256 * app.KiB
 
+// CleanupOwner adapts exact published-artifact removal to T060. The manager
+// revalidates owner-root containment and the complete manifest before removal.
+type CleanupOwner struct {
+	Manager *Manager
+}
+
+func (o CleanupOwner) Remove(ctx context.Context, resource app.CleanupResource) error {
+	if o.Manager == nil || resource.Published.Identity.SpoolID == "" || resource.Kind != app.CleanupResourceCapture && resource.Kind != app.CleanupResourceProposal {
+		return app.ErrCleanupInvalid
+	}
+	if resource.ManifestHash != resource.Published.Identity.ManifestHash || resource.Published.Target.OwnerKind == "" {
+		return app.ErrCleanupConflict
+	}
+	return o.Manager.RemovePublished(ctx, resource.Published)
+}
+
 // ReadProposalPatchRange verifies and returns one bounded range from an
 // adopted proposal patch. The caller supplies the persisted target and full
 // stream identity; this adapter never resolves an arbitrary path.

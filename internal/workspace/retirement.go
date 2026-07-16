@@ -26,6 +26,19 @@ type RetirementExecutor struct {
 	store     WorkspaceStore
 }
 
+// WorkspaceCleanupOwner adapts the existing verified workspace owner to the
+// repository cleanup coordinator. It does not expose a generic path delete.
+type WorkspaceCleanupOwner struct {
+	Executor *RetirementExecutor
+}
+
+func (o WorkspaceCleanupOwner) Remove(ctx context.Context, resource app.CleanupResource) error {
+	if o.Executor == nil || resource.Kind != app.CleanupResourceWorkspace || resource.ID == "" {
+		return app.ErrCleanupInvalid
+	}
+	return o.Executor.RemoveOwned(ctx, resource)
+}
+
 // NewRetirementExecutor constructs the T109 filesystem owner boundary.
 func NewRetirementExecutor(allocator *Allocator, store WorkspaceStore) (*RetirementExecutor, error) {
 	if allocator == nil || store == nil {
@@ -68,6 +81,41 @@ func (e *RetirementExecutor) Verify(ctx context.Context, plan app.WorkspaceRetir
 // unexpected top-level child fails closed as repair-required.
 func (e *RetirementExecutor) Remove(ctx context.Context, plan app.WorkspaceRetirement) (app.WorkspaceRetirementProof, error) {
 	return e.verify(ctx, plan, true)
+}
+
+// RemoveOwned verifies one durable creation record and removes its exact
+// marker-bound roots. Cleanup uses this path after its repository plan has
+// acquired the maintenance and session locks.
+func (e *RetirementExecutor) RemoveOwned(ctx context.Context, resource app.CleanupResource) error {
+	if e == nil || ctx == nil || resource.Kind != app.CleanupResourceWorkspace || resource.ID == "" {
+		return app.ErrCleanupInvalid
+	}
+	evidence, err := e.store.LoadWorkspaceCreation(ctx, domain.WorkspaceID(resource.ID))
+	if err != nil {
+		return err
+	}
+	if evidence.RepositoryID != resource.RepositoryID || evidence.Nonce != resource.MarkerNonce || filepath.Dir(evidence.Roots.Baseline.Path) != resource.CanonicalPath || evidence.Parent.CanonicalPath != resource.ParentRoot {
+		return ErrWorkspaceRetirementOwnership
+	}
+	if evidence.Phase != WorkspaceVerified {
+		return ErrWorkspaceRetirementOwnership
+	}
+	digest, err := OwnershipDigest(evidence)
+	if err != nil || resource.NativeIdentity != string(evidence.Parent.NativeIdentity) && resource.NativeIdentity != digest {
+		return ErrWorkspaceRetirementOwnership
+	}
+	lock, err := e.allocator.acquireWorkspaceLock(ctx, evidence.WorkspaceID)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	if err := verifyRetirementFilesystem(filepath.Dir(evidence.Roots.Baseline.Path), evidence); err != nil {
+		return err
+	}
+	if err := removeOwnedWorkspace(filepath.Dir(evidence.Roots.Baseline.Path), evidence); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (e *RetirementExecutor) verify(ctx context.Context, plan app.WorkspaceRetirement, remove bool) (app.WorkspaceRetirementProof, error) {

@@ -12,20 +12,22 @@ import (
 	"time"
 
 	"github.com/Scottlr/nudge/internal/app"
+	"github.com/Scottlr/nudge/internal/domain"
 	"github.com/Scottlr/nudge/internal/filelock"
 	"github.com/Scottlr/nudge/internal/paths"
 )
 
 type ownerMarker struct {
-	Version       uint32   `json:"version"`
-	ProcessID     string   `json:"process_id"`
-	State         string   `json:"state"`
-	CreatedAt     string   `json:"created_at"`
-	ClosedAt      string   `json:"closed_at,omitempty"`
-	Files         []string `json:"files"`
-	ReservationID string   `json:"reservation_id,omitempty"`
-	PlanDigest    string   `json:"plan_digest,omitempty"`
-	VolumeID      string   `json:"volume_id,omitempty"`
+	Version       uint32              `json:"version"`
+	ProcessID     string              `json:"process_id"`
+	RepositoryID  domain.RepositoryID `json:"repository_id,omitempty"`
+	State         string              `json:"state"`
+	CreatedAt     string              `json:"created_at"`
+	ClosedAt      string              `json:"closed_at,omitempty"`
+	Files         []string            `json:"files"`
+	ReservationID string              `json:"reservation_id,omitempty"`
+	PlanDigest    string              `json:"plan_digest,omitempty"`
+	VolumeID      string              `json:"volume_id,omitempty"`
 }
 
 func (w *Writer) rotateLocked() error {
