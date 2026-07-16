@@ -47,6 +47,7 @@ const (
 	HealthProtectedRootPresent     HealthCode = "protected_root.present"
 	HealthProtectedRootMissing     HealthCode = "protected_root.missing"
 	HealthProtectedRootRejected    HealthCode = "protected_root.rejected"
+	HealthSessionLeaseStale        HealthCode = "session.lease_stale"
 	HealthWorkspaceNotChecked      HealthCode = "workspace.not_checked"
 	HealthRecoveryNotChecked       HealthCode = "recovery.not_checked"
 	HealthStorageNotChecked        HealthCode = "storage.not_checked"
@@ -179,6 +180,7 @@ func validHealthCode(code HealthCode) bool {
 		HealthRepositoryUnavailable, HealthDatabaseCurrent, HealthDatabaseMissing,
 		HealthDatabaseOutdated, HealthDatabaseCorrupt, HealthDatabaseUnavailable,
 		HealthProtectedRootPresent, HealthProtectedRootMissing, HealthProtectedRootRejected,
+		HealthSessionLeaseStale,
 		HealthWorkspaceNotChecked, HealthRecoveryNotChecked, HealthStorageNotChecked,
 		HealthProviderNotChecked, HealthTerminalCapability, HealthRepairPlansNotRegistered,
 		HealthProviderLiveConnected, HealthProviderAuthRequired, HealthProviderLiveUnavailable,
