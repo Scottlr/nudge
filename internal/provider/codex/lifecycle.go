@@ -56,6 +56,9 @@ type ConnectorConfig struct {
 	ClientVersion string
 	Compatibility CompatibilityPolicy
 	EventStream   EventStreamConfig
+	// HealthOnly denies provider-initiated runtime requests and records them
+	// as an incompatible health observation. It is never used for review turns.
+	HealthOnly bool
 }
 
 func (c ConnectorConfig) withDefaults() (ConnectorConfig, error) {
@@ -84,10 +87,11 @@ func (c ConnectorConfig) withDefaults() (ConnectorConfig, error) {
 type Connector struct {
 	config ConnectorConfig
 
-	mu         sync.Mutex
-	connecting bool
-	live       *Connection
-	status     ConnectionStatus
+	mu                    sync.Mutex
+	connecting            bool
+	live                  *Connection
+	status                ConnectionStatus
+	healthRequestObserved atomic.Bool
 }
 
 // NewConnector constructs a connection manager without starting Codex.
@@ -96,10 +100,16 @@ func NewConnector(config ConnectorConfig) (*Connector, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Connector{
+	connector := &Connector{
 		config: config,
 		status: ConnectionStatus{State: ConnectionDisconnected, Account: AccountStatus{State: AccountUnknown}},
-	}, nil
+	}
+	if config.HealthOnly {
+		connector.config.Client.UnknownServerRequest = func(string) {
+			connector.healthRequestObserved.Store(true)
+		}
+	}
+	return connector, nil
 }
 
 // Connect starts an asynchronous handshake and waits for its result. Callers
@@ -319,6 +329,10 @@ func (c *Connection) registerHandlers() error {
 	for _, method := range []string{serverRequestCommandApproval, serverRequestFileApproval, serverRequestPermissionsApproval, serverRequestToolCall, serverRequestToolInput, serverRequestLegacyExec, serverRequestLegacyPatch} {
 		method := method
 		if err := c.client.RegisterServerRequestHandler(method, func(_ context.Context, request protocol.ServerRequest) (json.RawMessage, error) {
+			if c.owner != nil && c.owner.config.HealthOnly {
+				c.owner.healthRequestObserved.Store(true)
+				return runtimeApprovalDenyResult(request.Method), nil
+			}
 			return c.handleRuntimeApprovalRequest(request)
 		}); err != nil {
 			return err

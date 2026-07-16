@@ -147,10 +147,14 @@ func (c *Client) dispatchNotification(frame protocol.Frame) {
 func (c *Client) dispatchServerRequest(frame protocol.Frame) bool {
 	c.handlerMu.RLock()
 	handler := c.serverHandlers[frame.Method]
+	unknown := c.config.UnknownServerRequest
 	c.handlerMu.RUnlock()
 	var result json.RawMessage
 	var rpcErr *protocol.RPCError
 	if handler == nil {
+		if unknown != nil {
+			unknown(frame.Method)
+		}
 		rpcErr = &protocol.RPCError{Code: -32601, Message: "method not found"}
 	} else {
 		var err error
