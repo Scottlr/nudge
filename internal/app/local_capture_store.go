@@ -206,6 +206,7 @@ type CaptureArtifactRef struct {
 	Kind         repository.CaptureArtifactKind
 	Identity     ArtifactIdentity
 	Target       PublishTarget
+	Limits       SpoolLimits
 	RelativePath string
 }
 
@@ -310,6 +311,20 @@ type LocalCaptureCommitter interface {
 // CaptureManifestReader loads one immutable accepted manifest by CaptureID.
 type CaptureManifestReader interface {
 	OpenCaptureManifest(context.Context, domain.CaptureID) (CaptureManifest, error)
+}
+
+// CaptureManifestWriter persists the bounded owner manifest after publication.
+// A missing writer leaves the published artifact recoverable but cleanup must
+// preserve it as ownership-uncertain.
+type CaptureManifestWriter interface {
+	SaveCaptureManifest(context.Context, CaptureManifest) error
+}
+
+// CaptureManifestStore combines the durable read/write boundary used by a
+// local-review composition root.
+type CaptureManifestStore interface {
+	CaptureManifestReader
+	CaptureManifestWriter
 }
 
 // PublishedArtifactReader reads a bounded identity-bound range without

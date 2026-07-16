@@ -107,6 +107,7 @@ type CleanupResource struct {
 	MarkerNonce    string
 	ManifestHash   string
 	NativeIdentity string
+	Published      PublishedArtifact
 }
 
 func (r CleanupResource) Validate() error {
@@ -114,6 +115,11 @@ func (r CleanupResource) Validate() error {
 		return ErrCleanupInvalid
 	}
 	if r.CanonicalPath == "" {
+		if r.Published.Identity.SpoolID != "" {
+			if r.Kind != CleanupResourceCapture && r.Kind != CleanupResourceProposal || r.Published.Identity.Validate() != nil || r.Published.Limits.Validate() != nil || r.Published.Target.OwnerKind == "" {
+				return ErrCleanupInvalid
+			}
+		}
 		return nil
 	}
 	if !filepath.IsAbs(r.CanonicalPath) || filepath.Clean(r.CanonicalPath) != r.CanonicalPath || r.ParentRoot == "" || !filepath.IsAbs(r.ParentRoot) || filepath.Clean(r.ParentRoot) != r.ParentRoot || !pathContained(r.ParentRoot, r.CanonicalPath) {

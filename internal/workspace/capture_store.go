@@ -120,11 +120,13 @@ func (s *CaptureStore) Adopt(ctx context.Context, artifacts app.LocalCaptureArti
 			Kind:     repositoryCapturePatch,
 			Identity: patchIdentity,
 			Target:   patchTarget,
+			Limits:   artifacts.PatchSpool.Descriptor().Limits,
 		},
 		Blobs: app.CaptureArtifactRef{
 			Kind:         repositoryCaptureBlobs,
 			Identity:     blobIdentity,
 			Target:       blobTarget,
+			Limits:       artifacts.BlobSpool.Descriptor().Limits,
 			RelativePath: "payload",
 		},
 		ManifestHash: manifestHash,

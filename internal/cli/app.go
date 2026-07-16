@@ -185,7 +185,7 @@ func runLocalReview(ctx context.Context, startPath string, noPersist bool, theme
 	if err != nil {
 		return fmt.Errorf("local review: capture adapter: %w", err)
 	}
-	manifestStore := newLocalReviewManifests()
+	manifestStore := newLocalReviewManifests(durableStore)
 	captureStore, err := workspace.NewCaptureStore(workspace.CaptureStoreConfig{
 		Committer: manifestStore,
 		Manifests: manifestStore,
@@ -286,15 +286,21 @@ func (s captureSource) Capture(ctx context.Context, repo repository.Repository, 
 type localReviewManifests struct {
 	mu        sync.Mutex
 	manifests map[domain.CaptureID]app.CaptureManifest
+	durable   app.CaptureManifestStore
 }
 
-func newLocalReviewManifests() *localReviewManifests {
-	return &localReviewManifests{manifests: make(map[domain.CaptureID]app.CaptureManifest)}
+func newLocalReviewManifests(durable app.CaptureManifestStore) *localReviewManifests {
+	return &localReviewManifests{manifests: make(map[domain.CaptureID]app.CaptureManifest), durable: durable}
 }
 
-func (m *localReviewManifests) CommitLocalCapture(_ context.Context, _ app.CaptureSessionState, generation app.CaptureGeneration, manifest app.CaptureManifest, _ app.CapacityReservation, _ app.CapacityPlan) error {
+func (m *localReviewManifests) CommitLocalCapture(ctx context.Context, _ app.CaptureSessionState, generation app.CaptureGeneration, manifest app.CaptureManifest, _ app.CapacityReservation, _ app.CapacityPlan) error {
 	if m == nil || generation.Validate() != nil || manifest.Validate() != nil {
 		return app.ErrInvalidLocalCaptureManifest
+	}
+	if m.durable != nil {
+		if err := m.durable.SaveCaptureManifest(ctx, manifest); err != nil {
+			return err
+		}
 	}
 	m.mu.Lock()
 	m.manifests[generation.CaptureID] = manifest
@@ -302,9 +308,16 @@ func (m *localReviewManifests) CommitLocalCapture(_ context.Context, _ app.Captu
 	return nil
 }
 
-func (m *localReviewManifests) OpenCaptureManifest(_ context.Context, captureID domain.CaptureID) (app.CaptureManifest, error) {
+func (m *localReviewManifests) OpenCaptureManifest(ctx context.Context, captureID domain.CaptureID) (app.CaptureManifest, error) {
 	if m == nil || captureID == "" {
 		return app.CaptureManifest{}, app.ErrCaptureNotFound
+	}
+	if m.durable != nil {
+		if manifest, err := m.durable.OpenCaptureManifest(ctx, captureID); err == nil {
+			return manifest, nil
+		} else if !errors.Is(err, app.ErrCaptureNotFound) {
+			return app.CaptureManifest{}, err
+		}
 	}
 	m.mu.Lock()
 	manifest, ok := m.manifests[captureID]

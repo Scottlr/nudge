@@ -18,6 +18,53 @@ import (
 
 var _ app.CleanupJournal = (*Store)(nil)
 var _ app.CleanupInventoryStore = (*Store)(nil)
+var _ app.CaptureManifestReader = (*Store)(nil)
+var _ app.CaptureManifestWriter = (*Store)(nil)
+
+func (s *Store) SaveCaptureManifest(ctx context.Context, manifest app.CaptureManifest) error {
+	if err := s.ensureOpen(); err != nil {
+		return err
+	}
+	if manifest.Validate() != nil {
+		return app.ErrInvalidLocalCaptureManifest
+	}
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		return err
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	_, err = s.db.ExecContext(ctx, `INSERT INTO capture_ownership(
+		capture_id, repository_id, worktree_id, manifest_hash, manifest_json, created_at
+	) VALUES(?, ?, ?, ?, ?, ?)
+	ON CONFLICT(capture_id) DO UPDATE SET
+		repository_id = excluded.repository_id,
+		worktree_id = excluded.worktree_id,
+		manifest_hash = excluded.manifest_hash,
+		manifest_json = excluded.manifest_json`,
+		manifest.CaptureID, manifest.RepositoryID, manifest.WorktreeID, manifest.ManifestHash, data, formatTime(manifest.CreatedAt))
+	return err
+}
+
+func (s *Store) OpenCaptureManifest(ctx context.Context, captureID domain.CaptureID) (app.CaptureManifest, error) {
+	if err := s.ensureOpen(); err != nil {
+		return app.CaptureManifest{}, err
+	}
+	if captureID == "" {
+		return app.CaptureManifest{}, app.ErrInvalidLocalCaptureManifest
+	}
+	var data []byte
+	if err := s.db.QueryRowContext(ctx, "SELECT manifest_json FROM capture_ownership WHERE capture_id = ?", captureID).Scan(&data); errors.Is(err, sql.ErrNoRows) {
+		return app.CaptureManifest{}, app.ErrCaptureNotFound
+	} else if err != nil {
+		return app.CaptureManifest{}, err
+	}
+	var manifest app.CaptureManifest
+	if err := json.Unmarshal(data, &manifest); err != nil || manifest.CaptureID != captureID || manifest.Validate() != nil {
+		return app.CaptureManifest{}, app.ErrCaptureCorrupt
+	}
+	return manifest, nil
+}
 
 func (s *Store) ListCleanupSessionLockTargets(ctx context.Context, repositoryID domain.RepositoryID) ([]app.CleanupSessionLockTarget, error) {
 	if err := s.ensureOpen(); err != nil {
@@ -343,7 +390,40 @@ func cleanupRowCounts(ctx context.Context, tx *sql.Tx, repositoryID domain.Repos
 func cleanupResources(ctx context.Context, tx *sql.Tx, repositoryID domain.RepositoryID) ([]app.CleanupResource, []string, error) {
 	resources := make([]app.CleanupResource, 0)
 	blockers := make([]string, 0)
-	rows, err := tx.QueryContext(ctx, `SELECT id, root, marker_nonce, manifest_hash FROM review_snapshots WHERE repository_id = ? ORDER BY id ASC`, repositoryID)
+	rows, err := tx.QueryContext(ctx, `SELECT capture_id, manifest_json FROM capture_ownership WHERE repository_id = ? ORDER BY capture_id ASC`, repositoryID)
+	if err != nil {
+		return nil, nil, err
+	}
+	for rows.Next() {
+		var captureID string
+		var manifestJSON []byte
+		if err := rows.Scan(&captureID, &manifestJSON); err != nil {
+			_ = rows.Close()
+			return nil, nil, err
+		}
+		var manifest app.CaptureManifest
+		if err := json.Unmarshal(manifestJSON, &manifest); err != nil || manifest.Validate() != nil {
+			blockers = append(blockers, "capture ownership manifest is corrupt: "+captureID)
+			continue
+		}
+		for _, ref := range []app.CaptureArtifactRef{manifest.Patch, manifest.Blobs} {
+			if ref.Limits.Validate() != nil {
+				blockers = append(blockers, "capture artifact limits are not durably recorded: "+captureID)
+				continue
+			}
+			resources = append(resources, app.CleanupResource{
+				ID: captureID + ":" + ref.Identity.SpoolID, Kind: app.CleanupResourceCapture,
+				OwnerID: captureID, RepositoryID: repositoryID, ManifestHash: ref.Identity.ManifestHash,
+				Published: app.PublishedArtifact{Identity: ref.Identity, Target: ref.Target, Limits: ref.Limits},
+			})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, nil, err
+	}
+	_ = rows.Close()
+	rows, err = tx.QueryContext(ctx, `SELECT id, root, marker_nonce, manifest_hash FROM review_snapshots WHERE repository_id = ? ORDER BY id ASC`, repositoryID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -503,6 +583,7 @@ func (s *Store) DeleteRepositoryRows(ctx context.Context, repositoryID domain.Re
 		`DELETE FROM target_generations WHERE session_id IN (SELECT id FROM review_sessions WHERE repository_id = ?)`,
 		`DELETE FROM review_threads WHERE session_id IN (SELECT id FROM review_sessions WHERE repository_id = ?)`,
 		`DELETE FROM review_sessions WHERE repository_id = ?`,
+		`DELETE FROM capture_ownership WHERE repository_id = ?`,
 		`DELETE FROM repository_base_preferences WHERE repository_id = ?`,
 		`DELETE FROM capacity_reservation_volumes WHERE reservation_id IN (SELECT reservation_id FROM capacity_reservations WHERE repository_id = ?)`,
 		`DELETE FROM storage_ledger_operations WHERE reservation_id IN (SELECT reservation_id FROM capacity_reservations WHERE repository_id = ?)`,
