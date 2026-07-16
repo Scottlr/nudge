@@ -15,7 +15,7 @@ import (
 
 const (
 	RetirementRepairHandlerKind    app.RepairHandlerKind = "workspace.retirement"
-	RetirementRepairHandlerVersion                       = "v1"
+	RetirementRepairHandlerVersion string                = "v1"
 )
 
 var (
