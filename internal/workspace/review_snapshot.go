@@ -76,6 +76,27 @@ type ReviewSnapshotManager struct {
 	leases    map[domain.ReviewSnapshotLeaseID]app.ReviewSnapshotLease
 }
 
+// ReviewSnapshotCleanupOwner adapts the snapshot owner to the repository
+// cleanup coordinator. The manager still performs all marker, manifest,
+// containment, lease, and owner-lock checks before removing anything.
+type ReviewSnapshotCleanupOwner struct {
+	Manager *ReviewSnapshotManager
+}
+
+func (o ReviewSnapshotCleanupOwner) Remove(ctx context.Context, resource app.CleanupResource) error {
+	if o.Manager == nil || resource.Kind != app.CleanupResourceReviewSnapshot || resource.ID == "" {
+		return app.ErrCleanupInvalid
+	}
+	snapshot, err := o.Manager.loadSnapshot(ctx, domain.ReviewSnapshotID(resource.ID))
+	if err != nil {
+		return err
+	}
+	if snapshot.RepositoryID != resource.RepositoryID || snapshot.Root != resource.CanonicalPath || snapshot.MarkerNonce != resource.MarkerNonce || snapshot.ManifestHash != resource.ManifestHash {
+		return app.ErrCleanupConflict
+	}
+	return o.Manager.Remove(ctx, snapshot.ID)
+}
+
 // NewReviewSnapshotManager creates the protected roots and validates the
 // source, persistence, and versioned limit contract before use.
 func NewReviewSnapshotManager(config ReviewSnapshotConfig) (*ReviewSnapshotManager, error) {

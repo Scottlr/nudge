@@ -87,16 +87,26 @@ func runLocalReview(ctx context.Context, startPath string, noPersist bool, theme
 				storageLedger = nil
 				persistenceDegraded = true
 			} else {
-				sessionManager, leaseErr = app.NewSessionManager(app.SessionManagerConfig{
-					Store: durableStore, Leases: leaseManager, AllowEphemeralFallback: true,
-				})
-				if leaseErr != nil {
+				maintenanceGate, gateErr := filelock.NewRepositoryMaintenanceGate(locations.StateRoot)
+				if gateErr != nil {
 					_ = durableStore.Close()
 					durableStore = nil
 					storageLedger = nil
+					preferenceStore = nil
 					persistenceDegraded = true
 				} else {
-					defer durableStore.Close()
+					sessionManager, leaseErr = app.NewSessionManager(app.SessionManagerConfig{
+						Store: durableStore, Leases: leaseManager, Maintenance: maintenanceGate, AllowEphemeralFallback: true,
+					})
+					if leaseErr != nil {
+						_ = durableStore.Close()
+						durableStore = nil
+						storageLedger = nil
+						preferenceStore = nil
+						persistenceDegraded = true
+					} else {
+						defer durableStore.Close()
+					}
 				}
 			}
 		}
