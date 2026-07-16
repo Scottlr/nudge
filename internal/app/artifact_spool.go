@@ -37,6 +37,7 @@ const (
 	OwnerWorkspace      OwnerKind = "workspace"
 	OwnerProposal       OwnerKind = "proposal"
 	OwnerCache          OwnerKind = "cache"
+	OwnerLog            OwnerKind = "log"
 )
 
 // SpoolState is the monotonic lifecycle state recorded in the owner marker.

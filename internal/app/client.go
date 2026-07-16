@@ -43,6 +43,7 @@ type ResultClient interface {
 type ClientOptions struct {
 	Clock              Clock
 	IDs                IDSource
+	Logger             OperationalLogger
 	TreeSearcher       TreeSearcher
 	LargeContent       LargeContentQueryPort
 	AnchorReattachment *AnchorReattachmentService
@@ -72,6 +73,7 @@ type QueryResult struct {
 // Closing the client cancels active state, joins the actor, and closes streams.
 type Client struct {
 	reducer      *Reducer
+	logger       OperationalLogger
 	searcher     TreeSearcher
 	largeContent LargeContentQueryPort
 	mailbox      chan clientRequest
@@ -108,8 +110,13 @@ func NewClient(options ClientOptions) (*Client, error) {
 		eventBuffer = defaultEventBuffer
 	}
 	reducer := NewReducer(ReducerConfig{Clock: options.Clock, IDs: options.IDs, AnchorReattachment: options.AnchorReattachment})
+	logger := options.Logger
+	if logger == nil {
+		logger = NopOperationalLogger{}
+	}
 	client := &Client{
 		reducer:      reducer,
+		logger:       logger,
 		searcher:     options.TreeSearcher,
 		largeContent: options.LargeContent,
 		mailbox:      make(chan clientRequest, commandBuffer),
@@ -298,9 +305,46 @@ func (c *Client) publish(commit Commit) {
 	if !commit.Changed {
 		return
 	}
+	c.logEvents(commit.Events)
 	c.snapshots.offer(commit.Snapshot)
 	for _, event := range commit.Events {
 		c.events.enqueue(event)
+	}
+}
+
+func (c *Client) logEvents(events []Event) {
+	if c == nil || c.logger == nil {
+		return
+	}
+	for _, event := range events {
+		var code LogEventCode
+		var operationID domain.OperationID
+		var detail LogDetailCode
+		switch value := event.(type) {
+		case OperationStarted:
+			code, operationID = LogEventOperationStarted, value.OperationID
+		case OperationCompleted:
+			code, operationID, detail = LogEventOperationFinished, value.OperationID, LogDetailCompleted
+		case OperationFailed:
+			code, operationID, detail = LogEventOperationFinished, value.OperationID, LogDetailFailed
+		case OperationCancelled:
+			code, operationID, detail = LogEventOperationFinished, value.OperationID, LogDetailCanceled
+		default:
+			continue
+		}
+		operation, err := FieldOperationID(operationID)
+		if err != nil {
+			continue
+		}
+		fields := []SafeField{operation}
+		if detail != "" {
+			value, err := FieldDetailCode(detail)
+			if err != nil {
+				continue
+			}
+			fields = append(fields, value)
+		}
+		c.logger.Log(context.Background(), code, fields...)
 	}
 }
 
