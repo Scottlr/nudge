@@ -42,7 +42,10 @@ func TestProtectedPermissionServicePreservesDesiredRootIdentity(t *testing.T) {
 
 func testPermissionLocations(t *testing.T) Locations {
 	t.Helper()
-	base := t.TempDir()
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	locations := Locations{
 		ConfigRoot: filepath.Join(base, "config"), StateRoot: filepath.Join(base, "state"),
 		CacheRoot: filepath.Join(base, "cache"), WorkspaceRoot: filepath.Join(base, "cache", "workspaces"),
