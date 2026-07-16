@@ -32,7 +32,7 @@ func TestStoreMigrationAndReviewRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("migration status: %v", err)
 	}
-	if status.Version != 21 || !validSHA256(status.Checksum) {
+	if status.Version != 22 || !validSHA256(status.Checksum) {
 		t.Fatalf("migration status = %#v", status)
 	}
 	var foreignKeys int
@@ -150,6 +150,55 @@ func TestStoreMigrationAndReviewRoundTrip(t *testing.T) {
 	}
 	if _, err := store.WithSessionTx(ctx, completed, func(app.ReviewStoreTx) error { return nil }); !errors.Is(err, app.ErrSessionLeaseLost) {
 		t.Fatalf("stale lease error = %v, want ErrSessionLeaseLost", err)
+	}
+}
+
+func TestSessionLeaseRepairFencesOldWriterAndProtectsNewOwner(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, testDatabasePath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	repo, worktree, session, _, _ := testStoreValues()
+	if err := store.UpsertRepository(ctx, repo, worktree); err != nil {
+		t.Fatal(err)
+	}
+	guard, err := store.CreateSession(ctx, session, domain.SessionLeaseID("lease-old"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := strings.Repeat("d", 64)
+	guard, err = store.SaveSessionLeaseIdentity(ctx, guard, identity, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidates, err := store.ListSessionLeaseRepairCandidates(ctx)
+	if err != nil || len(candidates) != 1 {
+		t.Fatalf("candidates=%#v err=%v", candidates, err)
+	}
+	hash := strings.Repeat("e", 64)
+	request := app.SessionLeaseRepairRequest{Candidate: candidates[0], PreconditionsHash: hash, RepairLeaseID: domain.SessionLeaseID("repair-stale-" + hash)}
+	result, err := store.RepairStaleSessionLease(ctx, request)
+	if err != nil || result.AlreadyRepaired || result.WriterEpoch != candidates[0].WriterEpoch+1 {
+		t.Fatalf("repair result=%#v err=%v", result, err)
+	}
+	if _, err := store.WithSessionTx(ctx, guard, func(app.ReviewStoreTx) error { return nil }); !errors.Is(err, app.ErrSessionLeaseLost) {
+		t.Fatalf("old writer error=%v, want ErrSessionLeaseLost", err)
+	}
+	duplicate, err := store.RepairStaleSessionLease(ctx, request)
+	if err != nil || !duplicate.AlreadyRepaired {
+		t.Fatalf("duplicate result=%#v err=%v", duplicate, err)
+	}
+	newGuard, err := store.ClaimSessionWriter(ctx, session.ID, domain.SessionLeaseID("lease-new"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newGuard.LeaseID != domain.SessionLeaseID("lease-new") {
+		t.Fatalf("new guard=%#v", newGuard)
+	}
+	if _, err := store.RepairStaleSessionLease(ctx, request); !errors.Is(err, app.ErrRepairPreconditions) {
+		t.Fatalf("old repair after new owner error=%v, want ErrRepairPreconditions", err)
 	}
 }
 

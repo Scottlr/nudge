@@ -49,6 +49,19 @@ func (m *SessionLeaseManager) Acquire(ctx context.Context, request app.SessionLe
 }
 
 func (m *SessionLeaseManager) lockPath(request app.SessionLeaseRequest) (string, error) {
+	identity, err := m.LockIdentity(request)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(m.root, identity+".lock"), nil
+}
+
+// LockIdentity returns the canonical path-free identity used by both normal
+// session ownership and stale-lease repair.
+func (m *SessionLeaseManager) LockIdentity(request app.SessionLeaseRequest) (string, error) {
+	if m == nil || request.Validate() != nil {
+		return "", app.ErrReviewStoreInput
+	}
 	key, err := json.Marshal(request.Key)
 	if err != nil {
 		return "", err
@@ -58,7 +71,7 @@ func (m *SessionLeaseManager) lockPath(request app.SessionLeaseRequest) (string,
 		key = append(key, []byte(request.SessionID)...)
 	}
 	digest := sha256.Sum256(key)
-	return filepath.Join(m.root, hex.EncodeToString(digest[:])+".lock"), nil
+	return hex.EncodeToString(digest[:]), nil
 }
 
 type sessionLease struct {
@@ -86,4 +99,5 @@ func (l *sessionLease) Close() error {
 }
 
 var _ app.SessionLeaseManager = (*SessionLeaseManager)(nil)
+var _ app.SessionLeaseIdentityProvider = (*SessionLeaseManager)(nil)
 var _ app.SessionLease = (*sessionLease)(nil)

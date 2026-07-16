@@ -64,6 +64,19 @@ type SessionLeaseManager interface {
 	Acquire(context.Context, SessionLeaseRequest) (SessionLease, error)
 }
 
+// SessionLeaseIdentityProvider exposes the canonical, path-free identity of
+// the lock used by SessionLeaseManager. Repair code uses this seam instead of
+// duplicating native lock-key derivation.
+type SessionLeaseIdentityProvider interface {
+	LockIdentity(SessionLeaseRequest) (string, error)
+}
+
+// SessionLeaseIdentityStore records the lock identity selected at writable
+// session open. Older sessions without this evidence are not repairable.
+type SessionLeaseIdentityStore interface {
+	SaveSessionLeaseIdentity(context.Context, SessionWriteGuard, string, bool) (SessionWriteGuard, error)
+}
+
 // OpenSessionRequest contains already-resolved repository and target evidence.
 // The manager never resolves Git or derives a replacement binding itself.
 type OpenSessionRequest struct {
@@ -269,6 +282,11 @@ func (m *SessionManager) OpenSession(ctx context.Context, request OpenSessionReq
 			_ = lease.Close()
 			return SessionHandle{}, claimErr
 		}
+		guard, claimErr = m.persistLeaseIdentity(ctx, guard, SessionLeaseRequest{Key: key, SessionID: existing.ID, LeaseID: leaseID, Distinct: false})
+		if claimErr != nil {
+			_ = lease.Close()
+			return SessionHandle{}, claimErr
+		}
 		return SessionHandle{Session: *existing, Key: key, Guard: guard, Lease: lease, Mode: request.Mode, Persistence: PersistenceDurable, Restored: true}, nil
 	}
 
@@ -284,7 +302,25 @@ func (m *SessionManager) OpenSession(ctx context.Context, request OpenSessionReq
 		_ = lease.Close()
 		return SessionHandle{}, err
 	}
+	guard, err = m.persistLeaseIdentity(ctx, guard, SessionLeaseRequest{Key: key, SessionID: provisional.ID, LeaseID: leaseID, Distinct: request.Mode == SessionDistinct})
+	if err != nil {
+		_ = lease.Close()
+		return SessionHandle{}, err
+	}
 	return SessionHandle{Session: provisional, Key: key, Guard: guard, Lease: lease, Mode: request.Mode, Persistence: PersistenceDurable}, nil
+}
+
+func (m *SessionManager) persistLeaseIdentity(ctx context.Context, guard SessionWriteGuard, request SessionLeaseRequest) (SessionWriteGuard, error) {
+	identityProvider, providerOK := m.leases.(SessionLeaseIdentityProvider)
+	identityStore, storeOK := m.store.(SessionLeaseIdentityStore)
+	if !providerOK || !storeOK {
+		return guard, nil
+	}
+	identity, err := identityProvider.LockIdentity(request)
+	if err != nil {
+		return SessionWriteGuard{}, err
+	}
+	return identityStore.SaveSessionLeaseIdentity(ctx, guard, identity, request.Distinct)
 }
 
 func (m *SessionManager) newEphemeral(request OpenSessionRequest, degraded bool) (SessionHandle, error) {

@@ -141,6 +141,17 @@ func executeRepairDoctor(ctx context.Context, report app.HealthReport, planID ap
 	if err != nil {
 		return app.RepairOperation{}, err
 	}
+	leaseManager, err := filelock.NewSessionLeaseManager(locations.StateRoot)
+	if err != nil {
+		return app.RepairOperation{}, err
+	}
+	leaseOwner, err := app.NewSessionLeaseRepairOwner(store, leaseManager, leaseManager, nil)
+	if err != nil {
+		return app.RepairOperation{}, err
+	}
+	if err := app.RegisterSessionLeaseRepairOwner(registry, leaseOwner); err != nil {
+		return app.RepairOperation{}, err
+	}
 	plans, err := registry.BuildPlans(ctx, report)
 	if err != nil {
 		return app.RepairOperation{}, err
@@ -356,7 +367,9 @@ func collectDoctor(ctx context.Context, requestedPath string) (app.HealthReport,
 	}
 
 	if locationErr == nil {
-		results = append(results, databaseHealthResult(ctx, filepath.Join(locations.StateRoot, "nudge.db")))
+		databasePath := filepath.Join(locations.StateRoot, "nudge.db")
+		results = append(results, databaseHealthResult(ctx, databasePath))
+		results = append(results, sessionLeaseHealthResults(ctx, databasePath)...)
 	}
 	if gitErr == nil {
 		results = append(results, repositoryHealthResult(ctx, startPath, gitIdentity, explicitPath))
@@ -480,6 +493,32 @@ func databaseHealthResult(ctx context.Context, path string) app.HealthResult {
 	default:
 		return app.HealthResult{Code: app.HealthDatabaseUnavailable, Severity: app.HealthWarning, Summary: "Nudge database could not be inspected read-only.", RedactedEvidence: processErrorCode(err), Remediation: "Check protected state-root ownership and database availability without deleting or migrating it."}
 	}
+}
+
+func sessionLeaseHealthResults(ctx context.Context, path string) []app.HealthResult {
+	candidates, err := sqlite.InspectReadOnlySessionLeaseCandidates(ctx, path)
+	if err != nil {
+		return nil
+	}
+	results := make([]app.HealthResult, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.Validate() != nil {
+			continue
+		}
+		sessionID := app.NormalizeHealthToken(string(candidate.SessionID), 96)
+		if sessionID == "" {
+			continue
+		}
+		results = append(results, app.HealthResult{
+			Code:             app.HealthSessionLeaseStale,
+			Severity:         app.HealthWarning,
+			Summary:          "A durable session lease is eligible for exact native-lock verification.",
+			RedactedEvidence: fmt.Sprintf("session=%s,proof=native_lock_required,writer_epoch=%d,session_revision=%d", sessionID, candidate.WriterEpoch, candidate.SessionRevision),
+			Remediation:      "Use the exact revision-bound repair plan only after confirming this session is no longer active.",
+			RepairPlanID:     "session-lease-stale-" + sessionID,
+		})
+	}
+	return results
 }
 
 func repositoryHealthResult(ctx context.Context, startPath string, identity process.ExecutableIdentity, explicit bool) app.HealthResult {
